@@ -131,7 +131,7 @@
 #include <endian.h>
 
 #include "out.h"
-#include "util.h"
+#include "uuid.h"
 #include "btt.h"
 #include "btt_layout.h"
 #include "sys_util.h"
@@ -364,7 +364,7 @@ map_entry_is_error(uint32_t map_entry)
 /*
  * map_entry_is_initial -- checks if map_entry is in initial state
  */
-inline int
+int
 map_entry_is_initial(uint32_t map_entry)
 {
 	return (map_entry & ~BTT_MAP_ENTRY_LBA_MASK) == 0;
@@ -1583,7 +1583,7 @@ btt_read(struct btt *bttp, unsigned lane, uint64_t lba, void *buf)
 	 * block from getting re-allocated to something else by a write.
 	 */
 	uint64_t data_block_off =
-		arenap->dataoff + (entry & BTT_MAP_ENTRY_LBA_MASK) *
+		arenap->dataoff + (uint64_t)(entry & BTT_MAP_ENTRY_LBA_MASK) *
 		arenap->internal_lbasize;
 	int readret = (*bttp->ns_cbp->nsread)(bttp->ns, lane, buf,
 					bttp->lbasize, data_block_off);
@@ -1748,7 +1748,7 @@ btt_write(struct btt *bttp, unsigned lane, uint64_t lba, const void *buf)
 
 	/* it is now safe to perform write to the free block */
 	uint64_t data_block_off = arenap->dataoff +
-		(free_entry & BTT_MAP_ENTRY_LBA_MASK) *
+		(uint64_t)(free_entry & BTT_MAP_ENTRY_LBA_MASK) *
 		arenap->internal_lbasize;
 	if ((*bttp->ns_cbp->nswrite)(bttp->ns, lane, buf,
 				bttp->lbasize, data_block_off) < 0)

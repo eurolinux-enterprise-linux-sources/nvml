@@ -39,15 +39,14 @@
 #endif
 
 #include <errno.h>
+#include <limits.h>
+#include <pthread.h>
 
 #include "libpmemobj.h"
 #include "cuckoo.h"
 #include "lane.h"
-#include "util.h"
 #include "out.h"
-#include "redo.h"
-#include "memops.h"
-#include "sys_util.h"
+#include "util.h"
 #include "obj.h"
 #include "valgrind_internal.h"
 
@@ -65,7 +64,8 @@ struct section_operations *Section_ops[MAX_LANE_SECTION];
 inline void
 lane_info_destroy()
 {
-	ASSERTne(Lane_info_ht, NULL);
+	if (unlikely(Lane_info_ht == NULL))
+		return;
 
 	cuckoo_delete(Lane_info_ht);
 	struct lane_info *record;
@@ -91,7 +91,7 @@ lane_info_ht_destroy(void *ht)
 }
 
 /*
- * lane_info_create -- (internal) destructor for thread shared data
+ * lane_info_create -- (internal) constructor for thread shared data
  */
 static inline void
 lane_info_create()
@@ -107,8 +107,6 @@ lane_info_create()
 void
 lane_info_boot()
 {
-	lane_info_create();
-
 	int result = pthread_key_create(&Lane_info_key, lane_info_ht_destroy);
 	if (result != 0) {
 		errno = result;
@@ -137,7 +135,8 @@ lane_info_ht_boot()
 static inline void
 lane_info_cleanup(PMEMobjpool *pop)
 {
-	ASSERTne(Lane_info_ht, NULL);
+	if (unlikely(Lane_info_ht == NULL))
+		return;
 
 	struct lane_info *info = cuckoo_remove(Lane_info_ht, pop->uuid_lo);
 	if (likely(info != NULL)) {
@@ -175,26 +174,26 @@ lane_init(PMEMobjpool *pop, struct lane *lane, struct lane_layout *layout)
 {
 	ASSERTne(lane, NULL);
 
-	int err;
-
 	int i;
+	int oerrno;
+
 	for (i = 0; i < MAX_LANE_SECTION; ++i) {
-		lane->sections[i].runtime = NULL;
 		lane->sections[i].layout = &layout->sections[i];
-		err = Section_ops[i]->construct(pop, &lane->sections[i]);
-		if (err != 0) {
+		errno = 0;
+		lane->sections[i].runtime = Section_ops[i]->construct_rt(pop);
+		if (lane->sections[i].runtime == NULL && errno) {
 			ERR("!lane_construct_ops %d", i);
 			goto error_section_construct;
 		}
 	}
-
 	return 0;
 
 error_section_construct:
+	oerrno = errno;
 	for (i = i - 1; i >= 0; --i)
-		Section_ops[i]->destruct(pop, &lane->sections[i]);
-
-	return err;
+		Section_ops[i]->destroy_rt(pop, &lane->sections[i].runtime);
+	errno = oerrno;
+	return -1;
 }
 
 /*
@@ -204,7 +203,7 @@ static void
 lane_destroy(PMEMobjpool *pop, struct lane *lane)
 {
 	for (int i = 0; i < MAX_LANE_SECTION; ++i)
-		Section_ops[i]->destruct(pop, &lane->sections[i]);
+		Section_ops[i]->destroy_rt(pop, lane->sections[i].runtime);
 }
 
 /*
@@ -239,8 +238,7 @@ lane_boot(PMEMobjpool *pop)
 	for (i = 0; i < pop->nlanes; ++i) {
 		struct lane_layout *layout = lane_get_layout(pop, i);
 
-		if ((err = lane_init(pop, &pop->lanes_desc.lane[i],
-				layout)) != 0) {
+		if ((err = lane_init(pop, &pop->lanes_desc.lane[i], layout))) {
 			ERR("!lane_init");
 			goto error_lane_init;
 		}
@@ -251,7 +249,6 @@ lane_boot(PMEMobjpool *pop)
 error_lane_init:
 	for (; i >= 1; --i)
 		lane_destroy(pop, &pop->lanes_desc.lane[i - 1]);
-
 	Free(pop->lanes_desc.lane_locks);
 	pop->lanes_desc.lane_locks = NULL;
 error_locks_malloc:
@@ -292,8 +289,8 @@ lane_recover_and_section_boot(PMEMobjpool *pop)
 	for (i = 0; i < MAX_LANE_SECTION; ++i) {
 		for (j = 0; j < pop->nlanes; ++j) {
 			layout = lane_get_layout(pop, j);
-			err = Section_ops[i]->recover(pop,
-				&layout->sections[i]);
+			err = Section_ops[i]->recover(pop, &layout->sections[i],
+				sizeof(layout->sections[i]));
 
 			if (err != 0) {
 				LOG(2, "section_ops->recover %d %ju %d",
@@ -325,7 +322,8 @@ lane_check(PMEMobjpool *pop)
 	for (i = 0; i < MAX_LANE_SECTION; ++i) {
 		for (j = 0; j < pop->nlanes; ++j) {
 			layout = lane_get_layout(pop, j);
-			err = Section_ops[i]->check(pop, &layout->sections[i]);
+			err = Section_ops[i]->check(pop, &layout->sections[i],
+					sizeof(layout->sections[i]));
 
 			if (err) {
 				LOG(2, "section_ops->check %d %ju %d",
@@ -348,7 +346,7 @@ get_lane(uint64_t *locks, uint64_t *index, uint64_t nlocks)
 	while (1) {
 		do {
 			*index %= nlocks;
-			if (likely(__sync_bool_compare_and_swap(
+			if (likely(util_bool_compare_and_swap64(
 					&locks[*index], 0, 1)))
 				return;
 
@@ -405,11 +403,23 @@ get_lane_info_record(PMEMobjpool *pop)
 /*
  * lane_hold -- grabs a per-thread lane in a round-robin fashion
  */
-void
+unsigned
 lane_hold(PMEMobjpool *pop, struct lane_section **section,
 	enum lane_section_type type)
 {
-	ASSERTne(section, NULL);
+	if (section == NULL)
+		ASSERTeq(type, LANE_ID);
+
+	/*
+	 * Before runtime lane initialization all remote operations are
+	 * executed using RLANE_DEFAULT.
+	 */
+	if (unlikely(!pop->lanes_desc.runtime_nlanes)) {
+		ASSERT(pop->has_remote_replicas);
+		if (section != NULL)
+			FATAL("cannot obtain section before lane's init");
+		return RLANE_DEFAULT;
+	}
 
 	struct lane_info *lane = get_lane_info_record(pop);
 	while (unlikely(lane->lane_idx == UINT64_MAX)) {
@@ -419,11 +429,17 @@ lane_hold(PMEMobjpool *pop, struct lane_section **section,
 	} /* handles wraparound */
 
 	uint64_t *llocks = pop->lanes_desc.lane_locks;
-	/* grab next free lane */
+	/* grab next free lane from lanes available at runtime */
 	if (!lane->nest_count++)
-		get_lane(llocks, &lane->lane_idx, pop->nlanes);
+		get_lane(llocks, &lane->lane_idx,
+			pop->lanes_desc.runtime_nlanes);
 
-	*section = &pop->lanes_desc.lane[lane->lane_idx].sections[type];
+	if (section) {
+		ASSERT(type < MAX_LANE_SECTION);
+		*section = &pop->lanes_desc.lane[lane->lane_idx].sections[type];
+	}
+
+	return (unsigned)lane->lane_idx;
 }
 
 /*
@@ -432,19 +448,23 @@ lane_hold(PMEMobjpool *pop, struct lane_section **section,
 void
 lane_release(PMEMobjpool *pop)
 {
+	if (unlikely(!pop->lanes_desc.runtime_nlanes)) {
+		ASSERT(pop->has_remote_replicas);
+		return;
+	}
+
 	struct lane_info *lane = get_lane_info_record(pop);
 
 	ASSERTne(lane, NULL);
 	ASSERTne(lane->lane_idx, UINT64_MAX);
-	ASSERTne(lane->nest_count, 0);
 
 	if (unlikely(lane->nest_count == 0)) {
 		FATAL("lane_release");
 	} else if (--(lane->nest_count) == 0) {
-		if (unlikely(!__sync_bool_compare_and_swap(
+		if (unlikely(!util_bool_compare_and_swap64(
 				&pop->lanes_desc.lane_locks[lane->lane_idx],
 				1, 0))) {
-			FATAL("__sync_bool_compare_and_swap");
+			FATAL("util_bool_compare_and_swap64");
 		}
 	}
 }

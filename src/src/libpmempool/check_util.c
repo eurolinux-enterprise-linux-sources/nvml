@@ -105,6 +105,7 @@ check_data_alloc(void)
 		return NULL;
 	}
 
+	memset(&data->step_data, 0, sizeof(struct check_step_data));
 	data->check_status_cache = NULL;
 	data->error = NULL;
 	data->step = 0;
@@ -189,7 +190,7 @@ check_get_step_data(struct check_data *data)
 /*
  * check_end -- mark check as ended
  */
-inline void
+void
 check_end(struct check_data *data)
 {
 	LOG(3, NULL);
@@ -200,7 +201,7 @@ check_end(struct check_data *data)
 /*
  * check_is_end_util -- return if check has ended
  */
-inline int
+int
 check_is_end_util(struct check_data *data)
 {
 	return data->step == CHECK_END;
@@ -346,22 +347,23 @@ check_status_create(PMEMpoolcheck *ppc, enum pmempool_check_msg_type type,
 		return 0;
 
 	struct check_status *st = status_alloc();
+	ASSERT(CHECK_IS(ppc, FORMAT_STR));
 
-	if (CHECK_IS(ppc, FORMAT_STR)) {
-		va_list ap;
-		va_start(ap, fmt);
-		int p = vsnprintf(st->msg, MAX_MSG_STR_SIZE, fmt, ap);
-		va_end(ap);
+	va_list ap;
+	va_start(ap, fmt);
+	int p = vsnprintf(st->msg, MAX_MSG_STR_SIZE, fmt, ap);
+	va_end(ap);
 
-		/* append possible strerror at the end of the message */
-		if (type != PMEMPOOL_CHECK_MSG_TYPE_QUESTION && errno &&
-				p > 0) {
-			snprintf(st->msg + p, MAX_MSG_STR_SIZE - (size_t)p,
-				": %s", strerror(errno));
-		}
-
-		st->status.type = type;
+	/* append possible strerror at the end of the message */
+	if (type != PMEMPOOL_CHECK_MSG_TYPE_QUESTION && errno &&
+			p > 0) {
+		char buff[UTIL_MAX_ERR_MSG];
+		util_strerror(errno, buff, UTIL_MAX_ERR_MSG);
+		snprintf(st->msg + p, MAX_MSG_STR_SIZE - (size_t)p,
+			": %s", buff);
 	}
+
+	st->status.type = type;
 
 	return status_push(ppc, st, question);
 }
@@ -404,7 +406,7 @@ check_pop_question(struct check_data *data)
 }
 
 /*
- * check_pop_info -- pop single info from informations queue
+ * check_pop_info -- pop single info from information queue
  */
 struct check_status *
 check_pop_info(struct check_data *data)
@@ -541,7 +543,7 @@ pop_answer(struct check_data *data)
 /*
  * check_status_get_util -- extract pmempool_check_status from check_status
  */
-inline struct pmempool_check_status *
+struct pmempool_check_status *
 check_status_get_util(struct check_status *status)
 {
 	return &status->status;
@@ -652,11 +654,11 @@ check_get_pool_type_str(enum pool_type type)
 	case POOL_TYPE_BTT:
 		return "btt";
 	case POOL_TYPE_LOG:
-		return "log";
+		return "pmemlog";
 	case POOL_TYPE_BLK:
-		return "blk";
+		return "pmemblk";
 	case POOL_TYPE_OBJ:
-		return "obj";
+		return "pmemobj";
 	default:
 		return "unknown";
 	}

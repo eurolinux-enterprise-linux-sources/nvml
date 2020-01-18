@@ -31,12 +31,14 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 #
-# libpmempool_api/TEST13 -- test for checking api
+# libpmempool_api/TEST13 -- test for checking API
 #
 export UNITTEST_NAME=libpmempool_api/TEST13
 export UNITTEST_NUM=13
 
 . ../unittest/unittest.sh
+
+require_test_type medium
 
 require_fs_type any
 

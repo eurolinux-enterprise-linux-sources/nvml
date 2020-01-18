@@ -40,13 +40,15 @@ export UNITTEST_NUM=2
 # standard unit test setup
 . ../unittest/unittest.sh
 
+require_test_type medium
+
 setup
 umask 0
 
 #
 # TEST2 non-existing file, poolsize == 0
 #
-expect_normal_exit ./log_pool$EXESUFFIX c $DIR/testfile 0 0640
+expect_normal_exit ./log_pool$EXESUFFIX c $DIR/testfile 0 0600
 
 check_no_files $DIR/testfile
 

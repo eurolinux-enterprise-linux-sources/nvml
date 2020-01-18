@@ -1,0 +1,129 @@
+test: do not run pool_lock test as root
+
+BZ: 1383467
+
+commit aabd4d26de7a41400f66632989b3592786d7db89
+Author: Krzysztof Czurylo <krzysztof.czurylo@intel.com>
+Date:   Thu Mar 16 13:33:14 2017 +0100
+
+    test: do not run pool_lock test as root
+    
+    Backported from master (4a86707).
+
+diff --git a/src/test/blk_pool_lock/TEST0 b/src/test/blk_pool_lock/TEST0
+index 2d89772..feac8d2 100755
+--- a/src/test/blk_pool_lock/TEST0
++++ b/src/test/blk_pool_lock/TEST0
+@@ -1,6 +1,6 @@
+ #!/bin/bash -e
+ #
+-# Copyright 2015-2016, Intel Corporation
++# Copyright 2015-2017, Intel Corporation
+ #
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions
+@@ -41,6 +41,7 @@ export UNITTEST_NUM=0
+ . ../unittest/unittest.sh
+ 
+ require_test_type medium
++require_no_superuser
+ 
+ setup
+ 
+diff --git a/src/test/blk_pool_lock/TEST0.PS1 b/src/test/blk_pool_lock/TEST0.PS1
+index 8e12e52..a33c083 100644
+--- a/src/test/blk_pool_lock/TEST0.PS1
++++ b/src/test/blk_pool_lock/TEST0.PS1
+@@ -1,5 +1,5 @@
+ #
+-# Copyright 2015-2016, Intel Corporation
++# Copyright 2015-2017, Intel Corporation
+ #
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions
+@@ -47,6 +47,7 @@ $Env:UNITTEST_NUM = "0"
+ . ..\unittest\unittest.ps1
+ 
+ require_test_type medium
++require_no_superuser
+ 
+ # doesn't make sense to run in local directory
+ require_fs_type any
+diff --git a/src/test/log_pool_lock/TEST0 b/src/test/log_pool_lock/TEST0
+index 498b04c..b285486 100755
+--- a/src/test/log_pool_lock/TEST0
++++ b/src/test/log_pool_lock/TEST0
+@@ -1,6 +1,6 @@
+ #!/bin/bash -e
+ #
+-# Copyright 2015-2016, Intel Corporation
++# Copyright 2015-2017, Intel Corporation
+ #
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions
+@@ -41,6 +41,7 @@ export UNITTEST_NUM=0
+ . ../unittest/unittest.sh
+ 
+ require_test_type medium
++require_no_superuser
+ 
+ setup
+ 
+diff --git a/src/test/log_pool_lock/TEST0.PS1 b/src/test/log_pool_lock/TEST0.PS1
+index 833825c..9c2ba17 100644
+--- a/src/test/log_pool_lock/TEST0.PS1
++++ b/src/test/log_pool_lock/TEST0.PS1
+@@ -1,5 +1,5 @@
+ #
+-# Copyright 2015-2016, Intel Corporation
++# Copyright 2015-2017, Intel Corporation
+ #
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions
+@@ -47,6 +47,7 @@ $Env:UNITTEST_NUM = "0"
+ . ..\unittest\unittest.ps1
+ 
+ require_test_type medium
++require_no_superuser
+ 
+ # doesn't make sense to run in local directory
+ require_fs_type any
+diff --git a/src/test/obj_pool_lock/TEST0 b/src/test/obj_pool_lock/TEST0
+index 60f5c55..944475e 100755
+--- a/src/test/obj_pool_lock/TEST0
++++ b/src/test/obj_pool_lock/TEST0
+@@ -1,6 +1,6 @@
+ #!/bin/bash -e
+ #
+-# Copyright 2015-2016, Intel Corporation
++# Copyright 2015-2017, Intel Corporation
+ #
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions
+@@ -41,6 +41,7 @@ export UNITTEST_NUM=0
+ . ../unittest/unittest.sh
+ 
+ require_test_type medium
++require_no_superuser
+ 
+ setup
+ 
+diff --git a/src/test/obj_pool_lock/TEST0.PS1 b/src/test/obj_pool_lock/TEST0.PS1
+index 2d15fb5..3f35b28 100644
+--- a/src/test/obj_pool_lock/TEST0.PS1
++++ b/src/test/obj_pool_lock/TEST0.PS1
+@@ -1,5 +1,5 @@
+ #
+-# Copyright 2015-2016, Intel Corporation
++# Copyright 2015-2017, Intel Corporation
+ #
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions
+@@ -47,6 +47,7 @@ $Env:UNITTEST_NUM = "0"
+ . ..\unittest\unittest.ps1
+ 
+ require_test_type medium
++require_no_superuser
+ 
+ # doesn't make sense to run in local directory
+ require_fs_type any

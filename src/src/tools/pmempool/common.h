@@ -36,11 +36,10 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include <sys/queue.h>
+#include <queue.h>
 #include <stdarg.h>
 #include <stdbool.h>
 
-#include "util.h"
 #include "log.h"
 #include "blk.h"
 #include "libpmemobj.h"
@@ -56,6 +55,11 @@
 #include "tx.h"
 #include "heap.h"
 #include "btt_layout.h"
+
+/* XXX - modify Linux makefiles to generate srcversion.h and remove #ifdef */
+#ifdef _WIN32
+#include "srcversion.h"
+#endif
 
 #define COUNT_OF(x) (sizeof(x) / sizeof(0[x]))
 
@@ -79,13 +83,9 @@
 #define OPT_REQ6(c) _OPT_REQ(c, 6)
 #define OPT_REQ7(c) _OPT_REQ(c, 7)
 
+#ifndef min
 #define min(a, b) ((a) < (b) ? (a) : (b))
-#define ENTIRE_UINT64 (\
-{\
-struct range _entire_uint64 = {\
-	.first = 0,\
-	.last = UINT64_MAX\
-}; _entire_uint64; })
+#endif
 
 #define FOREACH_RANGE(range, ranges)\
 	LIST_FOREACH(range, &(ranges)->head, next)
@@ -154,7 +154,7 @@ struct option_requirement {
 };
 
 struct options {
-	const struct option *options;
+	const struct option *opts;
 	size_t noptions;
 	char *bitmap;
 	const struct option_requirement *req;
@@ -167,6 +167,7 @@ struct pmem_pool_params {
 	mode_t mode;
 	int is_poolset;
 	int is_part;
+	int is_checksum_ok;
 	union {
 		struct {
 			uint64_t bsize;
@@ -197,7 +198,10 @@ int pool_set_file_read(struct pool_set_file *file, void *buff,
 int pool_set_file_write(struct pool_set_file *file, void *buff,
 		size_t nbytes, uint64_t off);
 int pool_set_file_set_replica(struct pool_set_file *file, size_t replica);
+size_t pool_set_file_nreplicas(struct pool_set_file *file);
 void *pool_set_file_map(struct pool_set_file *file, uint64_t offset);
+void pool_set_file_persist(struct pool_set_file *file,
+		const void *addr, size_t len);
 
 struct range {
 	LIST_ENTRY(range) next;
@@ -211,6 +215,7 @@ struct ranges {
 
 pmem_pool_type_t pmem_pool_type_parse_hdr(const struct pool_hdr *hdrp);
 pmem_pool_type_t pmem_pool_type(const void *base_pool_addr);
+int pmem_pool_checksum(const void *base_pool_addr);
 pmem_pool_type_t pmem_pool_type_parse_str(const char *str);
 uint64_t pmem_pool_get_min_size(pmem_pool_type_t type);
 int pmem_pool_parse_params(const char *fname, struct pmem_pool_params *paramsp,
@@ -250,3 +255,9 @@ util_count_ones(uint64_t val)
 {
 	return (uint32_t)__builtin_popcountll(val);
 }
+
+static const struct range ENTIRE_UINT64 = {
+	{ NULL, NULL },	/* range */
+	0,		/* first */
+	UINT64_MAX	/* last */
+};

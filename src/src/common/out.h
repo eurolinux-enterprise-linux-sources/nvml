@@ -34,13 +34,23 @@
  * out.h -- definitions for "out" module
  */
 
+#ifndef NVML_OUT_H
+#define NVML_OUT_H 1
+
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdlib.h>
 
-#ifndef _WIN32
-#define DIR_SEPARATOR '/'
+#include "util.h"
+
+/*
+ * Suppress errors which are after appropriate ASSERT* macro for nondebug
+ * builds.
+ */
+#if !defined(DEBUG) && defined(__clang_analyzer__)
+#define OUT_FATAL_DISCARD_NORETURN __attribute__((noreturn))
 #else
-#define DIR_SEPARATOR '\\'
+#define OUT_FATAL_DISCARD_NORETURN
 #endif
 
 #ifdef DEBUG
@@ -70,7 +80,7 @@ out_nonl_discard(int level, const char *fmt, ...)
 	(void) fmt;
 }
 
-static __attribute__((always_inline)) inline void
+static __attribute__((always_inline)) OUT_FATAL_DISCARD_NORETURN inline void
 out_fatal_discard(const char *file, int line, const char *func,
 		const char *fmt, ...)
 {
@@ -196,3 +206,5 @@ void out_set_print_func(void (*print_func)(const char *s));
 void out_set_vsnprintf_func(int (*vsnprintf_func)(char *str, size_t size,
 	const char *format, va_list ap));
 const char *out_get_errormsg(void);
+
+#endif

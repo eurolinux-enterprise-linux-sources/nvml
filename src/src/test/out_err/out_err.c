@@ -43,15 +43,17 @@
 #include <sys/types.h>
 #include <stdarg.h>
 #include "unittest.h"
-#include "out.h"
+#include "pmemcommon.h"
 
 int
 main(int argc, char *argv[])
 {
+	char buff[UT_MAX_ERR_MSG];
+
 	START(argc, argv, "out_err");
 
 	/* Execute test */
-	out_init(LOG_PREFIX, LOG_LEVEL_VAR, LOG_FILE_VAR,
+	common_init(LOG_PREFIX, LOG_LEVEL_VAR, LOG_FILE_VAR,
 			MAJOR_VERSION, MINOR_VERSION);
 
 	errno = 0;
@@ -67,17 +69,19 @@ main(int argc, char *argv[])
 	UT_OUT("%s", out_get_errormsg());
 
 	errno = EBADF;
+	ut_strerror(errno, buff, UT_MAX_ERR_MSG);
 	out_err(__FILE__, 100, __func__,
-		"ERR1: %s:%d", strerror(errno), 1234);
+		"ERR1: %s:%d", buff, 1234);
 	UT_OUT("%s", out_get_errormsg());
 
 	errno = EBADF;
+	ut_strerror(errno, buff, UT_MAX_ERR_MSG);
 	out_err(NULL, 0, NULL,
-		"ERR2: %s:%d", strerror(errno), 1234);
+		"ERR2: %s:%d", buff, 1234);
 	UT_OUT("%s", out_get_errormsg());
 
 	/* Cleanup */
-	out_fini();
+	common_fini();
 
 	DONE(NULL);
 }

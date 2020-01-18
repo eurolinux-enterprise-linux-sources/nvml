@@ -33,17 +33,19 @@
  * write.c -- simple app for writing data to pool used by pmempool tests
  */
 #include <stdio.h>
+#include <unistd.h>
 #include <getopt.h>
 #include <stdlib.h>
 #include <libgen.h>
 #include <string.h>
-#include <sys/queue.h>
+#include <queue.h>
 #include <inttypes.h>
 #include <err.h>
 #include "common.h"
 #include "output.h"
 #include <libpmemlog.h>
 #include <libpmemblk.h>
+#include "mmap.h"
 
 /*
  * pmemwrite -- context and arguments
@@ -55,7 +57,8 @@ struct pmemwrite
 	char **args;	/* list of arguments */
 };
 
-static struct pmemwrite pwrite = {
+
+static struct pmemwrite pmemwrite = {
 	.fname = NULL,
 	.nargs = 0,
 	.args = NULL,
@@ -128,11 +131,18 @@ pmemwrite_blk(struct pmemwrite *pwp)
 
 	for (i = 0; i < pwp->nargs; i++) {
 		int64_t blockno;
-		char *buff = NULL;
+		char *buff;
+		size_t buffsize = strlen(pwp->args[i]) + 1;
+		buff = malloc(buffsize);
+		if (buff == NULL) {
+			ret = -1;
+			outv_err("malloc(%lu) failed\n", buffsize);
+			goto end;
+		}
 		char flag;
 		/* <blockno>:w:<string> - write string to <blockno> */
-		if (sscanf(pwp->args[i], "%" SCNi64 ":w:%m[^:]",
-					&blockno, &buff) == 2) {
+		if (sscanf(pwp->args[i], "%" SCNi64 ":w:%[^:]",
+					&blockno, buff) == 2) {
 			memset(blk, 0, blksize);
 			size_t bufflen = strlen(buff);
 			if (bufflen > blksize) {
@@ -148,6 +158,7 @@ pmemwrite_blk(struct pmemwrite *pwp)
 		/* <blockno>:<flag> - set <flag> flag on <blockno> */
 		} else if (sscanf(pwp->args[i], "%" SCNi64 ":%c",
 					&blockno, &flag) == 2) {
+			free(buff);
 			switch (flag) {
 			case 'z':
 				ret = pmemblk_set_zero(pbp, blockno);
@@ -165,6 +176,7 @@ pmemwrite_blk(struct pmemwrite *pwp)
 				goto end;
 			}
 		} else {
+			free(buff);
 			outv_err("Invalid argument '%s'\n", pwp->args[i]);
 			ret = -1;
 			goto end;
@@ -198,10 +210,10 @@ main(int argc, char *argv[])
 	}
 
 	if (optind + 1 < argc) {
-		pwrite.fname = argv[optind];
+		pmemwrite.fname = argv[optind];
 		optind++;
-		pwrite.nargs = argc - optind;
-		pwrite.args = &argv[optind];
+		pmemwrite.nargs = argc - optind;
+		pmemwrite.args = &argv[optind];
 	} else {
 		print_usage(appname);
 		exit(EXIT_FAILURE);
@@ -210,14 +222,16 @@ main(int argc, char *argv[])
 	out_set_vlevel(1);
 
 	struct pmem_pool_params params;
+
 	/* parse pool type from file */
-	pmem_pool_parse_params(pwrite.fname, &params, 1);
+
+	pmem_pool_parse_params(pmemwrite.fname, &params, 1);
 
 	switch (params.type) {
 	case PMEM_POOL_TYPE_BLK:
-		return pmemwrite_blk(&pwrite);
+		return pmemwrite_blk(&pmemwrite);
 	case PMEM_POOL_TYPE_LOG:
-		return pmemwrite_log(&pwrite);
+		return pmemwrite_log(&pmemwrite);
 	default:
 		break;
 	}

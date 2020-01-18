@@ -34,6 +34,15 @@
  * bucket.h -- internal definitions for bucket
  */
 
+#ifndef LIBPMEMOBJ_BUCKET_H
+#define LIBPMEMOBJ_BUCKET_H 1
+
+#include <pthread.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include "memblock.h"
+
 #define RUN_NALLOCS(_bs)\
 ((RUNSIZE / ((_bs))))
 
@@ -53,7 +62,7 @@ struct block_container {
 };
 
 struct block_container_ops {
-	int (*insert)(struct block_container *c, PMEMobjpool *pop,
+	int (*insert)(struct block_container *c, struct palloc_heap *heap,
 		struct memory_block m);
 	int (*get_rm_exact)(struct block_container *c, struct memory_block m);
 	int (*get_rm_bestfit)(struct block_container *c,
@@ -118,12 +127,24 @@ struct bucket_run {
 	unsigned bitmap_nallocs;
 
 	/*
-	 * Maximum multiplication factor of unit_size for allocations.
+	 * Maximum multiplication factor of unit_size for memory blocks.
 	 */
 	unsigned unit_max;
+
+	/*
+	 * Maximum multiplication factor of unit_size for allocations.
+	 * If a memory block is larger than the allowed size it is split and the
+	 * remainder is returned back to the bucket.
+	 */
+	unsigned unit_max_alloc;
 };
 
-struct bucket *bucket_new(uint8_t id, enum bucket_type type,
-	enum block_container_type ctype, size_t unit_size, unsigned unit_max);
+struct bucket_huge *bucket_huge_new(uint8_t id, enum block_container_type ctype,
+	size_t unit_size);
+
+struct bucket_run *bucket_run_new(uint8_t id, enum block_container_type ctype,
+	size_t unit_size, unsigned unit_max, unsigned unit_max_alloc);
 
 void bucket_delete(struct bucket *b);
+
+#endif

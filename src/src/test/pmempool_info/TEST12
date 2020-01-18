@@ -38,7 +38,7 @@ export UNITTEST_NUM=12
 
 . ../unittest/unittest.sh
 
-require_fs_type pmem non-pmem
+require_test_type medium
 
 setup
 

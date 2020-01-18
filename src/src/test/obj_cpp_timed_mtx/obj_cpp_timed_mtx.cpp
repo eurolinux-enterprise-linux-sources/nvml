@@ -36,9 +36,9 @@
 
 #include "unittest.h"
 
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
-#include <libpmemobj/timed_mutex.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
+#include <libpmemobj++/timed_mutex.hpp>
 
 #include <mutex>
 #include <thread>
@@ -64,6 +64,16 @@ const int num_threads = 30;
 
 /* timeout for try_lock_for and try_lock_until methods */
 const auto timeout = std::chrono::milliseconds(100);
+
+/* loop trylock_for|until tests */
+bool loop;
+
+/*
+ * Premature wake-up tolerance.
+ * XXX Windows - this needs to be investigated, it shouldn't timeout this long
+ * before the actual timeout.
+ */
+const auto epsilon = std::chrono::milliseconds(16);
 
 /*
  * increment_pint -- (internal) test the mutex with an std::lock_guard
@@ -111,18 +121,21 @@ trylock_test(nvobj::persistent_ptr<root> proot)
 static void
 trylock_for_test(nvobj::persistent_ptr<root> proot)
 {
-	using clk = std::chrono::steady_clock;
+	using clk = std::chrono::system_clock;
 
-	auto t1 = clk::now();
-	if (proot->pmutex.try_lock_for(timeout)) {
-		(proot->counter)++;
-		proot->pmutex.unlock();
-	} else {
-		auto t2 = clk::now();
-		auto t_diff = t2 - t1;
-		UT_ASSERT(t_diff >= timeout);
-	}
-
+	do {
+		auto t1 = clk::now();
+		if (proot->pmutex.try_lock_for(timeout)) {
+			(proot->counter)++;
+			proot->pmutex.unlock();
+			break;
+		} else {
+			auto t2 = clk::now();
+			auto diff = std::chrono::duration_cast<
+				std::chrono::milliseconds>((t1 + timeout) - t2);
+			UT_ASSERT(diff < epsilon);
+		}
+	} while (loop);
 	return;
 }
 
@@ -132,17 +145,21 @@ trylock_for_test(nvobj::persistent_ptr<root> proot)
 static void
 trylock_until_test(nvobj::persistent_ptr<root> proot)
 {
-	using clk = std::chrono::steady_clock;
+	using clk = std::chrono::system_clock;
 
-	auto t1 = clk::now();
-	if (proot->pmutex.try_lock_until(t1 + timeout)) {
-		--(proot->counter);
-		proot->pmutex.unlock();
-	} else {
-		auto t2 = clk::now();
-		auto t_diff = t2 - t1;
-		UT_ASSERT(t_diff >= timeout);
-	}
+	do {
+		auto t1 = clk::now();
+		if (proot->pmutex.try_lock_until(t1 + timeout)) {
+			--(proot->counter);
+			proot->pmutex.unlock();
+			break;
+		} else {
+			auto t2 = clk::now();
+			auto diff = std::chrono::duration_cast<
+				std::chrono::milliseconds>((t1 + timeout) - t2);
+			UT_ASSERT(diff < epsilon);
+		}
+	} while (loop);
 
 	return;
 }
@@ -194,11 +211,16 @@ main(int argc, char *argv[])
 	timed_mtx_test(pop, trylock_test);
 	UT_ASSERTeq(pop.get_root()->counter, num_threads);
 
+	/* loop the next two tests */
+	loop = true;
+
 	timed_mtx_test(pop, trylock_until_test);
 	UT_ASSERTeq(pop.get_root()->counter, 0);
 
 	timed_mtx_test(pop, trylock_for_test);
 	UT_ASSERTeq(pop.get_root()->counter, num_threads);
+
+	loop = false;
 
 	pop.get_root()->pmutex.lock();
 

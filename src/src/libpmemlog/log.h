@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,7 +34,12 @@
  * log.h -- internal definitions for libpmem log module
  */
 
+#include <stdint.h>
+#include <stddef.h>
 #include <pthread.h>
+
+#include "util.h"
+#include "pool_hdr.h"
 
 #define PMEMLOG_LOG_PREFIX "libpmemlog"
 #define PMEMLOG_LOG_LEVEL_VAR "PMEMLOG_LOG_LEVEL"
@@ -46,8 +51,6 @@
 #define LOG_FORMAT_COMPAT 0x0000
 #define LOG_FORMAT_INCOMPAT 0x0000
 #define LOG_FORMAT_RO_COMPAT 0x0000
-
-extern unsigned long long Pagesize;
 
 struct pmemlog {
 	struct pool_hdr hdr;	/* memory pool header */
@@ -63,6 +66,9 @@ struct pmemlog {
 	int is_pmem;			/* true if pool is PMEM */
 	int rdonly;			/* true if pool is opened read-only */
 	pthread_rwlock_t *rwlockp;	/* pointer to RW lock */
+	int is_dev_dax;			/* true if mapped on device dax */
+
+	struct pool_set *set;		/* pool set info */
 };
 
 /* data area starts at this alignment after the struct pmemlog above */

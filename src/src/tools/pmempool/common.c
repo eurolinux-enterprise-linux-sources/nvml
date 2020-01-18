@@ -49,22 +49,29 @@
 #include <assert.h>
 #include <getopt.h>
 #include <unistd.h>
+#include <endian.h>
 
 #include "common.h"
 #include "output.h"
+#include "libpmem.h"
 #include "libpmemblk.h"
 #include "libpmemlog.h"
 #include "libpmemobj.h"
 #include "btt.h"
+#include "file.h"
+#include "set.h"
+#include "out.h"
+#include "mmap.h"
 
 #define REQ_BUFF_SIZE	2048U
+#define Q_BUFF_SIZE	8192
 
 typedef const char *(*enum_to_str_fn)(int);
 
 /*
  * pmem_pool_type -- return pool type based on first two pages.
  * If pool header's content suggests that pool may be BTT device
- * (no correct checksum and signature for pool header) checksum and
+ * (first page zeroed and no correct signature for pool header),
  * signature from second page is checked to prove that it's BTT device layout.
  */
 pmem_pool_type_t
@@ -72,16 +79,39 @@ pmem_pool_type(const void *base_pool_addr)
 {
 	struct pool_hdr *hdrp = (struct pool_hdr *)base_pool_addr;
 
-	int ret;
 	if (util_is_zeroed(hdrp, DEFAULT_HDR_SIZE)) {
 		return util_get_pool_type_second_page(base_pool_addr);
 	}
 
-	ret  = util_checksum(hdrp, sizeof(*hdrp), &hdrp->checksum, 0);
-	if (ret)
-		return pmem_pool_type_parse_hdr(hdrp);
+	pmem_pool_type_t type = pmem_pool_type_parse_hdr(hdrp);
+	if (type != PMEM_POOL_TYPE_UNKNOWN)
+		return type;
 	else
 		return util_get_pool_type_second_page(base_pool_addr);
+}
+
+/*
+ * pmem_pool_checksum -- return true if checksum is correct
+ * based on first two pages
+ */
+int
+pmem_pool_checksum(const void *base_pool_addr)
+{
+	/* check whether it's btt device -> first page zeroed */
+	if (util_is_zeroed(base_pool_addr, DEFAULT_HDR_SIZE)) {
+		struct btt_info bttinfo;
+		void *sec_page_addr = (char *)base_pool_addr + DEFAULT_HDR_SIZE;
+		memcpy(&bttinfo, sec_page_addr, sizeof(bttinfo));
+		btt_info_convert2h(&bttinfo);
+		return util_checksum(&bttinfo, sizeof(bttinfo),
+				&bttinfo.checksum, 0);
+	} else {
+		/* it's not btt device - first page contains header */
+		struct pool_hdr hdrp;
+		memcpy(&hdrp, base_pool_addr, sizeof(hdrp));
+		return util_checksum(&hdrp, sizeof(hdrp),
+				&hdrp.checksum, 0);
+	}
 }
 
 /*
@@ -139,7 +169,6 @@ util_validate_checksum(void *addr, size_t len, uint64_t *csum)
 pmem_pool_type_t
 util_get_pool_type_second_page(const void *pool_base_addr)
 {
-	int ret;
 	struct btt_info bttinfo;
 
 	void *sec_page_addr = (char *)pool_base_addr + DEFAULT_HDR_SIZE;
@@ -147,10 +176,6 @@ util_get_pool_type_second_page(const void *pool_base_addr)
 	btt_info_convert2h(&bttinfo);
 
 	if (util_is_zeroed(&bttinfo, sizeof(bttinfo)))
-		return PMEM_POOL_TYPE_UNKNOWN;
-
-	ret = util_checksum(&bttinfo, sizeof(bttinfo), &bttinfo.checksum, 0);
-	if (!ret)
 		return PMEM_POOL_TYPE_UNKNOWN;
 
 	if (memcmp(bttinfo.sig, BTTINFO_SIG, BTTINFO_SIG_LEN) == 0)
@@ -206,12 +231,22 @@ util_range_limit(struct range *rangep, struct range limit)
 static int
 util_parse_range_from_to(char *str, struct range *rangep, struct range entire)
 {
-	char *str1 = NULL;
+	char *str1;
 	char sep;
-	char *str2 = NULL;
+	char *str2;
 
 	int ret = 0;
-	if (sscanf(str, "%m[^-]%c%m[^-]", &str1, &sep, &str2) == 3 &&
+
+	str1 = malloc(strlen(str) + 1);
+	if (str1 == NULL) {
+		ret = -1;
+		goto end;
+	}
+	str2 = malloc(strlen(str) + 1);
+	if (str2 == NULL) {
+		goto nomem;
+	}
+	if (sscanf(str, "%[^-]%c%[^-]", str1, &sep, str2) == 3 &&
 			sep == '-' &&
 			strlen(str) == (strlen(str1) + 1 + strlen(str2))) {
 		if (util_parse_size(str1, &rangep->first) != 0)
@@ -230,11 +265,11 @@ util_parse_range_from_to(char *str, struct range *rangep, struct range entire)
 		ret = -1;
 	}
 
-	if (str1)
-		free(str1);
-	if (str2)
-		free(str2);
 
+	free(str2);
+nomem:
+	free(str1);
+end:
 	return ret;
 }
 
@@ -244,11 +279,14 @@ util_parse_range_from_to(char *str, struct range *rangep, struct range entire)
 static int
 util_parse_range_from(char *str, struct range *rangep, struct range entire)
 {
-	char *str1 = NULL;
 	char sep;
-
 	int ret = 0;
-	if (sscanf(str, "%m[^-]%c", &str1, &sep) == 2 &&
+
+	char *str1 = malloc(strlen(str) + 1);
+	if (str1 == NULL)
+		return -1;
+
+	if (sscanf(str, "%[^-]%c", str1, &sep) == 2 &&
 			sep == '-' &&
 			strlen(str) == (strlen(str1) + 1)) {
 		if (util_parse_size(str1, &rangep->first) == 0) {
@@ -273,11 +311,14 @@ util_parse_range_from(char *str, struct range *rangep, struct range entire)
 static int
 util_parse_range_to(char *str, struct range *rangep, struct range entire)
 {
-	char *str1 = NULL;
 	char sep;
-
 	int ret = 0;
-	if (sscanf(str, "%c%m[^-]", &sep, &str1) == 2 &&
+
+	char *str1 = malloc(strlen(str) + 1);
+	if (str1 == NULL)
+		return -1;
+
+	if (sscanf(str, "%c%[^-]", &sep, str1) == 2 &&
 			sep == '-' &&
 			strlen(str) == (1 + strlen(str1))) {
 		if (util_parse_size(str1, &rangep->last) == 0) {
@@ -290,9 +331,7 @@ util_parse_range_to(char *str, struct range *rangep, struct range entire)
 		ret = -1;
 	}
 
-	if (str1)
-		free(str1);
-
+	free(str1);
 	return ret;
 }
 
@@ -493,45 +532,40 @@ pmem_pool_get_min_size(pmem_pool_type_t type)
 int
 util_poolset_map(const char *fname, struct pool_set **poolset, int rdonly)
 {
-	if (util_is_poolset(fname) != 1)
-		return util_pool_open_nocheck(poolset, fname, rdonly);
+	if (util_is_poolset_file(fname) != 1) {
+		int ret = util_poolset_create_set(poolset, fname, 0, 0);
+		if (ret < 0) {
+			outv_err("cannot open pool set -- '%s'", fname);
+			return -1;
+		}
+		return util_pool_open_nocheck(*poolset, rdonly);
+	}
 
+	/* open poolset file */
 	int fd = util_file_open(fname, NULL, 0, O_RDONLY);
 	if (fd < 0)
 		return -1;
 
-	int ret = 0;
-
-	struct pool_set *set = NULL;
+	struct pool_set *set;
 
 	/* parse poolset file */
-	if (util_poolset_parse(fname, fd, &set)) {
+	if (util_poolset_parse(&set, fname, fd)) {
 		outv_err("parsing poolset file failed\n");
-		ret = -1;
-		goto err_close;
+		close(fd);
+		return -1;
 	}
+	close(fd);
 
-	/* open the first part set file to read the pool header values */
-	int fdp = util_file_open(set->replica[0]->part[0].path,
-			NULL, 0, O_RDONLY);
-	if (fdp < 0) {
-		outv_err("cannot open poolset part file\n");
-		ret = -1;
+	/* read the pool header from first pool set file */
+	const char *part0_path = PART(REP(set, 0), 0).path;
+	struct pool_hdr hdr;
+	if (util_file_pread(part0_path, &hdr, sizeof(hdr), 0) !=
+			sizeof(hdr)) {
+		outv_err("cannot read pool header from poolset\n");
 		goto err_pool_set;
 	}
 
-	struct pool_hdr hdr;
-	/* read the pool header from first pool set file */
-	if (pread(fdp, &hdr, sizeof(hdr), 0)
-			!= sizeof(hdr)) {
-		outv_err("cannot read pool header from poolset\n");
-		ret = -1;
-		goto err_close_part;
-	}
-
-	close(fdp);
 	util_poolset_free(set);
-	close(fd);
 
 	util_convert2h_hdr_nocheck(&hdr);
 
@@ -546,6 +580,12 @@ util_poolset_map(const char *fname, struct pool_set **poolset, int rdonly)
 	size_t minsize = pmem_pool_get_min_size(type);
 
 	/*
+	 * Just use one thread - there is no need for multi-threaded access
+	 * to remote pool.
+	 */
+	unsigned nlanes = 1;
+
+	/*
 	 * Open the poolset, the values passed to util_pool_open are read
 	 * from the first poolset file, these values are then compared with
 	 * the values from all headers of poolset files.
@@ -554,20 +594,16 @@ util_poolset_map(const char *fname, struct pool_set **poolset, int rdonly)
 			hdr.signature, hdr.major,
 			hdr.compat_features,
 			hdr.incompat_features,
-			hdr.ro_compat_features)) {
-		outv_err("openning poolset failed\n");
+			hdr.ro_compat_features, &nlanes)) {
+		outv_err("opening poolset failed\n");
 		return -1;
 	}
 
 	return 0;
-err_close_part:
-	close(fdp);
+
 err_pool_set:
 	util_poolset_free(set);
-err_close:
-	close(fd);
-
-	return ret;
+	return -1;
 }
 
 /*
@@ -577,22 +613,22 @@ int
 pmem_pool_parse_params(const char *fname, struct pmem_pool_params *paramsp,
 		int check)
 {
-	util_stat_t stat_buf;
 	paramsp->type = PMEM_POOL_TYPE_UNKNOWN;
 	char pool_str_addr[POOL_HDR_DESC_SIZE];
 
-	paramsp->is_poolset = util_is_poolset(fname) == 1;
+	paramsp->is_poolset = util_is_poolset_file(fname) == 1;
 	int fd = util_file_open(fname, NULL, 0, O_RDONLY);
 	if (fd < 0)
 		return -1;
 
-	int ret = 0;
-
 	/* get file size and mode */
+	util_stat_t stat_buf;
 	if (util_fstat(fd, &stat_buf)) {
-		ret = -1;
-		goto out_close;
+		close(fd);
+		return -1;
 	}
+
+	int ret = 0;
 
 	assert(stat_buf.st_size >= 0);
 	paramsp->size = (uint64_t)stat_buf.st_size;
@@ -606,23 +642,55 @@ pmem_pool_parse_params(const char *fname, struct pmem_pool_params *paramsp,
 		fd = -1;
 
 		if (check) {
-			if (util_poolset_map(fname, &set, 1))
-				return -1;
+			if (util_poolset_map(fname, &set, 0)) {
+				ret = -1;
+				goto out_close;
+			}
 		} else {
-			if (util_pool_open_nocheck(&set, fname, 1))
-				return -1;
+			ret = util_poolset_create_set(&set, fname, 0, 0);
+			if (ret < 0) {
+				outv_err("cannot open pool set -- '%s'", fname);
+				ret = -1;
+				goto out_close;
+			}
+			if (util_pool_open_nocheck(set, 0)) {
+				ret = -1;
+				goto out_close;
+			}
 		}
 
 		paramsp->size = set->poolsize;
 		addr = set->replica[0]->part[0].addr;
-	} else {
-		/* read first two pages */
-		ssize_t num = read(fd, pool_str_addr, POOL_HDR_DESC_SIZE);
-		if (num < (ssize_t)POOL_HDR_DESC_SIZE) {
-			ret = -1;
+
+		/*
+		 * XXX mprotect for device dax with length not aligned to its
+		 * page granularity causes SIGBUS on the next page fault.
+		 * The length argument of this call should be changed to
+		 * set->poolsize once the kernel issue is solved.
+		 */
+		if (mprotect(addr, set->replica[0]->repsize,
+			PROT_READ) < 0) {
+			ERR("!mprotect");
 			goto out_close;
 		}
-		addr = pool_str_addr;
+	} else {
+		/* read first two pages */
+		if (util_file_is_device_dax(fname)) {
+			addr = util_file_map_whole(fname);
+			if (addr == NULL) {
+				ret = -1;
+				goto out_close;
+			}
+		} else {
+			ssize_t num = read(fd, pool_str_addr,
+					POOL_HDR_DESC_SIZE);
+			if (num < (ssize_t)POOL_HDR_DESC_SIZE) {
+				ERR("!read");
+				ret = -1;
+				goto out_close;
+			}
+			addr = pool_str_addr;
+		}
 	}
 
 	struct pool_hdr hdr;
@@ -639,12 +707,16 @@ pmem_pool_parse_params(const char *fname, struct pmem_pool_params *paramsp,
 	 */
 	paramsp->is_part = !paramsp->is_poolset &&
 		(memcmp(hdr.uuid, hdr.next_part_uuid, POOL_HDR_UUID_LEN) ||
-		memcmp(hdr.uuid, hdr.prev_part_uuid, POOL_HDR_UUID_LEN));
+		memcmp(hdr.uuid, hdr.prev_part_uuid, POOL_HDR_UUID_LEN) ||
+		memcmp(hdr.uuid, hdr.next_repl_uuid, POOL_HDR_UUID_LEN) ||
+		memcmp(hdr.uuid, hdr.prev_repl_uuid, POOL_HDR_UUID_LEN));
 
 	if (check)
 		paramsp->type = pmem_pool_type(addr);
 	else
 		paramsp->type = pmem_pool_type_parse_hdr(addr);
+
+	paramsp->is_checksum_ok = pmem_pool_checksum(addr);
 
 	if (paramsp->type == PMEM_POOL_TYPE_BLK) {
 		struct pmemblk pbp;
@@ -680,15 +752,23 @@ util_check_memory(const uint8_t *buff, size_t len, uint8_t val)
 	return 0;
 }
 
+/*
+ * ask -- print question and wait for single-char answer
+ */
 char
 ask(char op, char *answers, char def_ans, const char *fmt, va_list ap)
 {
+	char qbuff[Q_BUFF_SIZE];
 	char ans = '\0';
+	int valid = 0;
 	if (op != '?')
 		return op;
+
+	vsnprintf(qbuff, Q_BUFF_SIZE, fmt, ap);
+
 	int is_tty = isatty(fileno(stdin));
 	do {
-		vprintf(fmt, ap);
+		printf("%s", qbuff);
 		size_t len = strlen(answers);
 		size_t i;
 		char def_anslo = (char)tolower(def_ans);
@@ -706,9 +786,20 @@ ask(char op, char *answers, char def_ans, const char *fmt, va_list ap)
 			ans = def_anslo;
 		else
 			ans = (char)tolower(c);
-		if (ans != '\n')
-			(void) getchar();
-	} while (ans != '\n' && strchr(answers, ans) == NULL);
+		valid = 1;
+		if (ans != '\n') {
+			/*
+			 * Valid answer must consist of a single letter and new
+			 * line character just after it. Otherwise it is
+			 * invalid.
+			 */
+			if ((char)getchar() != '\n') {
+				valid = 0;
+				while ((char)getchar() != '\n')
+					;
+			}
+		}
+	} while (!valid || (ans != '\n' && strchr(answers, ans) == NULL));
 
 	char ret = ans == '\n' ? def_ans : ans;
 	if (!is_tty)
@@ -826,7 +917,7 @@ util_options_alloc(const struct option *options,
 	if (!opts)
 		err(1, "Cannot allocate memory for options structure");
 
-	opts->options = options;
+	opts->opts = options;
 	opts->noptions = nopts;
 	opts->req = req;
 	size_t bitmap_size = howmany(nopts, 8);
@@ -854,7 +945,7 @@ util_options_free(struct options *opts)
 static int
 util_opt_get_index(const struct options *opts, int opt)
 {
-	const struct option *lopt = &opts->options[0];
+	const struct option *lopt = &opts->opts[0];
 	int ret = 0;
 	while (lopt->name) {
 		if ((lopt->val & ~OPT_MASK) == opt)
@@ -937,7 +1028,7 @@ util_opt_print_requirements(const struct options *opts,
 	unsigned n = 0;
 	uint64_t tmp;
 	const struct option *opt =
-		&opts->options[util_opt_get_index(opts, req->opt)];
+		&opts->opts[util_opt_get_index(opts, req->opt)];
 	int sn;
 
 	sn = snprintf(&buff[n], REQ_BUFF_SIZE - n,
@@ -968,7 +1059,7 @@ util_opt_print_requirements(const struct options *opts,
 			int req_opt_ind =
 				util_opt_get_index(opts, tmp & OPT_REQ_MASK);
 			const struct option *req_option =
-				&opts->options[req_opt_ind];
+				&opts->opts[req_opt_ind];
 
 			sn = snprintf(&buff[n], REQ_BUFF_SIZE - n,
 				"-%c|--%s", req_option->val, req_option->name);
@@ -998,7 +1089,7 @@ static int
 util_opt_verify_requirements(const struct options *opts, size_t index,
 		pmem_pool_type_t type)
 {
-	const struct option *opt = &opts->options[index];
+	const struct option *opt = &opts->opts[index];
 	int val = opt->val & ~OPT_MASK;
 	struct option_requirement *req;
 
@@ -1023,7 +1114,7 @@ static int
 util_opt_verify_type(const struct options *opts, pmem_pool_type_t type,
 		size_t index)
 {
-	const struct option *opt = &opts->options[index];
+	const struct option *opt = &opts->opts[index];
 	int val = opt->val & ~OPT_MASK;
 	int opt_type = opt->val;
 	opt_type >>= OPT_SHIFT;
@@ -1045,7 +1136,7 @@ int
 util_options_getopt(int argc, char *argv[], const char *optstr,
 		const struct options *opts)
 {
-	int opt = getopt_long(argc, argv, optstr, opts->options, NULL);
+	int opt = getopt_long(argc, argv, optstr, opts->opts, NULL);
 	if (opt == -1 || opt == '?')
 		return opt;
 
@@ -1186,7 +1277,7 @@ pool_set_file_open(const char *fname,
 	util_stat_t buf;
 	if (util_stat(fname, &buf)) {
 		warn("%s", fname);
-		goto err_close_poolset;
+		goto err_free_fname;
 	}
 
 	file->mtime = buf.st_mtime;
@@ -1199,13 +1290,14 @@ pool_set_file_open(const char *fname,
 		int fd = util_file_open(fname, NULL, 0, O_RDONLY);
 		if (fd < 0) {
 			outv_err("util_file_open failed\n");
-			return NULL;
+			goto err_free_fname;
 		}
 
 		off_t seek_size = util_lseek(fd, 0, SEEK_END);
 		if (seek_size == -1) {
 			outv_err("lseek SEEK_END failed\n");
-			return NULL;
+			close(fd);
+			goto err_free_fname;
 		}
 
 		file->size = (size_t)seek_size;
@@ -1220,14 +1312,20 @@ pool_set_file_open(const char *fname,
 					&file->poolset, rdonly))
 				goto err_free_fname;
 		} else {
-			if (util_pool_open_nocheck(&file->poolset, file->fname,
-					rdonly))
+			int ret = util_poolset_create_set(&file->poolset,
+				file->fname, 0, 0);
+			if (ret < 0) {
+				outv_err("cannot open pool set -- '%s'",
+					file->fname);
+				goto err_free_fname;
+			}
+			if (util_pool_open_nocheck(file->poolset, rdonly))
 				goto err_free_fname;
 		}
 
 		/* get modification time from the first part of first replica */
 		const char *path = file->poolset->replica[0]->part[0].path;
-		if (stat(path, &buf)) {
+		if (util_stat(path, &buf)) {
 			warn("%s", path);
 			goto err_close_poolset;
 		}
@@ -1318,10 +1416,24 @@ pool_set_file_set_replica(struct pool_set_file *file, size_t replica)
 	if (replica >= file->poolset->nreplicas)
 		return -1;
 
+	if (file->poolset->replica[replica]->remote) {
+		outv_err("reading from remote replica not supported");
+		return -1;
+	}
+
 	file->replica = replica;
 	file->addr = file->poolset->replica[replica]->part[0].addr;
 
 	return 0;
+}
+
+/*
+ * pool_set_file_nreplicas -- return number of replicas
+ */
+size_t
+pool_set_file_nreplicas(struct pool_set_file *file)
+{
+	return file->poolset->nreplicas;
 }
 
 /*
@@ -1333,4 +1445,23 @@ pool_set_file_map(struct pool_set_file *file, uint64_t offset)
 	if (file->addr == MAP_FAILED)
 		return NULL;
 	return (char *)file->addr + offset;
+}
+
+/*
+ * pool_set_file_persist -- propagates and persists changes to a memory range
+ */
+void
+pool_set_file_persist(struct pool_set_file *file, const void *addr, size_t len)
+{
+	uintptr_t offset = (uintptr_t)((char *)addr -
+		(char *)file->poolset->replica[0]->part[0].addr);
+
+	for (unsigned r = 1; r < file->poolset->nreplicas; ++r) {
+		struct pool_replica *rep = file->poolset->replica[r];
+		void *dst = (char *)rep->part[0].addr + offset;
+		memcpy(dst, addr, len);
+		PERSIST_GENERIC(rep->is_pmem, dst, len);
+	}
+	struct pool_replica *rep = file->poolset->replica[0];
+	PERSIST_GENERIC(rep->is_pmem, (void *)addr, len);
 }

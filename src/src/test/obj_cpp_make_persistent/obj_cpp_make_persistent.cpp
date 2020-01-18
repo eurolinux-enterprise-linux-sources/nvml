@@ -36,11 +36,11 @@
 
 #include "unittest.h"
 
-#include <libpmemobj/make_persistent.hpp>
-#include <libpmemobj/p.hpp>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
-#include <libpmemobj/transaction.hpp>
+#include <libpmemobj++/make_persistent.hpp>
+#include <libpmemobj++/p.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
+#include <libpmemobj++/transaction.hpp>
 
 #define LAYOUT "cpp"
 
@@ -175,7 +175,7 @@ test_additional_delete(nvobj::pool<struct root> &pop)
 
 			nvobj::transaction::abort(EINVAL);
 		});
-	} catch (nvml::manual_tx_abort &ma) {
+	} catch (nvml::manual_tx_abort &) {
 		exception_thrown = true;
 	} catch (...) {
 		UT_ASSERT(0);

@@ -42,14 +42,12 @@ Param(
 
 $Env:UNITTEST_NAME = "blk_pool\TEST25"
 $Env:UNITTEST_NUM = "25"
-# XXX:  bash has a few calls to tools that we don't have on
-# windows (yet) that set PMEM_IS_PMEM and NON_PMEM_IS_PMEM based
-# on their output
-$Env:PMEM_IS_PMEM = $true
-$Env:NON_PMEM_IS_PMEM = $true
+
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
+
+require_test_type medium
 
 setup
 
@@ -57,17 +55,18 @@ setup
 # TEST25 existing file, file size >= min required size, bsize == 0
 #        (no read permissions)
 #
-expect_normal_exit ..\..\x64\debug\blk_pool$Env:EXESUFFIX `
+expect_normal_exit $Env:EXE_DIR\blk_pool$Env:EXESUFFIX `
     c $DIR\testfile 512 20 0640
 
 # remove read permissions
 & icacls $DIR\testfile /deny ${Env:USERNAME}:R >$null
 
-expect_normal_exit ..\..\x64\debug\blk_pool$Env:EXESUFFIX `
+expect_normal_exit $Env:EXE_DIR\blk_pool$Env:EXESUFFIX `
     o $DIR\testfile 0
 
 # grant full permissions so test code can cleanup
 & icacls $DIR\testfile /grant ${Env:USERNAME}:F >$null
 
-# check will print the appropriate pass/fail message
 check
+
+pass

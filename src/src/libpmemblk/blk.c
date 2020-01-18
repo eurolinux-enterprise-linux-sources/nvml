@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -48,7 +48,8 @@
 #include "libpmem.h"
 #include "libpmemblk.h"
 
-#include "util.h"
+#include "mmap.h"
+#include "set.h"
 #include "out.h"
 #include "btt.h"
 #include "blk.h"
@@ -134,7 +135,7 @@ nswrite(void *ns, unsigned lane, const void *buf, size_t count,
 #endif
 
 	/* unprotect the memory (debug version only) */
-	RANGE_RW(dest, count);
+	RANGE_RW(dest, count, pbp->is_dev_dax);
 
 	if (pbp->is_pmem)
 		pmem_memcpy_nodrain(dest, buf, count);
@@ -142,7 +143,7 @@ nswrite(void *ns, unsigned lane, const void *buf, size_t count,
 		memcpy(dest, buf, count);
 
 	/* protect the memory again (debug version only) */
-	RANGE_RO(dest, count);
+	RANGE_RO(dest, count, pbp->is_dev_dax);
 
 #ifdef DEBUG
 	/* release debug write lock */
@@ -241,12 +242,12 @@ nszero(void *ns, unsigned lane, size_t count, uint64_t off)
 	void *dest = (char *)pbp->data + off;
 
 	/* unprotect the memory (debug version only) */
-	RANGE_RW(dest, count);
+	RANGE_RW(dest, count, pbp->is_dev_dax);
 
 	pmem_memset_persist(dest, 0, count);
 
 	/* protect the memory again (debug version only) */
-	RANGE_RO(dest, count);
+	RANGE_RO(dest, count, pbp->is_dev_dax);
 
 	return 0;
 }
@@ -271,10 +272,10 @@ pmemblk_descr_create(PMEMblkpool *pbp, uint32_t bsize, int zeroed)
 
 	/* create the required metadata */
 	pbp->bsize = htole32(bsize);
-	pmem_msync(&pbp->bsize, sizeof(bsize));
+	PERSIST_GENERIC(pbp->is_pmem, &pbp->bsize, sizeof(bsize));
 
 	pbp->is_zeroed = zeroed;
-	pmem_msync(&pbp->is_zeroed, sizeof(pbp->is_zeroed));
+	PERSIST_GENERIC(pbp->is_pmem, &pbp->is_zeroed, sizeof(pbp->is_zeroed));
 
 	return 0;
 }
@@ -304,10 +305,10 @@ pmemblk_descr_check(PMEMblkpool *pbp, size_t *bsize)
  * pmemblk_runtime_init -- (internal) initialize block memory pool runtime data
  */
 static int
-pmemblk_runtime_init(PMEMblkpool *pbp, size_t bsize, int rdonly, int is_pmem)
+pmemblk_runtime_init(PMEMblkpool *pbp, size_t bsize, int rdonly)
 {
-	LOG(3, "pbp %p bsize %zu rdonly %d is_pmem %d",
-			pbp, bsize, rdonly, is_pmem);
+	LOG(3, "pbp %p bsize %zu rdonly %d",
+			pbp, bsize, rdonly);
 
 	/* remove volatile part of header */
 	VALGRIND_REMOVE_PMEM_MAPPING(&pbp->addr,
@@ -322,7 +323,6 @@ pmemblk_runtime_init(PMEMblkpool *pbp, size_t bsize, int rdonly, int is_pmem)
 	 * created here, so no need to worry about byte-order.
 	 */
 	pbp->rdonly = rdonly;
-	pbp->is_pmem = is_pmem;
 	pbp->data = (char *)pbp->addr +
 			roundup(sizeof(*pbp), BLK_FORMAT_DATA_ALIGN);
 	ASSERT(((char *)pbp->addr + pbp->size) >= (char *)pbp->data);
@@ -373,18 +373,16 @@ pmemblk_runtime_init(PMEMblkpool *pbp, size_t bsize, int rdonly, int is_pmem)
 	 * The prototype PMFS doesn't allow this when large pages are in
 	 * use. It is not considered an error if this fails.
 	 */
-	util_range_none(pbp->addr, sizeof(struct pool_hdr));
+	RANGE_NONE(pbp->addr, sizeof(struct pool_hdr), pbp->is_dev_dax);
 
 	/* the data area should be kept read-only for debug version */
-	RANGE_RO(pbp->data, pbp->datasize);
+	RANGE_RO(pbp->data, pbp->datasize, pbp->is_dev_dax);
 
 	return 0;
 
 err:
 	LOG(4, "error clean up");
 	int oerrno = errno;
-	if (locks)
-		Free((void *)locks);
 	if (bttp)
 		btt_fini(bttp);
 	errno = oerrno;
@@ -419,7 +417,8 @@ pmemblk_create(const char *path, size_t bsize, size_t poolsize,
 	if (util_pool_create(&set, path, poolsize, PMEMBLK_MIN_POOL,
 			BLK_HDR_SIG, BLK_FORMAT_MAJOR,
 			BLK_FORMAT_COMPAT, BLK_FORMAT_INCOMPAT,
-			BLK_FORMAT_RO_COMPAT) != 0) {
+			BLK_FORMAT_RO_COMPAT, NULL,
+			REPLICAS_DISABLED) != 0) {
 		LOG(2, "cannot create pool or pool set");
 		return NULL;
 	}
@@ -435,12 +434,12 @@ pmemblk_create(const char *path, size_t bsize, size_t poolsize,
 
 	pbp->addr = pbp;
 	pbp->size = rep->repsize;
+	pbp->set = set;
+	pbp->is_pmem = rep->is_pmem;
+	pbp->is_dev_dax = rep->part[0].is_dev_dax;
 
-	if (set->nreplicas > 1) {
-		errno = ENOTSUP;
-		ERR("!replicas not supported");
-		goto err;
-	}
+	/* is_dev_dax implies is_pmem */
+	ASSERT(!pbp->is_dev_dax || pbp->is_pmem);
 
 	/* create pool descriptor */
 	if (pmemblk_descr_create(pbp, (uint32_t)bsize, set->zeroed) != 0) {
@@ -449,7 +448,7 @@ pmemblk_create(const char *path, size_t bsize, size_t poolsize,
 	}
 
 	/* initialize runtime parts */
-	if (pmemblk_runtime_init(pbp, bsize, 0, rep->is_pmem) != 0) {
+	if (pmemblk_runtime_init(pbp, bsize, 0) != 0) {
 		ERR("pool initialization failed");
 		goto err;
 	}
@@ -458,8 +457,6 @@ pmemblk_create(const char *path, size_t bsize, size_t poolsize,
 		goto err;
 
 	util_poolset_fdclose(set);
-
-	util_poolset_free(set);
 
 	LOG(3, "pbp %p", pbp);
 	return pbp;
@@ -492,7 +489,7 @@ pmemblk_open_common(const char *path, size_t bsize, int cow)
 	if (util_pool_open(&set, path, cow, PMEMBLK_MIN_POOL,
 			BLK_HDR_SIG, BLK_FORMAT_MAJOR,
 			BLK_FORMAT_COMPAT, BLK_FORMAT_INCOMPAT,
-			BLK_FORMAT_RO_COMPAT) != 0) {
+			BLK_FORMAT_RO_COMPAT, NULL) != 0) {
 		LOG(2, "cannot open pool or pool set");
 		return NULL;
 	}
@@ -508,6 +505,12 @@ pmemblk_open_common(const char *path, size_t bsize, int cow)
 
 	pbp->addr = pbp;
 	pbp->size = rep->repsize;
+	pbp->set = set;
+	pbp->is_pmem = rep->is_pmem;
+	pbp->is_dev_dax = rep->part[0].is_dev_dax;
+
+	/* is_dev_dax implies is_pmem */
+	ASSERT(!pbp->is_dev_dax || pbp->is_pmem);
 
 	if (set->nreplicas > 1) {
 		errno = ENOTSUP;
@@ -522,14 +525,12 @@ pmemblk_open_common(const char *path, size_t bsize, int cow)
 	}
 
 	/* initialize runtime parts */
-	if (pmemblk_runtime_init(pbp, bsize, set->rdonly, rep->is_pmem) != 0) {
+	if (pmemblk_runtime_init(pbp, bsize, set->rdonly) != 0) {
 		ERR("pool initialization failed");
 		goto err;
 	}
 
 	util_poolset_fdclose(set);
-
-	util_poolset_free(set);
 
 	LOG(3, "pbp %p", pbp);
 	return pbp;
@@ -573,8 +574,7 @@ pmemblk_close(PMEMblkpool *pbp)
 	pthread_mutex_destroy(&pbp->write_lock);
 #endif
 
-	VALGRIND_REMOVE_PMEM_MAPPING(pbp->addr, pbp->size);
-	util_unmap(pbp->addr, pbp->size);
+	util_poolset_close(pbp->set, 0);
 }
 
 /*

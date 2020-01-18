@@ -34,10 +34,10 @@
  * list.hpp -- Implementation of list
  */
 
-#include <libpmemobj/make_persistent.hpp>
-#include <libpmemobj/p.hpp>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pext.hpp>
+#include <libpmemobj++/make_persistent.hpp>
+#include <libpmemobj++/p.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pext.hpp>
 
 namespace examples
 {
@@ -135,7 +135,7 @@ public:
 	 * Return number of elements in list
 	 */
 	unsigned
-	size()
+	size() const
 	{
 		return len;
 	}

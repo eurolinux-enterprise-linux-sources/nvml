@@ -71,6 +71,7 @@ Version: \${version}
 URL: http://pmem.io/nvml
 Requires: libpmem
 Libs: -L\${libdir} -lpmemobj
+Libs.private: -ldl
 Cflags: -I\${includedir}
 EOF
 
@@ -86,6 +87,7 @@ Version: \${version}
 URL: http://pmem.io/nvml
 Requires: libpmem
 Libs: -L\${libdir} -lpmempool
+Libs.private: -ldl
 Cflags: -I\${includedir}
 EOF
 
@@ -161,5 +163,20 @@ Version: \${version}
 URL: http://pmem.io/nvml
 Requires.private:
 Libs: -L\${libdir} -lpmemobj
+Cflags: -I\${includedir}
+EOF
+
+cat << EOF > librpmem.pc
+prefix=${prefix}
+libdir=${libdir}
+version=${version}
+includedir=\${prefix}/include
+
+Name: libpmem
+Description: librpmem library from NVML project
+Version: \${version}
+URL: http://pmem.io/nvml
+Requires:
+Libs: -L\${libdir} -lpmem
 Cflags: -I\${includedir}
 EOF

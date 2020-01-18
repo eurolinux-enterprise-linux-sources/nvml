@@ -1,4 +1,4 @@
-pmemobj_direct(r): off = 0x0 uuid = 0x0 ptr = (nil)
+pmemobj_direct(r): off = 0x0 uuid = 0x0 ptr = $(nW)
 pmemobj_root(1024): off = $(nW) uuid = $(nW)
 pmemobj_direct(r): off = $(nW) uuid = $(nW) ptr = $(nW)
 pmemobj_root_size: size = 1024
@@ -18,7 +18,7 @@ pmemobj_type_num(r.1): type num = 4
 pmemobj_alloc_usable_size(r.0): size = $(nW)
 pmemobj_alloc_usable_size(r.1): size = $(nW)
 pmemobj_first: off = $(nW) uuid = $(nW)
-pmemobj_next($(nW)): off = 0x382ac0 uuid = $(nW)
+pmemobj_next($(nW)): off = $(nW) uuid = $(nW)
 pmemobj_memset_persist($(nW), 255, 128): ptr = $(nW)
 pmemobj_memset_persist($(nW), 0, 128): ptr = $(nW)
 pmemobj_memcpy_persist($(nW), $(nW), 128): ptr = $(nW)
@@ -41,4 +41,4 @@ pmemobj_free($(nW)): off = 0x0 uuid = 0x0
 pmemobj_free($(nW)): off = 0x0 uuid = 0x0
 pmemobj_free($(nW)): off = 0x0 uuid = 0x0
 pmemobj_free($(nW)): off = 0x0 uuid = 0x0
-pmemobj_direct(r.0): off = 0x0 uuid = 0x0 ptr = (nil)
+pmemobj_direct(r.0): off = 0x0 uuid = 0x0 ptr = $(nW)

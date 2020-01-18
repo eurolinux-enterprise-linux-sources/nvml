@@ -46,7 +46,7 @@
 
 #define RPMEMD_SYSLOG_OPTS	(LOG_NDELAY | LOG_PID)
 #define RPMEMD_SYSLOG_FACILITY	(LOG_USER)
-#define RPMEMD_DEFAULT_FH	stdout
+#define RPMEMD_DEFAULT_FH	stderr
 #define RPMEMD_MAX_MSG		((size_t)8192)
 #define RPMEMD_MAX_PREFIX	((size_t)256)
 
@@ -109,11 +109,6 @@ rpmemd_log_level_to_str(enum rpmemd_log_level level)
 int
 rpmemd_log_init(const char *ident, const char *fname, int use_syslog)
 {
-	if (fname && use_syslog) {
-		errno = EINVAL;
-		return -1;
-	}
-
 	rpmemd_use_syslog = use_syslog;
 
 	if (rpmemd_use_syslog) {

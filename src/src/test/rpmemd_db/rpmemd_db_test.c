@@ -40,6 +40,11 @@
 #include "librpmem.h"
 #include "rpmemd_db.h"
 #include "rpmemd_log.h"
+#include "set.h"
+#include <limits.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <time.h>
 
 #define POOL_MODE 0644
 
@@ -48,6 +53,20 @@
 
 #define FAILED_FUNC_PARAM(func_name, param) \
 		UT_ERR("!%s(): %s(%s) failed", __func__, func_name, param);
+
+/*
+ * fill_rand -- fill a buffer with random values
+ */
+static void
+fill_rand(void *addr, size_t len)
+{
+	unsigned char *buff = addr;
+
+	srand(time(NULL));
+	for (unsigned i = 0; i < len; i++)
+		buff[i] = (rand() % ('z' - 'a')) + 'a';
+
+}
 
 /*
  * test_init -- test rpmemd_db_init() and rpmemd_db_fini()
@@ -110,7 +129,7 @@ test_create(const char *root_dir, const char *pool_desc)
 		goto fini;
 	}
 	rpmemd_db_pool_close(db, prp);
-	ret = rpmemd_db_pool_remove(db, pool_desc);
+	ret = rpmemd_db_pool_remove(db, pool_desc, 0, 0);
 	if (ret) {
 		FAILED_FUNC("rpmemd_db_pool_remove");
 	}
@@ -130,9 +149,6 @@ test_create_dual(const char *root_dir, const char *pool_desc_1,
 	struct rpmemd_db_pool *prp1, *prp2;
 	struct rpmemd_db *db;
 	int ret = -1;
-
-	memset(&attr1, 0, sizeof(attr1));
-	attr1.major = 1;
 
 	db = rpmemd_db_init(root_dir, POOL_MODE);
 	if (db == NULL) {
@@ -154,12 +170,12 @@ test_create_dual(const char *root_dir, const char *pool_desc_1,
 	rpmemd_db_pool_close(db, prp2);
 	rpmemd_db_pool_close(db, prp1);
 
-	ret = rpmemd_db_pool_remove(db, pool_desc_2);
+	ret = rpmemd_db_pool_remove(db, pool_desc_2, 0, 0);
 	if (ret) {
 		FAILED_FUNC_PARAM("rpmemd_db_pool_remove", pool_desc_2);
 		goto err_remove_2;
 	}
-	ret = rpmemd_db_pool_remove(db, pool_desc_1);
+	ret = rpmemd_db_pool_remove(db, pool_desc_1, 0, 0);
 	if (ret) {
 		FAILED_FUNC_PARAM("rpmemd_db_pool_remove", pool_desc_1);
 	}
@@ -168,7 +184,7 @@ test_create_dual(const char *root_dir, const char *pool_desc_1,
 err_create_2:
 	rpmemd_db_pool_close(db, prp1);
 err_remove_2:
-	rpmemd_db_pool_remove(db, pool_desc_1);
+	rpmemd_db_pool_remove(db, pool_desc_1, 0, 0);
 err_create_1:
 fini:
 	rpmemd_db_fini(db);
@@ -238,7 +254,7 @@ test_open(const char *root_dir, const char *pool_desc)
 	struct rpmemd_db *db;
 	int ret = -1;
 
-	memset(&attr1, 0, sizeof(attr1));
+	fill_rand(&attr1, sizeof(attr1));
 	attr1.major = 1;
 
 	db = rpmemd_db_init(root_dir, POOL_MODE);
@@ -246,20 +262,24 @@ test_open(const char *root_dir, const char *pool_desc)
 		FAILED_FUNC("rpmemd_db_init");
 		return -1;
 	}
+
 	prp = rpmemd_db_pool_create(db, pool_desc, 0, &attr1);
 	if (prp == NULL) {
 		FAILED_FUNC("rpmemd_db_pool_create");
 		goto fini;
 	}
 	rpmemd_db_pool_close(db, prp);
+
 	prp = rpmemd_db_pool_open(db, pool_desc, 0, &attr2);
 	if (prp == NULL) {
 		FAILED_FUNC("rpmemd_db_pool_open");
 		goto fini;
 	}
-	compare_attr(&attr1, &attr2);
 	rpmemd_db_pool_close(db, prp);
-	ret = rpmemd_db_pool_remove(db, pool_desc);
+
+	compare_attr(&attr1, &attr2);
+
+	ret = rpmemd_db_pool_remove(db, pool_desc, 0, 0);
 	if (ret) {
 		FAILED_FUNC("rpmemd_db_pool_remove");
 	}
@@ -275,13 +295,15 @@ static int
 test_open_dual(const char *root_dir, const char *pool_desc_1,
 		const char *pool_desc_2)
 {
-	struct rpmem_pool_attr attr1, attr2;
+	struct rpmem_pool_attr attr1a, attr2a, attr1b, attr2b;
 	struct rpmemd_db_pool *prp1, *prp2;
 	struct rpmemd_db *db;
 	int ret = -1;
 
-	memset(&attr1, 0, sizeof(attr1));
-	attr1.major = 1;
+	fill_rand(&attr1a, sizeof(attr1a));
+	fill_rand(&attr1b, sizeof(attr1b));
+	attr1a.major = 1;
+	attr1b.major = 1;
 
 	db = rpmemd_db_init(root_dir, POOL_MODE);
 	if (db == NULL) {
@@ -289,14 +311,13 @@ test_open_dual(const char *root_dir, const char *pool_desc_1,
 		return -1;
 	}
 
-	prp1 = rpmemd_db_pool_create(db, pool_desc_1, 0, &attr1);
+	prp1 = rpmemd_db_pool_create(db, pool_desc_1, 0, &attr1a);
 	if (prp1 == NULL) {
 		FAILED_FUNC_PARAM("rpmemd_db_pool_create", pool_desc_1);
 		goto err_create_1;
 	}
 	rpmemd_db_pool_close(db, prp1);
-
-	prp2 = rpmemd_db_pool_create(db, pool_desc_2, 0, &attr1);
+	prp2 = rpmemd_db_pool_create(db, pool_desc_2, 0, &attr1b);
 	if (prp2 == NULL) {
 		FAILED_FUNC_PARAM("rpmemd_db_pool_create", pool_desc_2);
 		goto err_create_2;
@@ -304,27 +325,28 @@ test_open_dual(const char *root_dir, const char *pool_desc_1,
 	rpmemd_db_pool_close(db, prp2);
 
 	/* test dual open */
-	prp1 = rpmemd_db_pool_open(db, pool_desc_1, 0, &attr2);
+	prp1 = rpmemd_db_pool_open(db, pool_desc_1, 0, &attr2a);
 	if (prp1 == NULL) {
 		FAILED_FUNC_PARAM("rpmemd_db_pool_open", pool_desc_1);
 		goto err_open_1;
 	}
-	compare_attr(&attr1, &attr2);
-	prp2 = rpmemd_db_pool_open(db, pool_desc_2, 0, &attr2);
+	prp2 = rpmemd_db_pool_open(db, pool_desc_2, 0, &attr2b);
 	if (prp2 == NULL) {
 		FAILED_FUNC_PARAM("rpmemd_db_pool_open", pool_desc_2);
 		goto err_open_2;
 	}
-	compare_attr(&attr1, &attr2);
 	rpmemd_db_pool_close(db, prp1);
 	rpmemd_db_pool_close(db, prp2);
 
-	ret = rpmemd_db_pool_remove(db, pool_desc_2);
+	compare_attr(&attr1a, &attr2a);
+	compare_attr(&attr1b, &attr2b);
+
+	ret = rpmemd_db_pool_remove(db, pool_desc_2, 0, 0);
 	if (ret) {
 		FAILED_FUNC_PARAM("rpmemd_db_pool_remove", pool_desc_2);
 		goto err_remove_2;
 	}
-	ret = rpmemd_db_pool_remove(db, pool_desc_1);
+	ret = rpmemd_db_pool_remove(db, pool_desc_1, 0, 0);
 	if (ret) {
 		FAILED_FUNC_PARAM("rpmemd_db_pool_remove", pool_desc_1);
 	}
@@ -333,14 +355,89 @@ test_open_dual(const char *root_dir, const char *pool_desc_1,
 err_open_2:
 	rpmemd_db_pool_close(db, prp1);
 err_open_1:
-	rpmemd_db_pool_remove(db, pool_desc_2);
+	rpmemd_db_pool_remove(db, pool_desc_2, 0, 0);
 err_create_2:
 err_remove_2:
-	rpmemd_db_pool_remove(db, pool_desc_1);
+	rpmemd_db_pool_remove(db, pool_desc_1, 0, 0);
 err_create_1:
 fini:
 	rpmemd_db_fini(db);
 	return ret;
+}
+
+static int
+exists_cb(struct part_file *pf, void *arg)
+{
+	return access(pf->path, F_OK);
+}
+
+static int
+noexists_cb(struct part_file *pf, void *arg)
+{
+	return !access(pf->path, F_OK);
+}
+
+/*
+ * test_remove -- test for rpmemd_db_pool_remove()
+ */
+static void
+test_remove(const char *root_dir, const char *pool_desc)
+{
+	struct rpmem_pool_attr attr;
+	struct rpmemd_db_pool *prp;
+	struct rpmemd_db *db;
+	int ret;
+	char path[PATH_MAX];
+	snprintf(path, PATH_MAX, "%s/%s", root_dir, pool_desc);
+
+	fill_rand(&attr, sizeof(attr));
+	strncpy((char *)attr.poolset_uuid, "TEST", sizeof(attr.poolset_uuid));
+
+	db = rpmemd_db_init(root_dir, POOL_MODE);
+	UT_ASSERTne(db, NULL);
+
+	prp = rpmemd_db_pool_create(db, pool_desc, 0, &attr);
+	UT_ASSERTne(prp, NULL);
+	rpmemd_db_pool_close(db, prp);
+
+	ret = util_poolset_foreach_part(path, exists_cb, NULL);
+	UT_ASSERTeq(ret, 0);
+
+	ret = rpmemd_db_pool_remove(db, pool_desc, 0, 0);
+	UT_ASSERTeq(ret, 0);
+
+	ret = util_poolset_foreach_part(path, noexists_cb, NULL);
+	UT_ASSERTeq(ret, 0);
+
+	prp = rpmemd_db_pool_create(db, pool_desc, 0, &attr);
+	UT_ASSERTne(prp, NULL);
+
+	struct pool_hdr *pool_hdr = prp->pool_addr;
+	strncpy((char *)pool_hdr->poolset_uuid, "ERROR",
+			sizeof(pool_hdr->poolset_uuid));
+	rpmemd_db_pool_close(db, prp);
+
+	ret = rpmemd_db_pool_remove(db, pool_desc, 0, 0);
+	UT_ASSERTne(ret, 0);
+
+	ret = util_poolset_foreach_part(path, exists_cb, NULL);
+	UT_ASSERTeq(ret, 0);
+
+	ret = rpmemd_db_pool_remove(db, pool_desc, 1, 0);
+	UT_ASSERTeq(ret, 0);
+
+	ret = util_poolset_foreach_part(path, noexists_cb, NULL);
+	UT_ASSERTeq(ret, 0);
+
+	prp = rpmemd_db_pool_create(db, pool_desc, 0, &attr);
+	UT_ASSERTne(prp, NULL);
+	rpmemd_db_pool_close(db, prp);
+
+	ret = rpmemd_db_pool_remove(db, pool_desc, 0, 1);
+	UT_ASSERTeq(ret, 0);
+
+	ret = access(path, F_OK);
+	UT_ASSERTne(ret, 0);
 }
 
 int
@@ -371,6 +468,7 @@ main(int argc, char *argv[])
 	test_create_dual(root_dir, pool_desc[0], pool_desc[1]);
 	test_open(root_dir, pool_desc[0]);
 	test_open_dual(root_dir, pool_desc[0], pool_desc[1]);
+	test_remove(root_dir, pool_desc[0]);
 
 	rpmemd_log_close();
 

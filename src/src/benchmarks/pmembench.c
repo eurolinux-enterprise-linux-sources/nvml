@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,10 +43,13 @@
 #include <math.h>
 #include <float.h>
 #include <sys/queue.h>
+#include <sys/wait.h>
 #include <linux/limits.h>
 #include <dirent.h>
 #include <errno.h>
 
+#include "mmap.h"
+#include "set.h"
 #include "benchmark.h"
 #include "benchmark_worker.h"
 #include "scenario.h"
@@ -54,6 +57,10 @@
 #include "clo.h"
 #include "config_reader.h"
 #include "util.h"
+#include "file.h"
+#include "rpmem_common.h"
+#include "rpmem_ssh.h"
+#include "rpmem_util.h"
 
 /*
  * struct pmembench -- main context
@@ -124,8 +131,8 @@ struct benchmark_opts
 
 static struct version_s
 {
-	unsigned int major;
-	unsigned int minor;
+	unsigned major;
+	unsigned minor;
 } version = {1, 0};
 
 
@@ -415,16 +422,16 @@ pmembench_print_header(struct pmembench *pb, struct benchmark *bench,
 	} else {
 		printf("%s [%ld]\n", bench->info->name, clovec->nargs);
 	}
-	printf("total-avg;"
-		"ops-per-second;"
-		"total-max;"
-		"total-min;"
-		"total-median;"
-		"total-std-dev;"
-		"latency-avg;"
-		"latency-min;"
-		"latency-max;"
-		"latency-std-dev");
+	printf("total-avg[sec];"
+		"ops-per-second[1/sec];"
+		"total-max[sec];"
+		"total-min[sec];"
+		"total-median[sec];"
+		"total-std-dev[sec];"
+		"latency-avg[nsec];"
+		"latency-min[nsec];"
+		"latency-max[nsec];"
+		"latency-std-dev[nsec]");
 	size_t i;
 	for (i = 0; i < bench->nclos; i++) {
 		if (!bench->clos[i].ignore_in_res) {
@@ -642,9 +649,11 @@ pmembench_get_total_results(struct latency *stats, double *workers_times,
 	qsort(workers_times, nresults, sizeof(double), compare_doubles);
 	total->min = workers_times[0];
 	total->max = workers_times[nresults - 1];
-	total->med = nresults % 2 ? (workers_times[nresults / 2] +
-				workers_times[nresults / 2 + 1]) / 2:
-				workers_times[nresults / 2];
+	if (nresults % 2 == 0)
+		total->med = (workers_times[nresults / 2] +
+		    workers_times[nresults / 2 - 1]) / 2;
+	else
+		total->med = workers_times[nresults / 2];
 
 	for (i = 0; i < repeats; i++) {
 		d = stats[i].std_dev > latency->avg
@@ -836,13 +845,42 @@ out:
 }
 
 /*
+ * remove_remote -- remove remote pool
+ */
+static int
+remove_remote(const char *node, const char *pool)
+{
+	struct rpmem_target_info *info = rpmem_target_parse(node);
+	if (!info)
+		err(1, "parsing target node -- '%s", node);
+
+	struct rpmem_ssh *ssh = rpmem_ssh_exec(info, "--remove", pool, NULL);
+	if (!ssh)
+		err(1, "rpmem_ssh_exec: remove -- '%s'", pool);
+
+	if (rpmem_ssh_monitor(ssh, 0))
+		err(1, "rpmem_ssh_monitor");
+
+	rpmem_ssh_close(ssh);
+	rpmem_target_free(info);
+
+	return 0;
+}
+
+/*
  * remove_part_cb -- callback function for removing all pool set part files
  */
 static int
-remove_part_cb(const char *part_file, void *arg)
+remove_part_cb(struct part_file *pf, void *arg)
 {
+	if (pf->is_remote)
+		return remove_remote(pf->node_addr, pf->pool_desc);
+
+	const char *part_file = pf->path;
+
 	if (access(part_file, F_OK) == 0)
-		return remove(part_file);
+		return util_unlink(part_file);
+
 	return 0;
 }
 
@@ -859,9 +897,9 @@ pmembench_remove_file(const char *path)
 	dir = opendir(path);
 	if (dir == NULL) {
 		if (access(path, F_OK) == 0) {
-			ret = util_is_poolset(path);
+			ret = util_is_poolset_file(path);
 			if (ret == 0) {
-				return remove(path);
+				return util_unlink(path);
 			} else if (ret == 1) {
 				return util_poolset_foreach_part(path,
 						remove_part_cb, NULL);
@@ -878,7 +916,7 @@ pmembench_remove_file(const char *path)
 			return -1;
 		sprintf(tmp, "%s/%s", path, d->d_name);
 		ret = (d->d_type == DT_DIR) ? pmembench_remove_file(tmp)
-								: remove(tmp);
+							: util_unlink(tmp);
 		free(tmp);
 		if (ret != 0)
 			return ret;
@@ -927,6 +965,8 @@ pmembench_run(struct pmembench *pb, struct benchmark *bench)
 	}
 
 	struct benchmark_args *args = NULL;
+	struct latency *stats = NULL;
+	double *workers_times = NULL;
 
 	struct clo_vec *clovec = clo_vec_alloc(bench->args_size);
 	assert(clovec != NULL);
@@ -964,7 +1004,7 @@ pmembench_run(struct pmembench *pb, struct benchmark *bench)
 		}
 		args->opts = (void *)((uintptr_t)args +
 				sizeof(struct benchmark_args));
-		args->is_poolset = util_is_poolset(args->fname) == 1;
+		args->is_poolset = util_is_poolset_file(args->fname) == 1;
 		if (args->is_poolset) {
 			if (!bench->info->allow_poolset) {
 				fprintf(stderr, "poolset files "
@@ -973,7 +1013,7 @@ pmembench_run(struct pmembench *pb, struct benchmark *bench)
 			}
 			args->fsize = util_poolset_size(args->fname);
 			if (!args->fsize) {
-				fprintf(stderr, "invalid size of poolset");
+				fprintf(stderr, "invalid size of poolset\n");
 				goto out;
 			}
 		}
@@ -983,14 +1023,13 @@ pmembench_run(struct pmembench *pb, struct benchmark *bench)
 		size_t n_ops = !bench->info->multiops ? 1 :
 						args->n_ops_per_thread;
 
-		struct latency *stats = calloc(args->repeats,
-						sizeof(struct latency));
+		stats = calloc(args->repeats, sizeof(struct latency));
 		assert(stats != NULL);
-		double *workers_times = calloc(n_threads * args->repeats,
+		workers_times = calloc(n_threads * args->repeats,
 							sizeof(double));
 		assert(workers_times != NULL);
 
-		for (unsigned int i = 0; i < args->repeats; i++) {
+		for (unsigned i = 0; i < args->repeats; i++) {
 			if (bench->info->rm_file) {
 				ret = pmembench_remove_file(args->fname);
 				if (ret != 0) {
@@ -1022,7 +1061,7 @@ pmembench_run(struct pmembench *pb, struct benchmark *bench)
 				goto out;
 			}
 
-			unsigned int j;
+			unsigned j;
 			for (j = 0; j < args->n_threads; j++) {
 				benchmark_worker_run(workers[j]);
 			}
@@ -1032,7 +1071,7 @@ pmembench_run(struct pmembench *pb, struct benchmark *bench)
 				if (workers[j]->ret != 0) {
 					ret = workers[j]->ret;
 					fprintf(stderr,
-					"thread number %d failed \n", j);
+					"thread number %d failed\n", j);
 				}
 			}
 			if (ret == 0)
@@ -1060,8 +1099,14 @@ pmembench_run(struct pmembench *pb, struct benchmark *bench)
 							&total, &latency);
 		free(stats);
 		free(workers_times);
+		stats = NULL;
+		workers_times = NULL;
 	}
 out:
+	if (stats)
+		free(stats);
+	if (workers_times)
+		free(workers_times);
 out_release_args:
 	clo_vec_free(clovec);
 
@@ -1198,6 +1243,8 @@ int
 main(int argc, char *argv[])
 {
 	util_init();
+	rpmem_util_cmds_init();
+	util_mmap_init();
 	int ret = 0;
 	struct pmembench *pb = calloc(1, sizeof(*pb));
 	assert(pb != NULL);
@@ -1209,7 +1256,6 @@ main(int argc, char *argv[])
 	if (argc < 2) {
 		pmembench_print_usage();
 		exit(EXIT_FAILURE);
-		return -1;
 	}
 
 	pb->argc = --argc;
@@ -1233,5 +1279,7 @@ main(int argc, char *argv[])
 
 out:
 	free(pb);
+
+	util_mmap_fini();
 	return ret;
 }

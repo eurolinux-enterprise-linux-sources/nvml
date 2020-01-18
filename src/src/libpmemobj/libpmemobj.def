@@ -48,6 +48,7 @@ EXPORTS
 	pmemobj_mutex_lock
 	pmemobj_mutex_trylock
 	pmemobj_mutex_unlock
+	pmemobj_mutex_timedlock
 	pmemobj_rwlock_zero
 	pmemobj_rwlock_rdlock
 	pmemobj_rwlock_wrlock
@@ -89,17 +90,22 @@ EXPORTS
 	pmemobj_tx_add_range
 	pmemobj_tx_add_range_direct
 	pmemobj_tx_alloc
+	pmemobj_tx_xadd_range
+	pmemobj_tx_xadd_range_direct
+	pmemobj_tx_xalloc
 	pmemobj_tx_zalloc
 	pmemobj_tx_realloc
 	pmemobj_tx_zrealloc
 	pmemobj_tx_strdup
 	pmemobj_tx_free
 	pmemobj_tx_errno
+	pmemobj_tx_lock
 	pmemobj_memcpy_persist
 	pmemobj_memset_persist
 	pmemobj_persist
 	pmemobj_flush
 	pmemobj_drain
 	pmemobj_direct
+	pmemobj_oid
 	_pobj_debug_notice
 	DllMain

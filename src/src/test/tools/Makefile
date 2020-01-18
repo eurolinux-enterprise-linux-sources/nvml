@@ -34,6 +34,10 @@
 # src/test/tools/Makefile -- build unit test helpers
 #
 
+TOP = ../../..
+
+TESTCONFIG=$(TOP)/src/test/testconfig.sh
+
 DIRS = \
        pmemspoil\
        pmemwrite\
@@ -42,19 +46,32 @@ DIRS = \
        pmemdetect\
        ctrld\
        bttcreate\
-       fip
+       fip\
+       ddmap
+
+REMOTE_TOOLS = \
+	ctrld\
+	fip\
+	pmemobjcli\
+	pmemspoil\
+	pmemdetect
 
 all     : TARGET = all
 clean   : TARGET = clean
 clobber : TARGET = clobber
 cstyle  : TARGET = cstyle
 format  : TARGET = format
+sync-remotes : TARGET = sync-remotes
 
-all cstyle clean clobber format: $(DIRS)
+all test cstyle clean clobber format: $(DIRS)
+
+$(TESTCONFIG):
+
+sync-remotes: $(REMOTE_TOOLS) $(TESTCONFIG)
 
 $(DIRS):
 	$(MAKE) -C $@ $(TARGET)
 
-test check pcheck:
+check pcheck:
 
 .PHONY: all clean clobber cstyle format check pcheck $(DIRS)

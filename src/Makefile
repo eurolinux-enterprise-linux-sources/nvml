@@ -34,7 +34,10 @@
 #
 # Use "make" to build the library.
 #
-# Use "make test" to build unit tests.
+# Use "make doc" to build documentation.
+#
+# Use "make test" to build unit tests. Add "SKIP_SYNC_REMOTES=y" to skip
+# or "FORCE_SYNC_REMOTES=y" to force syncing remote nodes if any is defined.
 #
 # Use "make check" to run unit tests.
 #
@@ -62,6 +65,8 @@
 # You can override the prefix within DESTDIR using prefix variable
 # e.g.: "make install prefix=/usr"
 
+include src/common.inc
+
 export SRCVERSION = $(shell git describe 2>/dev/null ||\
 			cat .version 2>/dev/null ||\
 			git log -1 --format=%h 2>/dev/null)
@@ -76,7 +81,9 @@ rpm dpkg: override prefix=/usr
 
 all:
 	$(MAKE) -C src $@
-	$(MAKE) -C doc $@
+
+doc:
+	$(MAKE) -C doc all
 
 clean:
 	$(MAKE) -C src $@
@@ -130,4 +137,4 @@ install uninstall:
 	$(MAKE) -C doc $@
 
 .PHONY: all clean clobber test check cstyle check-license install uninstall\
-	source rpm dpkg pkg-clean pcheck check-remote format $(SUBDIRS)
+	source rpm dpkg pkg-clean pcheck check-remote format doc $(SUBDIRS)

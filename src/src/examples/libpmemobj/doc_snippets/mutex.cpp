@@ -35,9 +35,9 @@
  */
 
 //! [unique_guard_example]
-#include <libpmemobj/mutex.hpp>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
+#include <libpmemobj++/mutex.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
 #include <mutex>
 
 namespace nvobj = nvml::obj;
@@ -51,8 +51,8 @@ unique_guard_example()
 	};
 
 	// create a pmemobj pool
-	auto pop = nvobj::pool<root>::create(
-		"poolfile", "layout", PMEMOBJ_MIN_POOL, S_IWUSR | S_IRUSR);
+	auto pop = nvobj::pool<root>::create("poolfile", "layout",
+					     PMEMOBJ_MIN_POOL);
 	auto proot = pop.get_root();
 
 	// typical usage schemes
@@ -63,9 +63,9 @@ unique_guard_example()
 //! [unique_guard_example]
 
 //! [shared_mutex_example]
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
-#include <libpmemobj/shared_mutex.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
+#include <libpmemobj++/shared_mutex.hpp>
 #include <mutex>
 
 namespace nvobj = nvml::obj;
@@ -79,8 +79,8 @@ shared_mutex_example()
 	};
 
 	// create a pmemobj pool
-	auto pop = nvobj::pool<root>::create(
-		"poolfile", "layout", PMEMOBJ_MIN_POOL, S_IWUSR | S_IRUSR);
+	auto pop = nvobj::pool<root>::create("poolfile", "layout",
+					     PMEMOBJ_MIN_POOL);
 	auto proot = pop.get_root();
 
 	// typical usage schemes
@@ -92,9 +92,9 @@ shared_mutex_example()
 
 //! [timed_mutex_example]
 #include <chrono>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
-#include <libpmemobj/timed_mutex.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
+#include <libpmemobj++/timed_mutex.hpp>
 
 namespace nvobj = nvml::obj;
 
@@ -107,8 +107,8 @@ timed_mutex_example()
 	};
 
 	// create a pmemobj pool
-	auto pop = nvobj::pool<root>::create(
-		"poolfile", "layout", PMEMOBJ_MIN_POOL, S_IWUSR | S_IRUSR);
+	auto pop = nvobj::pool<root>::create("poolfile", "layout",
+					     PMEMOBJ_MIN_POOL);
 	auto proot = pop.get_root();
 
 	const auto timeout = std::chrono::milliseconds(100);
@@ -122,10 +122,10 @@ timed_mutex_example()
 //! [timed_mutex_example]
 
 //! [cond_var_example]
-#include <libpmemobj/condition_variable.hpp>
-#include <libpmemobj/mutex.hpp>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
+#include <libpmemobj++/condition_variable.hpp>
+#include <libpmemobj++/mutex.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
 #include <mutex>
 #include <thread>
 
@@ -142,8 +142,9 @@ cond_var_example()
 	};
 
 	// create a pmemobj pool
-	auto pop = nvobj::pool<root>::create(
-		"poolfile", "layout", PMEMOBJ_MIN_POOL, S_IWUSR | S_IRUSR);
+	auto pop = nvobj::pool<root>::create("poolfile", "layout",
+					     PMEMOBJ_MIN_POOL);
+
 	auto proot = pop.get_root();
 
 	// run worker to bump up the counter

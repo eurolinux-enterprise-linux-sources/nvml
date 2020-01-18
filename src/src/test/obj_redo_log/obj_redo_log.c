@@ -55,14 +55,9 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 
-#include "libpmemobj.h"
-#include "util.h"
-#include "lane.h"
-#include "redo.h"
-#include "memops.h"
-#include "pmalloc.h"
-#include "list.h"
 #include "obj.h"
+#include "redo.h"
+#include "util.h"
 #include "valgrind_internal.h"
 
 #include "unittest.h"
@@ -81,8 +76,9 @@ pmem_drain_nop(void)
  * obj_persist -- pmemobj version of pmem_persist w/o replication
  */
 static void
-obj_persist(PMEMobjpool *pop, const void *addr, size_t len)
+obj_persist(void *ctx, const void *addr, size_t len)
 {
+	PMEMobjpool *pop = ctx;
 	pop->persist_local(addr, len);
 }
 
@@ -90,8 +86,9 @@ obj_persist(PMEMobjpool *pop, const void *addr, size_t len)
  * obj_flush -- pmemobj version of pmem_flush w/o replication
  */
 static void
-obj_flush(PMEMobjpool *pop, const void *addr, size_t len)
+obj_flush(void *ctx, const void *addr, size_t len)
 {
+	PMEMobjpool *pop = ctx;
 	pop->flush_local(addr, len);
 }
 
@@ -99,14 +96,21 @@ obj_flush(PMEMobjpool *pop, const void *addr, size_t len)
  * obj_drain -- pmemobj version of pmem_drain w/o replication
  */
 static void
-obj_drain(PMEMobjpool *pop)
+obj_drain(void *ctx)
 {
+	PMEMobjpool *pop = ctx;
 	pop->drain_local();
 }
 
+static int
+redo_log_check_offset(void *ctx, uint64_t offset)
+{
+	PMEMobjpool *pop = ctx;
+	return OBJ_OFF_IS_VALID(pop, offset);
+}
 
 static PMEMobjpool *
-pmemobj_open_mock(const char *fname)
+pmemobj_open_mock(const char *fname, size_t redo_size)
 {
 	size_t size;
 	int is_pmem;
@@ -117,7 +121,7 @@ pmemobj_open_mock(const char *fname)
 		return NULL;
 	}
 
-	UT_ASSERT(size > PMEMOBJ_POOL_HDR_SIZE);
+	UT_ASSERT(size >= PMEMOBJ_POOL_HDR_SIZE + redo_size);
 
 	PMEMobjpool *pop = (PMEMobjpool *)addr;
 	VALGRIND_REMOVE_PMEM_MAPPING((char *)addr + sizeof(pop->hdr), 4096);
@@ -136,9 +140,16 @@ pmemobj_open_mock(const char *fname)
 		pop->drain_local = pmem_drain_nop;
 	}
 
-	pop->persist = obj_persist;
-	pop->flush = obj_flush;
-	pop->drain = obj_drain;
+	pop->p_ops.persist = obj_persist;
+	pop->p_ops.flush = obj_flush;
+	pop->p_ops.drain = obj_drain;
+	pop->p_ops.base = pop;
+
+	pop->heap_offset = PMEMOBJ_POOL_HDR_SIZE + redo_size;
+	pop->heap_size = pop->size - pop->heap_offset;
+
+	pop->redo = redo_log_config_new(pop->addr, &pop->p_ops,
+			redo_log_check_offset, pop, REDO_NUM_ENTRIES);
 
 	return pop;
 }
@@ -146,7 +157,9 @@ pmemobj_open_mock(const char *fname)
 static void
 pmemobj_close_mock(PMEMobjpool *pop)
 {
-	munmap(pop, pop->size);
+	redo_log_config_delete(pop->redo);
+
+	UT_ASSERTeq(pmem_unmap(pop, pop->size), 0);
 }
 
 int
@@ -158,21 +171,22 @@ main(int argc, char *argv[])
 	if (argc < 4)
 		FATAL_USAGE();
 
-	PMEMobjpool *pop = pmemobj_open_mock(argv[1]);
+	char *end = NULL;
+	errno = 0;
+	size_t redo_cnt = strtoul(argv[2], &end, 0);
+	if (errno || !end || *end != '\0')
+		FATAL_USAGE();
+
+	size_t redo_size = redo_cnt * sizeof(struct redo_log);
+
+	PMEMobjpool *pop = pmemobj_open_mock(argv[1], redo_size);
 	UT_ASSERTne(pop, NULL);
 
 	UT_ASSERTeq(util_is_zeroed((char *)pop->addr + PMEMOBJ_POOL_HDR_SIZE,
 			pop->size - PMEMOBJ_POOL_HDR_SIZE), 1);
 
-	char *end = NULL;
-	errno = 0;
-	size_t redo_size = strtoul(argv[2], &end, 0);
-	if (errno || !end || *end != '\0')
-		FATAL_USAGE();
-
-	UT_ASSERT(pop->size >= redo_size * sizeof(struct redo_log));
-
-	struct redo_log *redo = (struct redo_log *)pop->addr;
+	struct redo_log *redo =
+		(struct redo_log *)((char *)pop->addr + PMEMOBJ_POOL_HDR_SIZE);
 
 	uint64_t offset;
 	uint64_t value;
@@ -185,28 +199,29 @@ main(int argc, char *argv[])
 
 		switch (arg[0]) {
 		case 's':
-			if (sscanf(arg, "s:%ld:0x%lx:0x%lx",
+			if (sscanf(arg, "s:%zd:0x%zx:0x%zx",
 					&index, &offset, &value) != 3)
 				FATAL_USAGE();
 			UT_OUT("s:%ld:0x%08lx:0x%08lx", index, offset, value);
-			redo_log_store(pop, redo, index, offset, value);
+			redo_log_store(pop->redo, redo, index, offset,
+					value);
 			break;
 		case 'f':
-			if (sscanf(arg, "f:%ld:0x%lx:0x%lx",
+			if (sscanf(arg, "f:%zd:0x%zx:0x%zx",
 					&index, &offset, &value) != 3)
 				FATAL_USAGE();
 			UT_OUT("f:%ld:0x%08lx:0x%08lx", index, offset, value);
-			redo_log_store_last(pop, redo, index, offset,
+			redo_log_store_last(pop->redo, redo, index, offset,
 					value);
 			break;
 		case 'F':
-			if (sscanf(arg, "F:%ld", &index) != 1)
+			if (sscanf(arg, "F:%zd", &index) != 1)
 				FATAL_USAGE();
 			UT_OUT("F:%ld", index);
-			redo_log_set_last(pop, redo, index);
+			redo_log_set_last(pop->redo, redo, index);
 			break;
 		case 'r':
-			if (sscanf(arg, "r:0x%lx", &offset) != 1)
+			if (sscanf(arg, "r:0x%zx", &offset) != 1)
 				FATAL_USAGE();
 
 			uint64_t *valp = (uint64_t *)((uintptr_t)pop->addr
@@ -214,29 +229,32 @@ main(int argc, char *argv[])
 			UT_OUT("r:0x%08lx:0x%08lx", offset, *valp);
 			break;
 		case 'e':
-			if (sscanf(arg, "e:%ld", &index) != 1)
+			if (sscanf(arg, "e:%zd", &index) != 1)
 				FATAL_USAGE();
 
 			struct redo_log *entry = redo + index;
 
-			int flag = (entry->offset & REDO_FINISH_FLAG) ? 1 : 0;
-			offset = entry->offset & REDO_FLAG_MASK;
+			int flag = redo_log_is_last(entry);
+			offset = redo_log_offset(entry);
 			value = entry->value;
 
 			UT_OUT("e:%ld:0x%08lx:%d:0x%08lx", index, offset,
 					flag, value);
 			break;
 		case 'P':
-			redo_log_process(pop, redo, redo_size);
+			redo_log_process(pop->redo, redo, redo_cnt);
 			UT_OUT("P");
 			break;
 		case 'R':
-			redo_log_recover(pop, redo, redo_size);
+			redo_log_recover(pop->redo, redo, redo_cnt);
 			UT_OUT("R");
 			break;
 		case 'C':
-			ret = redo_log_check(pop, redo, redo_size);
+			ret = redo_log_check(pop->redo, redo, redo_cnt);
 			UT_OUT("C:%d", ret);
+			break;
+		case 'n':
+			UT_OUT("n:%ld", redo_log_nflags(redo, redo_cnt));
 			break;
 		default:
 			FATAL_USAGE();

@@ -1,5 +1,6 @@
 /*
  * Copyright 2015-2016, Intel Corporation
+ * Copyright (c) 2016, Microsoft Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -57,6 +58,8 @@
 #include <time.h>
 #include <sys/types.h>
 #include <sys/timeb.h>
+#include "util.h"
+#include "out.h"
 
 int
 pthread_mutexattr_init(pthread_mutexattr_t *attr)
@@ -108,14 +111,20 @@ pthread_mutexattr_settype(pthread_mutexattr_t *attr, int type)
 	}
 }
 
+/* number of useconds between 1970-01-01T00:00:00Z and 1601-01-01T00:00:00Z */
+#define DELTA_WIN2UNIX (11644473600000000ull)
 #define TIMED_LOCK(action, ts) {\
 	if ((action) == TRUE)\
 		return 0;\
-	long long et = (ts)->tv_sec * 1000 + (ts)->tv_nsec / 1000000;\
+	unsigned long long et = (ts)->tv_sec * 1000000 + (ts)->tv_nsec / 1000;\
 	while (1) {\
-		struct __timeb64 t;\
-		_ftime64(&t);\
-		if (t.time * 1000 + t.millitm >= et)\
+		FILETIME _t;\
+		GetSystemTimeAsFileTime(&_t);\
+		ULARGE_INTEGER _UI = {\
+			.HighPart = _t.dwHighDateTime,\
+			.LowPart = _t.dwLowDateTime,\
+		};\
+		if (_UI.QuadPart / 10 - DELTA_WIN2UNIX >= et)\
 			return ETIMEDOUT;\
 		if ((action) == TRUE)\
 			return 0;\
@@ -216,6 +225,7 @@ int
 pthread_rwlock_rdlock(pthread_rwlock_t *__restrict rwlock)
 {
 	AcquireSRWLockShared(&rwlock->lock);
+	rwlock->is_write = 0;
 	return 0;
 }
 
@@ -223,19 +233,30 @@ int
 pthread_rwlock_wrlock(pthread_rwlock_t *__restrict rwlock)
 {
 	AcquireSRWLockExclusive(&rwlock->lock);
+	rwlock->is_write = 1;
 	return 0;
 }
 
 int
 pthread_rwlock_tryrdlock(pthread_rwlock_t *__restrict rwlock)
 {
-	return (TryAcquireSRWLockShared(&rwlock->lock) == FALSE) ? EBUSY : 0;
+	if (TryAcquireSRWLockShared(&rwlock->lock) == FALSE) {
+		return EBUSY;
+	} else {
+		rwlock->is_write = 0;
+		return 0;
+	}
 }
 
 int
 pthread_rwlock_trywrlock(pthread_rwlock_t *__restrict rwlock)
 {
-	return (TryAcquireSRWLockExclusive(&rwlock->lock) == FALSE) ? EBUSY : 0;
+	if (TryAcquireSRWLockExclusive(&rwlock->lock) == FALSE) {
+		return EBUSY;
+	} else {
+		rwlock->is_write = 1;
+		return 0;
+	}
 }
 
 int
@@ -255,9 +276,10 @@ pthread_rwlock_timedwrlock(pthread_rwlock_t *__restrict rwlock,
 int
 pthread_rwlock_unlock(pthread_rwlock_t *__restrict rwlock)
 {
-	/* XXX - distinguish between shared/exclusive lock */
-	/* XXX - ReleaseSRWLockShared(rwlock); */
-	ReleaseSRWLockExclusive(&rwlock->lock);
+	if (rwlock->is_write)
+		ReleaseSRWLockExclusive(&rwlock->lock);
+	else
+		ReleaseSRWLockShared(&rwlock->lock);
 	return 0;
 }
 
@@ -296,17 +318,32 @@ pthread_cond_signal(pthread_cond_t *__restrict cond)
 	return 0;
 }
 
+static DWORD
+get_rel_wait(const struct timespec *abstime)
+{
+	struct __timeb64 t;
+	_ftime64_s(&t);
+	time_t now_ms = t.time * 1000 + t.millitm;
+	time_t ms = (time_t)(abstime->tv_sec * 1000 +
+		abstime->tv_nsec / 1000000);
+
+	DWORD rel_wait = (DWORD)(ms - now_ms);
+
+	return rel_wait < 0 ? 0 : rel_wait;
+}
+
 int
 pthread_cond_timedwait(pthread_cond_t *__restrict cond,
 	pthread_mutex_t *__restrict mutex, const struct timespec *abstime)
 {
-	DWORD ms = (DWORD)(abstime->tv_sec * 1000 +
-					abstime->tv_nsec / 1000000);
-
-	/* XXX - return error code based on GetLastError() */
 	BOOL ret;
-	ret = SleepConditionVariableCS(&cond->cond, &mutex->lock, ms);
-	return (ret == FALSE) ? ETIMEDOUT : 0;
+	SetLastError(0);
+	ret = SleepConditionVariableCS(&cond->cond, &mutex->lock,
+			get_rel_wait(abstime));
+	if (ret == FALSE)
+		return (GetLastError() == ERROR_TIMEOUT) ? ETIMEDOUT : EINVAL;
+
+	return 0;
 }
 
 int
@@ -362,4 +399,90 @@ void *
 pthread_getspecific(pthread_key_t key)
 {
 	return TlsGetValue(key);
+}
+
+/* threading */
+pthread_once_t Pthread_self_index_initialized;
+DWORD Pthread_self_index;
+
+/*
+ * pthread_init is called once before the first POSIX thread is spawned i.e.
+ * before the start_routine of the first POSIX thread is executed.  Here
+ * we make sure:
+ *
+ *  - we have an entry allocated in thread local storage, where we will store
+ *    the address of the pthread_v structure for each thread
+ */
+void
+pthread_init(void)
+{
+	Pthread_self_index = TlsAlloc();
+	if (Pthread_self_index == TLS_OUT_OF_INDEXES)
+		abort();
+}
+
+/*
+ * pthread_start_routine_wrapper is a start routine for _beginthreadex() and
+ * it helps:
+ *
+ *  - wrap the pthread_create's start function
+ *  - do the necessary initialization for POSIX threading implementation
+ */
+unsigned __stdcall
+pthread_start_routine_wrapper(void *arg)
+{
+	pthread_t thread_info = (pthread_info *)arg;
+
+	pthread_once(&Pthread_self_index_initialized, pthread_init);
+	TlsSetValue(Pthread_self_index, thread_info);
+
+	thread_info->result = thread_info->start_routine(thread_info->arg);
+
+	return 0;
+}
+
+int
+pthread_create(pthread_t *thread, const pthread_attr_t *attr,
+	void *(*start_routine)(void *), void *arg)
+{
+	pthread_info *thread_info;
+
+	ASSERT(attr == NULL);
+
+	if ((thread_info = malloc(sizeof(pthread_info))) == NULL)
+		return EAGAIN;
+
+	thread_info->start_routine = start_routine;
+	thread_info->arg = arg;
+
+	thread_info->thread_handle = (HANDLE)_beginthreadex(NULL, 0,
+		pthread_start_routine_wrapper, thread_info, CREATE_SUSPENDED,
+		NULL);
+	if (thread_info->thread_handle == 0) {
+		free(thread_info);
+		return errno;
+	}
+
+	if (ResumeThread(thread_info->thread_handle) == -1) {
+		free(thread_info);
+		return EAGAIN;
+	}
+
+	*thread = (pthread_t)thread_info;
+
+	return 0;
+}
+
+int
+pthread_join(pthread_t thread, void **result)
+{
+	WaitForSingleObject(thread->thread_handle, INFINITE);
+	CloseHandle(thread->thread_handle);
+
+	if (result != NULL)
+		*result = thread->result;
+
+	free(thread);
+
+	return 0;
 }

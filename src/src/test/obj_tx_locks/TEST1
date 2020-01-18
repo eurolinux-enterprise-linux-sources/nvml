@@ -40,6 +40,8 @@ export UNITTEST_NUM=1
 # standard unit test setup
 . ../unittest/unittest.sh
 
+require_test_type medium
+
 unset PMEM_LOG_LEVEL
 unset PMEM_LOG_FILE
 unset PMEMOBJ_LOG_LEVEL
@@ -52,7 +54,5 @@ configure_valgrind drd force-enable
 setup
 
 expect_normal_exit ./obj_tx_locks$EXESUFFIX $DIR/testfile1 m
-
-check
 
 pass

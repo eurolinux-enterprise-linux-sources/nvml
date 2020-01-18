@@ -60,9 +60,10 @@
 #include "rpmem_fip_msg.h"
 #include "rpmem_fip_lane.h"
 #include "rpmem_fip.h"
+#include "valgrind_internal.h"
 
 #define RPMEM_FI_ERR(e, fmt, args...)\
-	RPMEM_LOG(ERR, fmt ": %s", ## args, fi_strerror((e)))
+	ERR(fmt ": %s", ## args, fi_strerror((e)))
 
 #define RPMEM_FI_CLOSE(f, fmt, args...) (\
 {\
@@ -73,6 +74,8 @@
 })
 
 #define RPMEM_RD_BUFF_SIZE 8192
+#define RPMEM_RAW_BUFF_SIZE 4096
+#define RPMEM_RAW_SIZE 8
 
 typedef int (*rpmem_fip_persist_fn)(struct rpmem_fip *fip, size_t offset,
 		size_t len, unsigned lane);
@@ -163,7 +166,7 @@ struct rpmem_fip {
 
 	struct rpmem_fip_msg *recv;	/* RECV operation messages */
 
-	uint64_t raw_buff;		/* READ-after-WRITE buffer */
+	void *raw_buff;			/* READ-after-WRITE buffer */
 	struct fid_mr *raw_mr;		/* RAW memory region */
 	void *raw_mr_desc;		/* RAW memory descriptor */
 
@@ -182,10 +185,12 @@ rpmem_fip_set_nlanes(struct rpmem_fip *fip, unsigned nlanes)
 	/*
 	 * Get minimum of maximum supported and number of
 	 * lanes requested caller.
+	 *
+	 * One lane is dedicated for read operation.
 	 */
-	size_t min_nlanes = max_nlanes < nlanes ? max_nlanes : nlanes;
+	size_t min_nlanes = max_nlanes < nlanes + 1 ? max_nlanes : nlanes + 1;
 
-	fip->nlanes = (unsigned)(min_nlanes - 1); /* one for read operation */
+	fip->nlanes = (unsigned)(min_nlanes - 1);
 }
 
 /*
@@ -208,6 +213,8 @@ rpmem_fip_getinfo(struct rpmem_fip *fip, const char *node, const char *service,
 		RPMEM_FI_ERR(ret, "getting fabric interface information");
 		goto err_fi_getinfo;
 	}
+
+	rpmem_fip_print_info(fip->fi);
 
 	/* fallback to free the hints */
 err_fi_getinfo:
@@ -275,6 +282,7 @@ rpmem_fip_fini_fabric_res(struct rpmem_fip *fip)
 static int
 rpmem_fip_init_memory(struct rpmem_fip *fip)
 {
+	ASSERTne(Pagesize, 0);
 	int ret;
 
 	/*
@@ -293,8 +301,10 @@ rpmem_fip_init_memory(struct rpmem_fip *fip)
 	fip->mr_desc = fi_mr_desc(fip->mr);
 
 	/* allocate buffer for read operation */
-	fip->rd_buff = Malloc(RPMEM_RD_BUFF_SIZE);
-	if (!fip->rd_buff) {
+	ASSERT(IS_PAGE_ALIGNED(RPMEM_RD_BUFF_SIZE));
+	errno = posix_memalign((void **)&fip->rd_buff, Pagesize,
+			RPMEM_RD_BUFF_SIZE);
+	if (errno) {
 		RPMEM_LOG(ERR, "!allocating read buffer");
 		ret = -1;
 		goto err_malloc_rd_buff;
@@ -318,7 +328,7 @@ rpmem_fip_init_memory(struct rpmem_fip *fip)
 
 	return 0;
 err_rd_mr:
-	Free(fip->rd_buff);
+	free(fip->rd_buff);
 err_malloc_rd_buff:
 	RPMEM_FI_CLOSE(fip->mr, "unregistering memory");
 	return ret;
@@ -331,7 +341,7 @@ static void
 rpmem_fip_fini_memory(struct rpmem_fip *fip)
 {
 	RPMEM_FI_CLOSE(fip->rd_mr, "unregistering read buffer");
-	Free(fip->rd_buff);
+	free(fip->rd_buff);
 	RPMEM_FI_CLOSE(fip->mr, "unregistering memory");
 }
 
@@ -496,17 +506,26 @@ rpmem_fip_fini_ep(struct rpmem_fip *fip)
 static int
 rpmem_fip_init_lanes_apm(struct rpmem_fip *fip)
 {
+	ASSERTne(Pagesize, 0);
 	int ret;
 
 	/* allocate APM lanes */
-	fip->lanes.apm = Zalloc(fip->nlanes * sizeof(*fip->lanes.apm));
+	fip->lanes.apm = calloc(1, fip->nlanes * sizeof(*fip->lanes.apm));
 	if (!fip->lanes.apm) {
 		RPMEM_LOG(ERR, "!allocating APM lanes");
 		goto err_malloc_lanes;
 	}
 
+	ASSERT(IS_PAGE_ALIGNED(RPMEM_RAW_BUFF_SIZE));
+	errno = posix_memalign((void **)&fip->raw_buff, Pagesize,
+			RPMEM_RAW_BUFF_SIZE);
+	if (errno) {
+		RPMEM_LOG(ERR, "!allocating APM RAW buffer");
+		goto err_malloc_raw;
+	}
+
 	/* register read-after-write buffer */
-	ret = fi_mr_reg(fip->domain, &fip->raw_buff, sizeof(fip->raw_buff),
+	ret = fi_mr_reg(fip->domain, fip->raw_buff, RPMEM_RAW_BUFF_SIZE,
 			FI_REMOTE_WRITE, 0, 0, 0, &fip->raw_mr, NULL);
 	if (ret) {
 		RPMEM_FI_ERR(ret, "registering APM read buffer");
@@ -552,7 +571,9 @@ err_lane_init:
 	for (unsigned j = 0; j < i; j++)
 		rpmem_fip_lane_fini(&fip->lanes.apm[i].lane);
 err_fi_raw_mr:
-	Free(fip->lanes.apm);
+	free(fip->raw_buff);
+err_malloc_raw:
+	free(fip->lanes.apm);
 err_malloc_lanes:
 	return -1;
 }
@@ -564,7 +585,8 @@ static void
 rpmem_fip_fini_lanes_apm(struct rpmem_fip *fip)
 {
 	RPMEM_FI_CLOSE(fip->raw_mr, "unregistering APM read buffer");
-	Free(fip->lanes.apm);
+	free(fip->raw_buff);
+	free(fip->lanes.apm);
 }
 
 /*
@@ -611,20 +633,26 @@ rpmem_fip_persist_apm(struct rpmem_fip *fip, size_t offset,
 	/* WRITE for requested memory region */
 	ret = rpmem_fip_writemsg(fip->ep, &lanep->write, laddr, len, raddr);
 	if (unlikely(ret)) {
-		RPMEM_FI_ERR((int)ret, "RMA write");
+		RPMEM_FI_ERR(ret, "RMA write");
 		return ret;
 	}
 
 	/* READ to read-after-write buffer */
-	ret = rpmem_fip_readmsg(fip->ep, &lanep->read, &fip->raw_buff,
-			sizeof(fip->raw_buff), raddr);
+	ret = rpmem_fip_readmsg(fip->ep, &lanep->read, fip->raw_buff,
+			RPMEM_RAW_SIZE, raddr);
 	if (unlikely(ret)) {
-		RPMEM_FI_ERR((int)ret, "RMA read");
-		return (int)ret;
+		RPMEM_FI_ERR(ret, "RMA read");
+		return ret;
 	}
 
 	/* wait for READ completion */
-	return rpmem_fip_lane_wait(&lanep->lane, FI_READ);
+	ret = rpmem_fip_lane_wait(&lanep->lane, FI_READ);
+	if (unlikely(ret)) {
+		ERR("waiting for READ completion failed");
+		return ret;
+	}
+
+	return ret;
 }
 
 /*
@@ -666,10 +694,12 @@ rpmem_fip_post_lanes_gpspm(struct rpmem_fip *fip)
 static int
 rpmem_fip_init_lanes_gpspm(struct rpmem_fip *fip)
 {
+	ASSERTne(Pagesize, 0);
+
 	int ret = 0;
 
 	/* allocate GPSPM lanes */
-	fip->lanes.gpspm = Zalloc(fip->nlanes * sizeof(*fip->lanes.gpspm));
+	fip->lanes.gpspm = calloc(1, fip->nlanes * sizeof(*fip->lanes.gpspm));
 	if (!fip->lanes.gpspm) {
 		RPMEM_LOG(ERR, "allocating GPSPM lanes");
 		goto err_malloc_lanes;
@@ -677,8 +707,9 @@ rpmem_fip_init_lanes_gpspm(struct rpmem_fip *fip)
 
 	/* allocate persist messages buffer */
 	size_t msg_size = fip->nlanes * sizeof(struct rpmem_msg_persist);
-	fip->pmsg = Malloc(msg_size);
-	if (!fip->pmsg) {
+	msg_size = PAGE_ALIGNED_UP_SIZE(msg_size);
+	errno = posix_memalign((void **)&fip->pmsg, Pagesize, msg_size);
+	if (errno) {
 		RPMEM_LOG(ERR, "!allocating messages buffer");
 		ret = -1;
 		goto err_malloc_pmsg;
@@ -701,8 +732,9 @@ rpmem_fip_init_lanes_gpspm(struct rpmem_fip *fip)
 	/* allocate persist response messages buffer */
 	size_t msg_resp_size = fip->nlanes *
 				sizeof(struct rpmem_msg_persist_resp);
-	fip->pres = Malloc(msg_resp_size);
-	if (!fip->pres) {
+	msg_resp_size = PAGE_ALIGNED_UP_SIZE(msg_resp_size);
+	errno = posix_memalign((void **)&fip->pres, Pagesize, msg_resp_size);
+	if (errno) {
 		RPMEM_LOG(ERR, "!allocating messages response buffer");
 		ret = -1;
 		goto err_malloc_pres;
@@ -723,7 +755,7 @@ rpmem_fip_init_lanes_gpspm(struct rpmem_fip *fip)
 	fip->pres_mr_desc = fi_mr_desc(fip->pres_mr);
 
 	/* allocate RECV structures for fi_recvmsg(3) */
-	fip->recv = Malloc(fip->nlanes * sizeof(*fip->recv));
+	fip->recv = malloc(fip->nlanes * sizeof(*fip->recv));
 	if (!fip->recv) {
 		RPMEM_LOG(ERR, "!allocating response message iov buffer");
 		goto err_malloc_recv;
@@ -785,13 +817,13 @@ err_malloc_recv:
 	RPMEM_FI_CLOSE(fip->pres_mr, "unregistering messages "
 			"response buffer");
 err_fi_mr_reg_pres:
-	Free(fip->pres);
+	free(fip->pres);
 err_malloc_pres:
 	RPMEM_FI_CLOSE(fip->pmsg_mr, "unregistering messages buffer");
 err_fi_mr_reg_pmsg:
-	Free(fip->pmsg);
+	free(fip->pmsg);
 err_malloc_pmsg:
-	Free(fip->lanes.gpspm);
+	free(fip->lanes.gpspm);
 err_malloc_lanes:
 	return ret;
 }
@@ -805,10 +837,10 @@ rpmem_fip_fini_lanes_gpspm(struct rpmem_fip *fip)
 	RPMEM_FI_CLOSE(fip->pmsg_mr, "unregistering messages buffer");
 	RPMEM_FI_CLOSE(fip->pres_mr, "unregistering messages "
 			"response buffer");
-	Free(fip->pmsg);
-	Free(fip->pres);
-	Free(fip->recv);
-	Free(fip->lanes.gpspm);
+	free(fip->pmsg);
+	free(fip->pres);
+	free(fip->recv);
+	free(fip->lanes.gpspm);
 }
 
 /*
@@ -823,9 +855,14 @@ rpmem_fip_process_gpspm(struct rpmem_fip *fip, void *context, uint64_t flags)
 		struct rpmem_fip_msg *resp = context;
 		struct rpmem_msg_persist_resp *msg_resp =
 			rpmem_fip_msg_get_pres(resp);
+		VALGRIND_DO_MAKE_MEM_DEFINED(msg_resp, sizeof(*msg_resp));
 
-		if (unlikely(msg_resp->lane >= fip->nlanes))
+		if (unlikely(msg_resp->lane >= fip->nlanes)) {
+			RPMEM_LOG(ERR, "lane number received (%lu) is greater "
+					"than maximum lane number (%u)",
+					msg_resp->lane, fip->nlanes - 1);
 			return -1;
+		}
 
 		struct rpmem_fip_lane *lanep =
 			&fip->lanes.gpspm[msg_resp->lane].lane;
@@ -860,7 +897,7 @@ rpmem_fip_persist_gpspm(struct rpmem_fip *fip, size_t offset,
 
 	ret = rpmem_fip_lane_wait(&lanep->lane, FI_SEND);
 	if (unlikely(ret)) {
-		RPMEM_LOG(ERR, "waiting for SEND buffer");
+		ERR("waiting for SEND buffer failed");
 		return ret;
 	}
 
@@ -888,12 +925,18 @@ rpmem_fip_persist_gpspm(struct rpmem_fip *fip, size_t offset,
 
 	ret = rpmem_fip_sendmsg(fip->ep, &gpspm->send);
 	if (unlikely(ret)) {
-		RPMEM_FI_ERR((int)ret, "MSG send");
-		return (int)ret;
+		RPMEM_FI_ERR(ret, "MSG send");
+		return ret;
 	}
 
 	/* wait for persist operation completion */
-	return rpmem_fip_lane_wait(&lanep->lane, FI_RECV);
+	ret = rpmem_fip_lane_wait(&lanep->lane, FI_RECV);
+	if (unlikely(ret)) {
+		ERR("waiting for RECV completion failed");
+		return ret;
+	}
+
+	return ret;
 }
 
 /*
@@ -930,7 +973,8 @@ rpmem_fip_set_attr(struct rpmem_fip *fip, struct rpmem_fip_attr *attr)
 
 	rpmem_fip_set_nlanes(fip, attr->nlanes);
 
-	fip->cq_size = rpmem_fip_cq_size(fip->nlanes,
+	/* one for read operation */
+	fip->cq_size = 1 + rpmem_fip_cq_size(fip->nlanes,
 			fip->persist_method, RPMEM_FIP_NODE_CLIENT);
 
 	fip->ops = &rpmem_fip_ops[fip->persist_method];
@@ -957,6 +1001,8 @@ rpmem_fip_signal_all(struct rpmem_fip *fip, int ret)
 	default:
 		RPMEM_ASSERT(0);
 	}
+
+	rpmem_fip_lane_sigret(&fip->rd_lane.lane, FI_READ, ret);
 }
 
 /*
@@ -971,7 +1017,7 @@ rpmem_fip_process(struct rpmem_fip *fip)
 	int ret;
 	struct fi_cq_msg_entry *cq_entries;
 
-	cq_entries = Malloc(fip->cq_size * sizeof(*cq_entries));
+	cq_entries = malloc(fip->cq_size * sizeof(*cq_entries));
 	if (!cq_entries) {
 		RPMEM_LOG(ERR, "!allocating completion queue buffer");
 		return -1;
@@ -1014,12 +1060,14 @@ rpmem_fip_process(struct rpmem_fip *fip)
 			/* persist operation */
 			ret = fip->ops->process(fip, comp->op_context,
 					comp->flags);
-			if (unlikely(ret))
+			if (unlikely(ret)) {
+				RPMEM_LOG(ERR, "persist operation failed");
 				goto err;
+			}
 		}
 	}
 
-	Free(cq_entries);
+	free(cq_entries);
 	return 0;
 err_cq_read:
 	sret = fi_cq_readerr(fip->cq, &err, 0);
@@ -1033,7 +1081,7 @@ err_cq_read:
 	RPMEM_LOG(ERR, "error reading from completion queue: %s", str_err);
 err:
 	rpmem_fip_signal_all(fip, ret);
-	Free(cq_entries);
+	free(cq_entries);
 	return ret;
 }
 
@@ -1061,7 +1109,7 @@ rpmem_fip_init(const char *node, const char *service,
 {
 	int ret;
 
-	struct rpmem_fip *fip = Zalloc(sizeof(*fip));
+	struct rpmem_fip *fip = calloc(1, sizeof(*fip));
 	if (!fip) {
 		RPMEM_LOG(ERR, "!allocating fabric handle");
 		return NULL;
@@ -1095,7 +1143,7 @@ err_init_memory:
 err_init_fabric_res:
 	fi_freeinfo(fip->fi);
 err_getinfo:
-	Free(fip);
+	free(fip);
 	return NULL;
 }
 
@@ -1109,7 +1157,7 @@ rpmem_fip_fini(struct rpmem_fip *fip)
 	rpmem_fip_fini_memory(fip);
 	rpmem_fip_fini_fabric_res(fip);
 	fi_freeinfo(fip->fi);
-	Free(fip);
+	free(fip);
 }
 
 /*
@@ -1140,7 +1188,7 @@ rpmem_fip_connect(struct rpmem_fip *fip)
 	}
 
 	ret = rpmem_fip_read_eq(fip->eq, &entry, FI_CONNECTED,
-			&fip->ep->fid, -1);
+			&fip->ep->fid, RPMEM_CONNECT_TIMEOUT);
 	if (ret)
 		goto err_fi_eq_read;
 
@@ -1236,7 +1284,12 @@ rpmem_fip_persist(struct rpmem_fip *fip, size_t offset, size_t len,
 		return -1;
 	}
 
-	return fip->ops->persist(fip, offset, len, lane);
+	int ret = fip->ops->persist(fip, offset, len, lane);
+	if (ret) {
+		RPMEM_LOG(ERR, "persist operation failed");
+	}
+
+	return ret;
 }
 
 /*
@@ -1247,7 +1300,7 @@ rpmem_fip_read(struct rpmem_fip *fip, void *buff, size_t len, size_t off)
 {
 	RPMEM_ASSERT(!rpmem_fip_lane_busy(&fip->rd_lane.lane));
 
-	int ret = 0;
+	int ret;
 	size_t rd = 0;
 	uint8_t *cbuff = buff;
 	while (rd < len) {
@@ -1260,17 +1313,21 @@ rpmem_fip_read(struct rpmem_fip *fip, void *buff, size_t len, size_t off)
 
 		ret = rpmem_fip_readmsg(fip->ep, &fip->rd_lane.read,
 				fip->rd_buff, rd_len, raddr);
+		VALGRIND_DO_MAKE_MEM_DEFINED(fip->rd_buff, rd_len);
 
 		ret = rpmem_fip_lane_wait(&fip->rd_lane.lane, FI_READ);
-		if (ret)
-			return ret;
+		if (ret) {
+			ERR("error when processing read request");
+			errno = ret;
+			return -1;
+		}
 
 		memcpy(&cbuff[rd], fip->rd_buff, rd_len);
 
 		rd += rd_len;
 	}
 
-	return ret;
+	return 0;
 }
 
 /*

@@ -70,6 +70,8 @@ ifeq ($(LIBPMEMPOOL), y)
 DYNAMIC_LIBS += -lpmempool
 STATIC_DEBUG_LIBS += $(LIBS_DIR)/debug/libpmempool.a
 STATIC_NONDEBUG_LIBS += $(LIBS_DIR)/nondebug/libpmempool.a
+LIBS += -ldl
+CFLAGS += -DUSE_LIBDL
 endif
 
 ifeq ($(LIBPMEMBLK), y)
@@ -85,15 +87,76 @@ STATIC_NONDEBUG_LIBS += $(LIBS_DIR)/nondebug/libpmemlog.a
 endif
 
 ifeq ($(LIBPMEMOBJ), y)
+LIBS += -ldl
 DYNAMIC_LIBS += -lpmemobj
 STATIC_DEBUG_LIBS += $(LIBS_DIR)/debug/libpmemobj.a
 STATIC_NONDEBUG_LIBS += $(LIBS_DIR)/nondebug/libpmemobj.a
+endif
+
+ifeq ($(LIBPMEMOBJ), internal-debug)
+OBJS += $(TOP)/src/debug/libpmemobj/bucket.o\
+	$(TOP)/src/debug/libpmemobj/ctree.o\
+	$(TOP)/src/debug/libpmemobj/cuckoo.o\
+	$(TOP)/src/debug/libpmemobj/heap.o\
+	$(TOP)/src/debug/libpmemobj/lane.o\
+	$(TOP)/src/debug/libpmemobj/libpmemobj.o\
+	$(TOP)/src/debug/libpmemobj/list.o\
+	$(TOP)/src/debug/libpmemobj/memblock.o\
+	$(TOP)/src/debug/libpmemobj/memops.o\
+	$(TOP)/src/debug/libpmemobj/obj.o\
+	$(TOP)/src/debug/libpmemobj/palloc.o\
+	$(TOP)/src/debug/libpmemobj/pmalloc.o\
+	$(TOP)/src/debug/libpmemobj/pvector.o\
+	$(TOP)/src/debug/libpmemobj/redo.o\
+	$(TOP)/src/debug/libpmemobj/sync.o\
+	$(TOP)/src/debug/libpmemobj/tx.o
+
+LIBS += -ldl
+INCS += -I$(TOP)/src/libpmemobj
+LIBPMEM=y
+LIBPMEMCOMMON=y
+endif
+
+ifeq ($(LIBPMEMOBJ), internal-nondebug)
+OBJS += $(TOP)/src/nondebug/libpmemobj/bucket.o\
+	$(TOP)/src/nondebug/libpmemobj/ctree.o\
+	$(TOP)/src/nondebug/libpmemobj/cuckoo.o\
+	$(TOP)/src/nondebug/libpmemobj/heap.o\
+	$(TOP)/src/nondebug/libpmemobj/lane.o\
+	$(TOP)/src/nondebug/libpmemobj/libpmemobj.o\
+	$(TOP)/src/nondebug/libpmemobj/list.o\
+	$(TOP)/src/nondebug/libpmemobj/memblock.o\
+	$(TOP)/src/nondebug/libpmemobj/memops.o\
+	$(TOP)/src/nondebug/libpmemobj/obj.o\
+	$(TOP)/src/nondebug/libpmemobj/palloc.o\
+	$(TOP)/src/nondebug/libpmemobj/pmalloc.o\
+	$(TOP)/src/nondebug/libpmemobj/pvector.o\
+	$(TOP)/src/nondebug/libpmemobj/redo.o\
+	$(TOP)/src/nondebug/libpmemobj/sync.o\
+	$(TOP)/src/nondebug/libpmemobj/tx.o
+
+INCS += -I$(TOP)/src/libpmemobj
+LIBPMEM=y
+LIBPMEMCOMMON=y
+endif
+
+ifeq ($(LIBPMEMCOMMON), y)
+OBJS += $(LIBS_DIR)/debug/libpmemcommon.a
+INCS += -I$(TOP)/src/common
+LIBS += -ldl
+LIBPMEM=y
 endif
 
 ifeq ($(LIBPMEM),y)
 DYNAMIC_LIBS += -lpmem
 STATIC_DEBUG_LIBS += $(LIBS_DIR)/debug/libpmem.a
 STATIC_NONDEBUG_LIBS += $(LIBS_DIR)/nondebug/libpmem.a
+endif
+
+ifeq ($(LIBRPMEM),y)
+DYNAMIC_LIBS += -lrpmem
+STATIC_DEBUG_LIBS += $(LIBS_DIR)/debug/librpmem.a
+STATIC_NONDEBUG_LIBS += $(LIBS_DIR)/nondebug/librpmem.a
 endif
 
 ifeq ($(LIBVMEM),y)
@@ -116,13 +179,13 @@ DRD = auto
 # in the unittest framework. It scans the code for functions that should be
 # wrapped and adds required linker flags.
 #
-WRAPPER_FUNCS=FUNC_MOCK_RET_ALWAYS|FUNC_MOCK
+WRAPPER_FUNCS=FUNC_MOCK_RET_ALWAYS|FUNC_MOCK_RET_ALWAYS_VOID|FUNC_MOCK
 PAREN=(
 extract_funcs = $(shell \
     grep -Po '($(WRAPPER_FUNCS))\$(PAREN)\K[^,]*' $(1) | \
     awk '{print "-Wl,--wrap="$$0}')
 
-INCS = -I../unittest -I$(TOP)/src/include
+INCS += -I../unittest -I$(TOP)/src/include
 
 COMMON_FLAGS  = -ggdb
 COMMON_FLAGS += -Wall
@@ -162,55 +225,92 @@ TARGET_STATIC_NONDEBUG=$(TARGET).static-nondebug
 endif
 endif
 
+SCP=../sync-remotes/copy-to-remote-nodes.sh
+TESTCONFIG=../testconfig.sh
+SYNC_FILE=.synced
+
+ifdef TARGET
+SCP_TARGET=$(TARGET)
+SCP_SRC_DIR=.
+endif
+
 MAKEFILE_DEPS=Makefile ../Makefile.inc $(TOP)/src/common.inc
+
+ifneq ($(HEADERS),)
+ifneq ($(filter 1 2, $(CSTYLEON)),)
+TMP_HEADERS := $(addsuffix tmp, $(HEADERS))
+endif
+endif
 
 all: $(TARGET) $(TARGET_STATIC_DEBUG) $(TARGET_STATIC_NONDEBUG)
 
 $(UT):
 	$(MAKE) -C ../unittest
 
-$(TARGET_STATIC_DEBUG): $(OBJS) $(UT) $(STATIC_DEBUG_LIBS) $(EXTRA_DEPS) $(MAKEFILE_DEPS)
+$(TARGET_STATIC_DEBUG): $(TMP_HEADERS) $(OBJS) $(UT) $(STATIC_DEBUG_LIBS) $(EXTRA_DEPS) $(MAKEFILE_DEPS)
 	$(LINKER) -o $@ $(LDFLAGS) $(OBJS) $(STATIC_DEBUG_LIBS) $(LIBS)
 
-$(TARGET_STATIC_NONDEBUG): $(OBJS) $(UT) $(STATIC_NONDEBUG_LIBS) $(EXTRA_DEPS) $(MAKEFILE_DEPS)
+$(TARGET_STATIC_NONDEBUG): $(TMP_HEADERS) $(OBJS) $(UT) $(STATIC_NONDEBUG_LIBS) $(EXTRA_DEPS) $(MAKEFILE_DEPS)
 	$(LINKER) -o $@ $(LDFLAGS) $(OBJS) $(STATIC_NONDEBUG_LIBS) $(LIBS)
 
-$(TARGET): $(OBJS) $(UT) $(EXTRA_DEPS) $(MAKEFILE_DEPS)
+$(TARGET): $(TMP_HEADERS) $(OBJS) $(UT) $(EXTRA_DEPS) $(MAKEFILE_DEPS)
 	$(LINKER) -o $@ $(LDFLAGS) $(OBJS) $(DYNAMIC_LIBS) $(LIBS)
 
 objdir=.
 
 %.o: %.c $(MAKEFILE_DEPS)
+	$(call check-cstyle, $<)
 	@mkdir -p .deps
 	$(CC) -MD -c $(CFLAGS) $(INCS) $< -o $@
 	$(create-deps)
 
 %.o: %.cpp $(MAKEFILE_DEPS)
+	$(call check-cstyle, $<)
 	@mkdir -p .deps
 	$(CXX) -MD -c $(CXXFLAGS) $(INCS) $< -o $@
 	$(create-deps)
 
+%.htmp: %.h
+	$(call check-cstyle, $<, $@)
+
 clean:
-	$(RM) *.o */*.o core a.out *.log testfile*
+	$(RM) *.o */*.o core a.out *.log testfile* $(SYNC_FILE) $(TMP_HEADERS)
 
 clobber: clean
 	$(RM) $(TARGET) $(TARGET_STATIC_DEBUG) $(TARGET_STATIC_NONDEBUG)
 	$(RM) -r .deps
 
+$(TESTCONFIG):
+
+$(SYNC_FILE): $(TARGET) $(TESTCONFIG)
+ifeq ($(SCP_TO_REMOTE_NODES), y)
+ifeq ($(SCP_TARGET),)
+	$(SCP) test
+else
+ifeq ($(SCP_SRC_DIR),)
+$(error SCP_SRC_DIR is not set)
+endif
+	$(SCP) test $(SCP_SRC_DIR)/$(SCP_TARGET) $(SCP_SRC_DIR)/$(SCP_TARGET).static-debug $(SCP_SRC_DIR)/$(SCP_TARGET).static-nondebug
+endif
+	@touch $(SYNC_FILE)
+endif
+
+sync-test: all $(SYNC_FILE) $(TESTCONFIG)
+
 TST=$(shell basename `pwd`)
 TSTCHECKS=$(shell ls -1 TEST* | grep -v -i -e "\.ps1" | sort -V)
 
-$(TSTCHECKS): all
-	@cd .. && ./RUNTESTS ${TST} -b $(TEST_BUILD) -t $(TEST_TYPE) -f $(TEST_FS) -o $(TEST_TIME) -m $(MEMCHECK) -p $(PMEMCHECK) -e $(HELGRIND) -d $(DRD) -s $@
+$(TSTCHECKS): all sync-test
+	@cd .. && ./RUNTESTS ${TST} $(test_build) -t $(TEST_TYPE) -f $(TEST_FS) -o $(TEST_TIME) -m $(MEMCHECK) -p $(PMEMCHECK) -e $(HELGRIND) -d $(DRD) -s $@
 
-check: all
-	@cd .. && ./RUNTESTS ${TST} -b $(TEST_BUILD) -t $(TEST_TYPE) -f $(TEST_FS) -o $(TEST_TIME) -m $(MEMCHECK) -p $(PMEMCHECK) -e $(HELGRIND) -d $(DRD)
+check: all sync-test
+	@cd .. && ./RUNTESTS ${TST} $(test_build) -t $(TEST_TYPE) -f $(TEST_FS) -o $(TEST_TIME) -m $(MEMCHECK) -p $(PMEMCHECK) -e $(HELGRIND) -d $(DRD)
 
 pcheck: export NOTTY=1
 
 pcheck: $(TSTCHECKS)
 
-test: all
+test: all sync-test
 
 TOOLS=../tools
 
@@ -247,6 +347,6 @@ $(TOOLS)/pmemdetect/pmemdetect.static-nondebug:
 
 all: $(TOOLS)/pmemdetect/pmemdetect.static-nondebug
 
-.PHONY: all check clean clobber pcheck test $(TSTCHECKS)
+.PHONY: all check clean clobber pcheck test sync-test $(TSTCHECKS)
 
 -include .deps/*.P

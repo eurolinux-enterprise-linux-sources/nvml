@@ -1,6 +1,6 @@
 #!/bin/bash -e
 #
-# Copyright 2016, Intel Corporation
+# Copyright 2015-2016, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -40,6 +40,8 @@ export UNITTEST_NUM=2
 # standard unit test setup
 . ../unittest/unittest.sh
 
+require_test_type medium
+
 require_cxx11
 
 setup
@@ -48,7 +50,7 @@ umask 0
 #
 # TEST2 non-existing file, poolsize > 0
 #
-expect_normal_exit ./obj_cpp_pool$EXESUFFIX d $DIR/testfile "test" 20 0640
+expect_normal_exit ./obj_cpp_pool$EXESUFFIX d $DIR/testfile "test" 20 0600
 
 [ -f $DIR/testfile ] || {
     echo "error: $DIR/testfile doesn't exist"

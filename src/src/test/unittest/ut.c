@@ -42,9 +42,81 @@
 #include "unittest.h"
 
 #ifndef _WIN32
+int
+ut_get_uuid_str(char *uu)
+{
+	int fd = OPEN(UT_POOL_HDR_UUID_GEN_FILE, O_RDONLY);
+	size_t num = READ(fd, uu, UT_POOL_HDR_UUID_STR_LEN);
+	UT_ASSERTeq(num, UT_POOL_HDR_UUID_STR_LEN);
+
+	uu[UT_POOL_HDR_UUID_STR_LEN - 1] = '\0';
+	CLOSE(fd);
+	return 0;
+}
+
 /* RHEL5 seems to be missing decls, even though libc supports them */
 extern DIR *fdopendir(int fd);
 extern ssize_t readlinkat(int, const char *restrict, char *__restrict, size_t);
+void
+ut_strerror(int errnum, char *buff, size_t bufflen)
+{
+	strerror_r(errnum, buff, bufflen);
+}
+void ut_suppress_errmsg() {}
+void ut_unsuppress_errmsg() {}
+#else
+#pragma comment(lib, "rpcrt4.lib")
+
+void
+ut_suppress_errmsg()
+{
+	ErrMode = GetErrorMode();
+	SetErrorMode(ErrMode | SEM_NOGPFAULTERRORBOX |
+		SEM_FAILCRITICALERRORS);
+	AbortBehave = _set_abort_behavior(0, _WRITE_ABORT_MSG |
+		_CALL_REPORTFAULT);
+	Suppressed = TRUE;
+}
+
+void
+ut_unsuppress_errmsg()
+{
+	if (Suppressed) {
+		SetErrorMode(ErrMode);
+		_set_abort_behavior(AbortBehave, _WRITE_ABORT_MSG |
+			_CALL_REPORTFAULT);
+		Suppressed = FALSE;
+	}
+}
+
+int
+ut_get_uuid_str(char *uuid_str)
+{
+	UUID uuid;
+	char *buff;
+
+	if (UuidCreate(&uuid) == 0)
+		if (UuidToStringA(&uuid, &buff) == RPC_S_OK) {
+			strcpy_s(uuid_str, UT_POOL_HDR_UUID_STR_LEN, buff);
+			return 0;
+		}
+	return -1;
+}
+/* XXX - fix this temp hack dup'ing util_strerror when we get mock for win */
+#define ENOTSUP_STR "Operation not supported"
+#define UNMAPPED_STR "Unmapped error"
+void
+ut_strerror(int errnum, char *buff, size_t bufflen)
+{
+	switch (errnum) {
+		case ENOTSUP:
+			strcpy_s(buff, bufflen, ENOTSUP_STR);
+			break;
+		default:
+			if (strerror_s(buff, bufflen, errnum))
+				strcpy_s(buff, bufflen, UNMAPPED_STR);
+	}
+}
 #endif
 
 #define MAXLOGNAME 100		/* maximum expected .log file name length */
@@ -58,6 +130,7 @@ static FILE *Errfp;
 static FILE *Tracefp;
 
 static int Quiet;		/* set by UNITTEST_QUIET env variable */
+static int Force_quiet;		/* set by UNITTEST_FORCE_QUIET env variable */
 static char *Testname;		/* set by UNITTEST_NAME env variable */
 unsigned long Ut_pagesize;
 
@@ -81,8 +154,11 @@ vout(int flags, const char *prepend, const char *fmt, va_list ap)
 	int sn;
 	int quiet = Quiet;
 	const char *sep = "";
-	const char *errstr = "";
+	char errstr[UT_MAX_ERR_MSG] = "";
 	const char *nl = "\n";
+
+	if (Force_quiet)
+		return;
 
 	if (flags & OF_LOUD)
 		quiet = 0;
@@ -113,7 +189,7 @@ vout(int flags, const char *prepend, const char *fmt, va_list ap)
 		if (*fmt == '!') {
 			fmt++;
 			sep = ": ";
-			errstr = strerror(errno);
+			ut_strerror(errno, errstr, UT_MAX_ERR_MSG);
 		}
 		sn = vsnprintf(&buf[cc], MAXPRINT - cc, fmt, ap);
 		if (sn < 0)
@@ -348,11 +424,20 @@ ut_start(const char *file, int line, const char *func,
 
 	va_start(ap, fmt);
 
+#ifdef _WIN32
+	if (getenv("UNITTEST_NO_ABORT_MSG") != NULL) {
+		/* disable windows error message boxes */
+		ut_suppress_errmsg();
+	}
+#endif
 	if (getenv("UNITTEST_NO_SIGHANDLERS") == NULL)
 		ut_register_sighandlers();
 
 	if (getenv("UNITTEST_QUIET") != NULL)
 		Quiet++;
+
+	if (getenv("UNITTEST_FORCE_QUIET") != NULL)
+		Force_quiet++;
 
 	Testname = getenv("UNITTEST_NAME");
 
@@ -413,7 +498,8 @@ ut_done(const char *file, int line, const char *func,
 
 	va_start(ap, fmt);
 
-	check_open_files();
+	if (!getenv("UNITTEST_DO_NOT_CHECK_OPEN_FILES"))
+		check_open_files();
 
 	prefix(file, line, func, 0);
 	vout(OF_NAME, "Done", fmt, ap);

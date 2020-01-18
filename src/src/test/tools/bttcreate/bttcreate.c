@@ -43,10 +43,11 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include "set.h"
+#include "pool_hdr.h"
 #include "btt.h"
 #include "btt_layout.h"
-#include "out.h"
-#include "util.h"
+#include "pmemcommon.h"
 
 #define BTT_CREATE_DEF_SIZE	(20 * 1UL << 20) /* 20 MB */
 #define BTT_CREATE_DEF_BLK_SIZE	512UL
@@ -192,7 +193,7 @@ print_result(struct bbtcreate_options *opts)
 {
 	if (opts->verbose) {
 		printf("BTT successfully created: %s\n", opts->fpath);
-		printf("poolsize\t%luB\n", opts->poolsize);
+		printf("poolsize\t%zuB\n", opts->poolsize);
 		printf("blocksize\t%uB\n", opts->blocksize);
 		printf("maxlanes\t%u\n", opts->maxlanes);
 		print_uuid(opts->uuid);
@@ -203,7 +204,7 @@ print_result(struct bbtcreate_options *opts)
 int
 main(int argc, char *argv[])
 {
-	out_init(0, 0, 0, 0, 0);
+	common_init("", "", "", 0, 0);
 
 	int opt;
 	size_t size;
@@ -276,7 +277,7 @@ main(int argc, char *argv[])
 		return -1;
 	}
 	if (opts.blocksize < BTT_MIN_LBA_SIZE) {
-		fprintf(stderr, "Block size is less then %ld B\n",
+		fprintf(stderr, "Block size is less then %zu B\n",
 				BTT_MIN_LBA_SIZE);
 		return -1;
 	}
@@ -366,7 +367,7 @@ main(int argc, char *argv[])
 error_btt:
 	btt_fini(bttp);
 error_map:
-	out_fini();
+	common_fini();
 error:
 	close(fd);
 

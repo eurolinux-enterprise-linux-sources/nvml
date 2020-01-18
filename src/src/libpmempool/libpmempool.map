@@ -34,9 +34,13 @@
 #
 LIBPMEMPOOL_1.0 {
 	global:
+		pmempool_errormsg;
+		pmempool_check_version;
 		pmempool_check_init;
 		pmempool_check;
 		pmempool_check_end;
+		pmempool_transform;
+		pmempool_sync;
 	local:
 		*;
 };

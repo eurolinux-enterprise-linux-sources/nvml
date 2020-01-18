@@ -43,6 +43,10 @@
 #ifndef LIBPMEMBLK_H
 #define LIBPMEMBLK_H 1
 
+#ifdef _WIN32
+#include <pmemcompat.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -66,8 +70,15 @@ const char *pmemblk_check_version(
 		unsigned major_required,
 		unsigned minor_required);
 
-/* minimum pool size: 16MB + 8KB (minimum BTT size + header size) */
+/* XXX - unify minimum pool size for both OS-es */
+
+#ifndef _WIN32
+/* minimum pool size: 16MB + 4KB (minimum BTT size + mmap alignment) */
 #define PMEMBLK_MIN_POOL ((size_t)((1u << 20) * 16 + (1u << 10) * 8))
+#else
+/* minimum pool size: 16MB + 64KB (minimum BTT size + mmap alignment) */
+#define PMEMBLK_MIN_POOL ((size_t)((1u << 20) * 16 + (1u << 10) * 64))
+#endif
 
 #define PMEMBLK_MIN_BLK ((size_t)512)
 

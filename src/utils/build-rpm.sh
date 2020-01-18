@@ -73,22 +73,46 @@ function create_changelog() {
 	done < $1
 }
 
-function add_experimental_packages() {
+function add_rpmem_packages() {
 cat << EOF >> $RPM_SPEC_FILE
+%package -n librpmem
+Summary: librpmem library
+Group: %{package_group}/Libraries
+%description -n librpmem
+NVML librpmem library
 
-%package -n ${OBJ_CPP_NAME}
-Summary: C++ bindings for libpmemobj
-Group: Development/Libraries
-Requires: libpmemobj-devel = %{version}
-%description -n ${OBJ_CPP_NAME}
-Development files for NVML C++ libpmemobj bindings - EXPERIMENTAL
-
-%files -n ${OBJ_CPP_NAME}
+%files -n librpmem
 %defattr(-,root,root,-)
-%{_libdir}/pkgconfig/libpmemobj++.pc
-%{_includedir}/libpmemobj/*.hpp
-%{_includedir}/libpmemobj/detail/*.hpp
-%{_docdir}/${OBJ_CPP_NAME}-%{version}/*
+%{_libdir}/librpmem.so.*
+
+%package -n librpmem-devel
+Summary: librpmem development library
+Group: Development/Libraries
+%description -n librpmem-devel
+Development files for NVML librpmem library
+
+%files -n librpmem-devel
+%defattr(-,root,root,-)
+%{_libdir}/librpmem.so
+%{_libdir}/librpmem.a
+%{_libdir}/pkgconfig/librpmem.pc
+%{_libdir}/nvml_debug/librpmem.so
+%{_libdir}/nvml_debug/librpmem.so.*
+%{_libdir}/nvml_debug/librpmem.a
+%{_includedir}/librpmem.h
+%{_mandir}/man3/librpmem.3.gz
+
+%package -n rpmemd
+Group:		%{package_group}
+Summary:	Remote Access to Persistent Memory daemon
+
+%description -n rpmemd
+Remote Access to Persistent Memory daemon
+
+%files -n rpmemd
+%{_bindir}/rpmemd
+%{_mandir}/man1/rpmemd.1.gz
+
 EOF
 }
 
@@ -118,7 +142,7 @@ else
 	cp src/test/testconfig.sh.example src/test/testconfig.sh
 fi
 
-make check
+make pcheck $PCHECK_OPTS
 "
 
 if [ "${BUILD_PACKAGE_CHECK}" != "y" ]
@@ -173,7 +197,7 @@ Source0:	$PACKAGE_TARBALL
 BuildRoot:	%{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 
 BuildRequires:	gcc glibc-devel
-BuildRequires:	autoconf, automake, make
+BuildRequires:	autoconf, automake, make, doxygen
 BuildArch:	x86_64
 
 %description
@@ -292,6 +316,7 @@ Development files for NVML libpmemobj library
 %{_libdir}/nvml_debug/libpmemobj.so.*
 %{_libdir}/nvml_debug/libpmemobj.a
 %{_includedir}/libpmemobj.h
+%{_includedir}/libpmemobj/*.h
 %{_mandir}/man3/libpmemobj.3.gz
 
 %package -n libpmempool
@@ -375,6 +400,20 @@ Development files for NVML libvmmalloc library
 %{_includedir}/libvmmalloc.h
 %{_mandir}/man3/libvmmalloc.3.gz
 
+%package -n ${OBJ_CPP_NAME}
+Summary: C++ bindings for libpmemobj
+Group: Development/Libraries
+Requires: libpmemobj-devel = %{version}
+%description -n ${OBJ_CPP_NAME}
+Development files for NVML C++ libpmemobj bindings
+
+%files -n ${OBJ_CPP_NAME}
+%defattr(-,root,root,-)
+%{_libdir}/pkgconfig/libpmemobj++.pc
+%{_includedir}/libpmemobj++/*.hpp
+%{_includedir}/libpmemobj++/detail/*.hpp
+%{_docdir}/${OBJ_CPP_NAME}-%{version}/*
+
 %package tools
 Group:		%{package_group}
 Summary:	Tools for %{name}
@@ -391,12 +430,19 @@ Usefull applications for administration and diagnostic purposes.
 %{_mandir}/man1/pmempool-check.1.gz
 %{_mandir}/man1/pmempool-rm.1.gz
 %{_mandir}/man1/pmempool-convert.1.gz
+%{_mandir}/man1/pmempool-sync.1.gz
+%{_mandir}/man1/pmempool-transform.1.gz
 %{_sysconfdir}/bash_completion.d/pmempool.sh
 
 %prep
 %setup -q -n $PACKAGE_SOURCE
 
 %build
+if [ -f $TEST_CONFIG_FILE ]; then
+	cp $TEST_CONFIG_FILE src/test/testconfig.sh
+else
+	cp src/test/testconfig.sh.example src/test/testconfig.sh
+fi
 %{__make}
 
 %install
@@ -428,7 +474,10 @@ EOF
 # Experimental features
 if [ "${EXPERIMENTAL}" = "y" ]
 then
-	add_experimental_packages;
+	if [ "${BUILD_RPMEM}" = "y" ]
+	then
+		add_rpmem_packages;
+	fi
 fi
 
 [ -f $CHANGELOG_FILE ] && create_changelog $CHANGELOG_FILE >> $RPM_SPEC_FILE

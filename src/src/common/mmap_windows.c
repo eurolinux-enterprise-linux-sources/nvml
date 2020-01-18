@@ -1,6 +1,6 @@
 /*
  * Copyright 2015-2016, Intel Corporation
- * Copyright 2015, Microsoft Corporation
+ * Copyright (c) 2015-2016, Microsoft Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,297 +35,48 @@
  * mmap_windows.c -- memory-mapped files for Windows
  */
 
-/*
- * XXX - The initial approach to NVML for Windows port was to minimize the
- * amount of changes required in the core part of the library, and to avoid
- * preprocessor conditionals, if possible.  For that reason, some of the
- * Linux system calls that have no equivalents on Windows have been emulated
- * using Windows API.
- * Note that it was not a goal to fully emulate POSIX-compliant behavior
- * of mentioned functions.  They are used only internally, so current
- * implementation is just good enough to satisfy NVML needs and to make it
- * work on Windows.
- *
- * This is a subject for change in the future.  Likely, all these functions
- * will be replaced with "util_xxx" wrappers with OS-specific implementation
- * for Linux and Windows.
- */
-
 #include <sys/mman.h>
-#include <sys/queue.h>
-
-
-/*
- * this structure tracks the file mappings outstanding per file handle
- */
-typedef struct FILE_MAPPING_TRACKER {
-	LIST_ENTRY(FILE_MAPPING_TRACKER) ListEntry;
-	HANDLE FileHandle;
-	HANDLE FileMappingHandle;
-	PVOID *BaseAddress;
-	PVOID *EndAddress;
-} *PFILE_MAPPING_TRACKER;
-
-HANDLE FileMappingListMutex = NULL;
-LIST_HEAD(FMLHead, FILE_MAPPING_TRACKER) FileMappingListHead =
-	LIST_HEAD_INITIALIZER(FileMappingListHead);
+#include "mmap.h"
+#include "out.h"
 
 /*
- * mmap_init -- (internal) load-time initialization of file mapping tracker
- *
- * Called automatically by the run-time loader.
+ * util_map_hint -- determine hint address for mmap()
  */
-static void
-mmap_init(void)
+char *
+util_map_hint(size_t len, size_t req_align)
 {
-	LIST_INIT(&FileMappingListHead);
+	LOG(3, "len %zu req_align %zu", len, req_align);
 
-	FileMappingListMutex = CreateMutex(NULL, FALSE, NULL);
-}
-
-/*
- * mmap_fini -- (internal) file mapping tracker cleanup routine
- *
- * Called automatically when the process terminates.
- */
-static void
-mmap_fini(void)
-{
-	if (FileMappingListMutex == NULL)
-		return;
-
+#if 0
 	/*
-	 * Let's make sure that no one is in the middle of updating the
-	 * list by grabbing the lock.  There is still a race condition
-	 * with someone coming in while we're tearing it down and trying
-	 */
-	WaitForSingleObject(FileMappingListMutex, INFINITE);
-	ReleaseMutex(FileMappingListMutex);
-	CloseHandle(FileMappingListMutex);
-
-	while (!LIST_EMPTY(&FileMappingListHead)) {
-
-		PFILE_MAPPING_TRACKER pMappingTracker =
-			(PFILE_MAPPING_TRACKER)LIST_FIRST(&FileMappingListHead);
-		LIST_REMOVE(pMappingTracker, ListEntry);
-
-		if (pMappingTracker->BaseAddress != NULL)
-			UnmapViewOfFile(pMappingTracker->BaseAddress);
-
-		if (pMappingTracker->FileMappingHandle != NULL)
-			CloseHandle(pMappingTracker->FileMappingHandle);
-
-		free(pMappingTracker);
-
-	}
-}
-
-/*
- * mmap -- map file into memory
- */
-void *
-mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
-{
-	DWORD protect = 0;
-
-	if ((prot & PROT_READ) && (prot & PROT_WRITE)) {
-		if (flags & MAP_PRIVATE) {
-			if (prot & PROT_EXEC)
-				protect = PAGE_EXECUTE_WRITECOPY;
-			else
-				protect = PAGE_WRITECOPY;
-		} else {
-			if (prot & PROT_EXEC)
-				protect = PAGE_EXECUTE_READWRITE;
-			else
-				protect = PAGE_READWRITE;
-		}
-	} else if (prot & PROT_READ) {
-		if (prot & PROT_EXEC)
-			protect = PAGE_EXECUTE_READ;
-		else
-			protect = PAGE_READONLY;
-	} else {
-		/* XXX - PAGE_NOACCESS  */
-		return MAP_FAILED;
-	}
-
-	/* XXX - MAP_NORESERVE */
-
-	HANDLE fh = (HANDLE)_get_osfhandle(fd);
-
-	HANDLE fileMapping = CreateFileMapping(fh,
-					NULL, /* security attributes */
-					protect,
-					(DWORD) (len >> 32),
-					(DWORD) (len & 0xFFFFFFFF),
-					NULL);
-
-	if (fileMapping == NULL)
-		return MAP_FAILED;
-
-	DWORD access;
-	if (flags & MAP_PRIVATE)
-		access = FILE_MAP_COPY;
-	else
-		access = FILE_MAP_ALL_ACCESS;
-
-	void *base = MapViewOfFile(fileMapping,
-				access,
-				(DWORD) (offset >> 32),
-				(DWORD) (offset & 0xFFFFFFFF),
-				len);
-
-	if (base == NULL) {
-		CloseHandle(fileMapping);
-		return MAP_FAILED;
-	}
-
-	/*
-	 * We will track the file mapping handle on a lookaside list so that
-	 * we don't have to modify the fact that we only return back the base
-	 * address rather than a more elaborate structure.
+	 * XXX - for large mappings, we can end up with error
+	 * ERROR_COMMITMENT_LIMIT (0x5AF) - The paging file is too small
+	 * for this operation to complete.  So we should use VirtualAlloc(
+	 * MEM_RESERVE) to see if the virtual address is available.
+	 *
+	 * XXX - Windows doesn't support large DAX pages yet, so there is
+	 * no point in aligning for the same.
 	 */
 
-	PFILE_MAPPING_TRACKER pMappingTracker =
-		malloc(sizeof(struct FILE_MAPPING_TRACKER));
+	/* choose the desired alignment based on the requested length */
+	size_t align = util_map_hint_align(len, req_align);
 
-	if (pMappingTracker == NULL) {
-		CloseHandle(fileMapping);
-		return MAP_FAILED;
+	/*
+	 * Create dummy mapping to find an unused region of given size.
+	 * Request for increased size for later address alignment.
+	 */
+	char *addr = mmap(NULL, len + align, PROT_READ|PROT_WRITE,
+			MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0);
+	if (addr != MAP_FAILED) {
+		LOG(4, "system choice %p", addr);
+		munmap(addr, len + align);
+		addr = (char *)roundup((uintptr_t)addr, align);
 	}
 
-	pMappingTracker->FileHandle = fh;
-	pMappingTracker->FileMappingHandle = fileMapping;
-	pMappingTracker->BaseAddress = base;
-	pMappingTracker->EndAddress = (PVOID *)base + len;
-
-	WaitForSingleObject(FileMappingListMutex, INFINITE);
-	LIST_INSERT_HEAD(&FileMappingListHead, pMappingTracker,
-		ListEntry);
-	ReleaseMutex(FileMappingListMutex);
-
-	return base;
+	LOG(4, "hint %p", addr);
+	return addr;
+#else
+	LOG(4, "hint %p", NULL);
+	return NULL;
+#endif
 }
-
-/*
- * munmap -- unmap file
- */
-int
-munmap(void *addr, size_t len)
-{
-	PFILE_MAPPING_TRACKER pMappingTracker = NULL;
-	int retval = -1;
-	BOOLEAN haveMutex = TRUE;
-
-	WaitForSingleObject(FileMappingListMutex, INFINITE);
-
-	pMappingTracker =
-		(PFILE_MAPPING_TRACKER)LIST_FIRST(&FileMappingListHead);
-	while (pMappingTracker != NULL) {
-
-		if (pMappingTracker->BaseAddress == addr) {
-			/*
-			 * Let's release the list mutex before we do the work
-			 * of unmapping and closing may take some time.
-			 */
-
-			LIST_REMOVE(pMappingTracker, ListEntry);
-			ReleaseMutex(FileMappingListMutex);
-			haveMutex = FALSE;
-
-			if (UnmapViewOfFile(pMappingTracker->BaseAddress) != 0)
-				retval = 0;
-
-			CloseHandle(pMappingTracker->FileMappingHandle);
-			free(pMappingTracker);
-
-			break;
-		}
-
-		pMappingTracker =
-			(PFILE_MAPPING_TRACKER)LIST_NEXT(pMappingTracker,
-				ListEntry);
-	}
-
-	if (haveMutex)
-		ReleaseMutex(FileMappingListMutex);
-
-	if (retval == -1)
-		errno = EINVAL;
-
-	return retval;
-}
-
-/*
- * msync -- synchronize a file with a memory map
- */
-int
-msync(void *addr, size_t len, int flags)
-{
-	if (FlushViewOfFile(addr, len) == 0)
-		return -1;
-
-	PFILE_MAPPING_TRACKER pMappingTracker = NULL;
-	int retval = -1;
-	BOOLEAN haveMutex = TRUE;
-
-	WaitForSingleObject(FileMappingListMutex, INFINITE);
-
-	pMappingTracker =
-		(PFILE_MAPPING_TRACKER)LIST_FIRST(&FileMappingListHead);
-	while (pMappingTracker != NULL) {
-
-		if (pMappingTracker->BaseAddress <= (PVOID *)addr &&
-		    pMappingTracker->EndAddress >= (PVOID *)addr + len) {
-
-			if (FlushFileBuffers(pMappingTracker->FileHandle) != 0)
-				retval = 0;
-
-			break;
-		}
-
-		pMappingTracker =
-			(PFILE_MAPPING_TRACKER)LIST_NEXT(pMappingTracker,
-				ListEntry);
-	}
-
-	if (haveMutex)
-		ReleaseMutex(FileMappingListMutex);
-
-	return retval;
-}
-
-/*
- * mprotect -- set protection on a region of memory
- */
-int
-mprotect(void *addr, size_t len, int prot)
-{
-	DWORD protect = 0;
-
-	if ((prot & PROT_READ) && (prot & PROT_WRITE)) {
-		protect |= PAGE_READWRITE;
-		if (prot & PROT_EXEC)
-			protect |= PAGE_EXECUTE_READWRITE;
-	} else if (prot & PROT_READ) {
-		protect |= PAGE_READONLY;
-		if (prot & PROT_EXEC)
-			protect |= PAGE_EXECUTE_READ;
-	} else {
-		protect |= PAGE_NOACCESS;
-	}
-
-	DWORD oldprot;
-	if (VirtualProtect(addr, len, protect, &oldprot) == 0) {
-		return -1;
-	}
-
-	return 0;
-}
-
-/*
- * library constructor/destructor functions
- */
-MSVC_CONSTR(mmap_init)
-MSVC_DESTR(mmap_fini)

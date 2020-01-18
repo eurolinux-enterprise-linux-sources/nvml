@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -73,10 +73,13 @@ OBJ_TESTS = \
 	obj_debug\
 	obj_direct\
 	obj_first_next\
+	obj_fragmentation\
 	obj_heap\
 	obj_heap_interrupt\
 	obj_heap_state\
+	obj_include\
 	obj_lane\
+	obj_layout\
 	obj_list_insert\
 	obj_list_move\
 	obj_list_recovery\
@@ -102,6 +105,7 @@ OBJ_TESTS = \
 	obj_toid\
 	obj_tx_alloc\
 	obj_tx_add_range\
+	obj_tx_callbacks\
 	obj_tx_lock\
 	obj_tx_add_range_direct\
 	obj_tx_flow\
@@ -109,9 +113,17 @@ OBJ_TESTS = \
 	obj_tx_invalid\
 	obj_tx_locks\
 	obj_tx_locks_abort\
+	obj_tx_mt\
 	obj_tx_realloc\
 	obj_tx_strdup\
-	obj_constructor
+	obj_constructor\
+	obj_oid
+
+OBJ_REMOTE_TESTS = \
+	obj_rpmem_basic_integration\
+	obj_rpmem_constructor\
+	obj_rpmem_heap_state\
+	obj_rpmem_heap_interrupt
 
 OBJ_CPP_TESTS = \
 	obj_cpp_ptr\
@@ -144,8 +156,6 @@ OTHER_TESTS = \
 	pmemobjcli\
 	pmemspoil\
 	bttdevice\
-	remote_basic\
-	remote_obj_basic\
 	scope\
 	set_funcs\
 	traces\
@@ -166,7 +176,7 @@ OTHER_TESTS = \
 
 PMEM_TESTS = \
 	pmem_is_pmem\
-	pmem_is_pmem_proc\
+	pmem_is_pmem_linux\
 	pmem_map\
 	pmem_memcpy\
 	pmem_memmove\
@@ -181,7 +191,9 @@ PMEMPOOL_TESTS = \
 	pmempool_dump\
 	pmempool_help\
 	pmempool_info\
-	pmempool_rm
+	pmempool_rm\
+	pmempool_sync\
+	pmempool_transform
 
 RPMEM_TESTS =\
 	rpmemd_config\
@@ -192,7 +204,9 @@ RPMEM_TESTS =\
 	rpmemd_obc\
 	rpmem_obc_int\
 	rpmemd_db\
-	rpmem_fip
+	rpmem_fip\
+	rpmem_basic\
+	rpmem_addr
 
 VMEM_TESTS = \
 	vmem_aligned_alloc\
@@ -241,41 +255,50 @@ EXAMPLES_TESTS = \
 CPP_EXAMPLE_TESTS = \
 	ex_libpmemobj_cpp
 
-REMOTE_TESTS = \
-	remote_basic\
-	remote_obj_basic\
-	$(RPMEM_TESTS)
-
 LIBPMEMPOOL_DEPS = libpmempool_api
 
 LIBPMEMPOOL_TESTS = \
+	libpmempool_backup\
 	libpmempool_bttdev\
 	libpmempool_map_flog
 
-TESTS = \
+LIBPMEMPOOL_MOD_DEPS = \
+	libpmempool_sync
+LIBPMEMPOOL_MOD_TESTS = \
+	libpmempool_transform
+
+
+LOCAL_TESTS = \
 	$(OBJ_TESTS)\
 	$(BLK_TESTS)\
 	$(LOG_TESTS)\
 	$(OTHER_TESTS)\
 	$(PMEM_TESTS)\
-	$(RPMEM_TESTS)\
 	$(PMEMPOOL_TESTS)\
 	$(VMEM_TESTS)\
 	$(VMMALLOC_TESTS)\
 	$(EXAMPLES_TESTS)\
-	$(LIBPMEMPOOL_TESTS)
+	$(LIBPMEMPOOL_TESTS)\
+	$(LIBPMEMPOOL_MOD_TESTS)
+
+REMOTE_TESTS = \
+	remote_basic\
+	remote_obj_basic\
+	$(OBJ_REMOTE_TESTS)\
+	$(RPMEM_TESTS)\
+	pmempool_sync_remote
 
 ifeq ($(filter n,$(call check_cxx_flags, -std=c++11) $(call check_clang_template_bug)),)
-TESTS += $(OBJ_CPP_TESTS)
+LOCAL_TESTS += $(OBJ_CPP_TESTS)
 
 ifeq ($(call cxx_ok), y)
-TESTS += $(CPP_EXAMPLE_TESTS)
+LOCAL_TESTS += $(CPP_EXAMPLE_TESTS)
 else
 $(info NOTE: Skipping C++ tests because of compiler issues)
 endif
 
 ifeq ($(call check_cxx_chrono), y)
-TESTS += $(CHRONO_TESTS)
+LOCAL_TESTS += $(CHRONO_TESTS)
 else
 $(info NOTE: Skipping C++ chrono tests because of compiler/stdc++ issues)
 endif
@@ -283,10 +306,15 @@ else
 $(info NOTE: Skipping C++ tests because the compiler does not support C++11)
 endif
 
+TESTS = \
+	$(LOCAL_TESTS)\
+	$(REMOTE_TESTS)
+
 TESTS_BUILD = \
 	$(TEST_DEPS)\
 	$(OBJ_DEPS)\
 	$(LIBPMEMPOOL_DEPS)\
+	$(LIBPMEMPOOL_MOD_DEPS)\
 	$(TESTS)
 
 all     : TARGET = all
@@ -309,14 +337,30 @@ ifeq ($(CHECK_POOL),y)
 CHECK_POOL_OPT="-c"
 endif
 
+DIR_SYNC=$(TOP)/src/test/.sync-dir
+SYNC_EXT=synced
+
 all test cstyle format: $(TESTS_BUILD)
 
-clean clobber: $(TESTS_BUILD)
+test: sync-remotes
 
-$(TESTS) $(OBJ_DEPS) $(LIBPMEMPOOL_DEPS): $(TEST_DEPS)
+clean clobber: $(TESTS_BUILD)
+	$(RM) -r $(DIR_SYNC)
+	$(RM) *.$(SYNC_EXT)
+
+$(TESTS) $(OBJ_DEPS) $(LIBPMEMPOOL_DEPS) $(LIBPMEMPOOL_MOD_DEPS): $(TEST_DEPS)
 
 $(OBJ_TESTS): $(OBJ_DEPS)
 $(LIBPMEMPOOL_TESTS): $(LIBPMEMPOOL_DEPS)
+$(LIBPMEMPOOL_MOD_TESTS): $(LIBPMEMPOOL_MOD_DEPS)
+
+obj_rpmem_basic_integration: obj_basic_integration
+
+obj_rpmem_constuctor: obj_constructor
+
+obj_rpmem_heap_interrupt: obj_heap_interrupt
+
+obj_rpmem_heap_state: obj_heap_state
 
 $(TESTS_BUILD):
 	$(MAKE) -C $@ $(TARGET)
@@ -331,57 +375,98 @@ memcheck-summary-leaks:
 	grep "in use at exit" */memcheck*.log | grep -v " 0 bytes in 0 blocks" || true
 
 check: test
-	@./RUNTESTS -b $(TEST_BUILD) -t $(TEST_TYPE) -f $(TEST_FS) -o $(TEST_TIME) -m $(MEMCHECK) $(CHECK_POOL_OPT) $(TESTS)
+	@./RUNTESTS $(test_build) -t $(TEST_TYPE) -f $(TEST_FS) -o $(TEST_TIME) -m $(MEMCHECK) $(CHECK_POOL_OPT) $(TESTS)
 	@echo "No failures."
 
-check-remote: test
-	@./RUNTESTS -b $(TEST_BUILD) -t $(TEST_TYPE) -f $(TEST_FS) -o $(TEST_TIME) -m $(MEMCHECK) $(CHECK_POOL_OPT) $(REMOTE_TESTS)
+check-remote-quiet: test
+	@./RUNTESTS $(test_build) -t $(TEST_TYPE) -f $(TEST_FS) -o $(TEST_TIME) -m $(MEMCHECK) $(CHECK_POOL_OPT) $(REMOTE_TESTS)
+
+check-remote: check-remote-quiet
 	@echo "No failures."
 
-pcheck: $(TESTS_BUILD)
+# XXX remote tests do not work in parallel mode
+pcheck: pcheck-local-quiet check-remote-quiet
 	@echo "No failures."
 
-pcheck_blk: TARGET = pcheck
-pcheck_blk: $(BLK_TESTS)
+pcheck-blk: TARGET = pcheck
+pcheck-blk: $(BLK_TESTS)
 	@echo "No failures."
 
-pcheck_log: TARGET = pcheck
-pcheck_log: $(LOG_TESTS)
+pcheck-log: TARGET = pcheck
+pcheck-log: $(LOG_TESTS)
 	@echo "No failures."
 
-pcheck_obj: TARGET = pcheck
-pcheck_obj: $(OBJ_TESTS)
+pcheck-obj: TARGET = pcheck
+pcheck-obj: $(OBJ_TESTS)
 	@echo "No failures."
 
-pcheck_other: TARGET = pcheck
-pcheck_other: $(OTHER_TESTS)
+pcheck-other: TARGET = pcheck
+pcheck-other: $(OTHER_TESTS)
 	@echo "No failures."
 
-pcheck_pmem: TARGET = pcheck
-pcheck_pmem: $(PMEM_TESTS)
+pcheck-pmem: TARGET = pcheck
+pcheck-pmem: $(PMEM_TESTS)
 	@echo "No failures."
 
-pcheck_rpmem: TARGET = pcheck
-pcheck_rpmem: $(RPMEM_TESTS)
+pcheck-rpmem: TARGET = pcheck
+pcheck-rpmem: $(RPMEM_TESTS)
 	@echo "No failures."
 
-pcheck_pmempool: TARGET = pcheck
-pcheck_pmempool: $(PMEMPOOL_TESTS)
+pcheck-pmempool: TARGET = pcheck
+pcheck-pmempool: $(PMEMPOOL_TESTS)
 	@echo "No failures."
 
-pcheck_libpmempool: TARGET = pcheck
-pcheck_libpmempool: $(LIBPMEMPOOL_TESTS)
+pcheck-libpmempool: TARGET = pcheck
+pcheck-libpmempool: $(LIBPMEMPOOL_TESTS)
 	@echo "No failures."
 
-pcheck_vmem: TARGET = pcheck
-pcheck_vmem: $(VMEM_TESTS)
+pcheck-vmem: TARGET = pcheck
+pcheck-vmem: $(VMEM_TESTS)
 	@echo "No failures."
 
-pcheck_vmmalloc: TARGET = pcheck
-pcheck_vmmalloc: $(VMMALLOC_TESTS)
+pcheck-vmmalloc: TARGET = pcheck
+pcheck-vmmalloc: $(VMMALLOC_TESTS)
 	@echo "No failures."
 
-.PHONY: all check clean clobber cstyle pcheck pcheck_blk pcheck_log pcheck_obj\
-	 pcheck_other pcheck_pmem pcheck_pmempool pcheck_vmem pcheck_vmmalloc\
-	 test unittest tools check-remote format pcheck_libpmempool\
-	 $(TESTS_BUILD)
+pcheck-local-quiet: TARGET = pcheck
+pcheck-local-quiet: $(LOCAL_TESTS)
+
+pcheck-local: pcheck-local-quiet
+	@echo "No failures."
+
+pcheck-remote: TARGET = pcheck
+pcheck-remote: $(REMOTE_TESTS)
+	@echo "No failures."
+
+TESTCONFIG=$(TOP)/src/test/testconfig.sh
+
+$(TESTCONFIG):
+
+SUPP_SYNC_FILES=$(shell echo *.supp | sed s/supp/$(SYNC_EXT)/g)
+
+%.$(SYNC_EXT): %.supp $(TESTCONFIG)
+	cp $(shell echo $^ | cut -d" " -f1) $(DIR_SYNC)
+	@touch $@
+
+# sync remote nodes
+sync-remotes:
+ifeq ($(FORCE_SYNC_REMOTES),y)
+	@touch $(TESTCONFIG)
+endif
+ifneq ($(SKIP_SYNC_REMOTES),y)
+	@rm -rf $(DIR_SYNC) && mkdir -p $(DIR_SYNC)
+	$(MAKE) $(SUPP_SYNC_FILES)
+	$(MAKE) -C tools $@
+	$(MAKE) -C ../tools $@
+	$(MAKE) -C sync-remotes $@
+	@for test in $(REMOTE_TESTS); do \
+		echo "$(MAKE) -C $$test sync-test" ; \
+		$(MAKE) -C $$test sync-test || exit 1 ; \
+	done
+	@rm -rf $(DIR_SYNC)
+endif
+
+.PHONY: all check clean clobber cstyle pcheck pcheck-blk pcheck-log pcheck-obj\
+	 pcheck-other pcheck-pmem pcheck-pmempool pcheck-vmem pcheck-vmmalloc\
+	 test unittest tools check-remote format pcheck-libpmempool\
+	 pcheck-rpmem pcheck-local pcheck-remote sync-remotes $(TESTS_BUILD)

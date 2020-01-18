@@ -1,5 +1,6 @@
 #
 # Copyright 2015-2016, Intel Corporation
+# Copyright (c) 2016, Microsoft Corporation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -42,14 +43,12 @@ Param(
     )
 $Env:UNITTEST_NAME = "blk_nblock\TEST1"
 $Env:UNITTEST_NUM = "1"
-# XXX:  bash has a few calls to tools that we don't have on
-# windows (yet) that set PMEM_IS_PMEM and NON_PMEM_IS_PMEM based
-# on their output
-$Env:PMEM_IS_PMEM = $true
-$Env:NON_PMEM_IS_PMEM = $true
+
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
+
+require_test_type medium
 
 require_fs_type any
 
@@ -62,27 +61,27 @@ setup
 # These are holey files, so they actually don't take up
 # any significant space.
 #
-create_holey_file 1024 $DIR\testfile1.2096896
-create_holey_file 1024 $DIR\testfile1.2096897
-create_holey_file 2048 $DIR\testfile2.0
-create_holey_file 2048 $DIR\testfile2.1
-create_holey_file 2048 $DIR\testfile2.17
-create_holey_file 2048 $DIR\testfile2.511
-create_holey_file 2048 $DIR\testfile2.1048576
-create_holey_file 2048 $DIR\testfile2.2097152
-create_holey_file 2048 $DIR\testfile2.4194304
-create_holey_file 2048 $DIR\testfile2.8388608
-create_holey_file 2048 $DIR\testfile2.16777216
-create_holey_file 2048 $DIR\testfile2.33554432
-create_holey_file 2048 $DIR\testfile2.67108864
-create_holey_file 2048 $DIR\testfile2.134217728
-create_holey_file 2048 $DIR\testfile2.268435456
-create_holey_file 2048 $DIR\testfile2.536870912
-create_holey_file 2048 $DIR\testfile2.1073741824
-create_holey_file 2048 $DIR\testfile2.2147483648
-create_holey_file 2048 $DIR\testfile2.-1
+create_holey_file 1024M $DIR\testfile1.2096896
+create_holey_file 1024M $DIR\testfile1.2096897
+create_holey_file 2048M $DIR\testfile2.0
+create_holey_file 2048M $DIR\testfile2.1
+create_holey_file 2048M $DIR\testfile2.17
+create_holey_file 2048M $DIR\testfile2.511
+create_holey_file 2048M $DIR\testfile2.1048576
+create_holey_file 2048M $DIR\testfile2.2097152
+create_holey_file 2048M $DIR\testfile2.4194304
+create_holey_file 2048M $DIR\testfile2.8388608
+create_holey_file 2048M $DIR\testfile2.16777216
+create_holey_file 2048M $DIR\testfile2.33554432
+create_holey_file 2048M $DIR\testfile2.67108864
+create_holey_file 2048M $DIR\testfile2.134217728
+create_holey_file 2048M $DIR\testfile2.268435456
+create_holey_file 2048M $DIR\testfile2.536870912
+create_holey_file 2048M $DIR\testfile2.1073741824
+create_holey_file 2048M $DIR\testfile2.2147483648
+create_holey_file 2048M $DIR\testfile2.-1
 
-expect_normal_exit ..\..\x64\debug\blk_nblock$Env:EXESUFFIX `
+expect_normal_exit $Env:EXE_DIR\blk_nblock$Env:EXESUFFIX `
     2096896:$DIR\testfile1.2096896 `
     2096897:$DIR\testfile1.2096897 0:$DIR\testfile2.0 `
     1:$DIR\testfile2.1 17:$DIR\testfile2.17 `
@@ -94,6 +93,6 @@ expect_normal_exit ..\..\x64\debug\blk_nblock$Env:EXESUFFIX `
     536870912:$DIR\testfile2.536870912 1073741824:$DIR\testfile2.1073741824 `
     2147483648:$DIR\testfile2.2147483648 -1:$DIR\testfile2.-1
 
-# check will print the appropriate pass/fail message
 check
 
+pass

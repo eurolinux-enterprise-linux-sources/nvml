@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,7 +34,16 @@
  * obj.h -- internal definitions for obj module
  */
 
+#ifndef LIBPMEMOBJ_OBJ_H
+#define LIBPMEMOBJ_OBJ_H 1
+
 #include <stddef.h>
+#include <stdint.h>
+
+#include "lane.h"
+#include "pool_hdr.h"
+#include "pmalloc.h"
+#include "redo.h"
 
 #define PMEMOBJ_LOG_PREFIX "libpmemobj"
 #define PMEMOBJ_LOG_LEVEL_VAR "PMEMOBJ_LOG_LEVEL"
@@ -42,7 +51,7 @@
 
 /* attributes of the obj memory pool format for the pool header */
 #define OBJ_HDR_SIG "PMEMOBJ"	/* must be 8 bytes including '\0' */
-#define OBJ_FORMAT_MAJOR 2
+#define OBJ_FORMAT_MAJOR 3
 #define OBJ_FORMAT_COMPAT 0x0000
 #define OBJ_FORMAT_INCOMPAT 0x0000
 #define OBJ_FORMAT_RO_COMPAT 0x0000
@@ -54,14 +63,6 @@
 
 #define OBJ_LANES_OFFSET	8192	/* lanes offset (8kB) */
 #define OBJ_NLANES		1024	/* number of lanes */
-
-/*
- * To make sure that the range cache does not needlessly waste memory in the
- * allocator, the values set here must very closely match allocation class
- * sizes. A good value to aim for is multiples of 1024 bytes.
- */
-#define MAX_CACHED_RANGE_SIZE 32
-#define MAX_CACHED_RANGES 169
 
 #define OBJ_OOB_SIZE		(sizeof(struct oob_header))
 #define OBJ_OFF_TO_PTR(pop, off) ((void *)((uintptr_t)(pop) + (off)))
@@ -76,9 +77,13 @@
 	(off) < (pop)->lanes_offset +\
 	(pop)->nlanes * sizeof(struct lane_layout))
 
+#define OBJ_PTR_FROM_POOL(pop, ptr)\
+	((uintptr_t)(ptr) >= (uintptr_t)(pop) &&\
+	(uintptr_t)(ptr) < (uintptr_t)(pop) + (pop)->size)
+
 #define OBJ_OFF_IS_VALID(pop, off)\
 	((OBJ_OFF_FROM_HEAP(pop, off) ||\
-	(OBJ_PTR_TO_OFF(pop, &pop->root_offset) == off)) ||\
+	(OBJ_PTR_TO_OFF(pop, &(pop)->root_offset) == (off))) ||\
 	(OBJ_OFF_FROM_LANES(pop, off)))
 
 #define OBJ_PTR_IS_VALID(pop, ptr)\
@@ -99,21 +104,14 @@
 #define OOB_OFFSET_OF(oid, field)\
 	((oid).off - OBJ_OOB_SIZE + offsetof(struct oob_header, field))
 
-#define OBJ_STORE_ITEM_PADDING\
-	(_POBJ_CL_ALIGNMENT - (sizeof(struct list_head) % _POBJ_CL_ALIGNMENT))
-
 typedef void (*persist_local_fn)(const void *, size_t);
 typedef void (*flush_local_fn)(const void *, size_t);
 typedef void (*drain_local_fn)(void);
 typedef void *(*memcpy_local_fn)(void *dest, const void *src, size_t len);
 typedef void *(*memset_local_fn)(void *dest, int c, size_t len);
 
-typedef void (*persist_fn)(PMEMobjpool *pop, const void *, size_t);
-typedef void (*flush_fn)(PMEMobjpool *pop, const void *, size_t);
-typedef void (*drain_fn)(PMEMobjpool *pop);
-typedef void *(*memcpy_fn)(PMEMobjpool *pop, void *dest, const void *src,
-					size_t len);
-typedef void *(*memset_fn)(PMEMobjpool *pop, void *dest, int c, size_t len);
+typedef void *(*persist_remote_fn)(PMEMobjpool *pop, const void *addr,
+					size_t len, unsigned lane);
 
 extern unsigned long long Pagesize;
 
@@ -141,12 +139,14 @@ struct pmemobjpool {
 	size_t size;		/* size of mapped region */
 	int is_pmem;		/* true if pool is PMEM */
 	int rdonly;		/* true if pool is opened read-only */
-	struct heap_layout *hlayout;
-	struct pmalloc_heap *heap; /* allocator heap */
+	struct palloc_heap heap;
 	struct lane_descriptor lanes_desc;
 	uint64_t uuid_lo;
+	int is_dev_dax;		/* true if mapped on device dax */
 
+	struct pool_set *set;		/* pool set info */
 	struct pmemobjpool *replica;	/* next replica */
+	struct redo_ctx *redo;
 
 	/* per-replica functions: pmem or non-pmem */
 	persist_local_fn persist_local;	/* persist function */
@@ -156,15 +156,25 @@ struct pmemobjpool {
 	memset_local_fn memset_persist_local; /* persistent memset function */
 
 	/* for 'master' replica: with or without data replication */
-	persist_fn persist;	/* persist function */
-	flush_fn flush;		/* flush function */
-	drain_fn drain;		/* drain function */
-	memcpy_fn memcpy_persist; /* persistent memcpy function */
-	memset_fn memset_persist; /* persistent memset function */
+	struct pmem_ops p_ops;
 
 	PMEMmutex rootlock;	/* root object lock */
 	int is_master_replica;
-	char unused2[1804];
+	int has_remote_replicas;
+
+	/* remote replica section */
+	void *rpp;	/* RPMEMpool opaque handle if it is a remote replica */
+	uintptr_t remote_base;	/* beginning of the pool's descriptor */
+	char *node_addr;	/* address of a remote node */
+	char *pool_desc;	/* descriptor of a poolset */
+
+	persist_remote_fn persist_remote; /* remote persist function */
+
+	int vg_boot;
+
+	/* padding to align size of this structure to page boundary */
+	/* sizeof(unused2) == 8192 - offsetof(struct pmemobjpool, unused2) */
+	char unused2[1590];
 };
 
 /*
@@ -173,6 +183,9 @@ struct pmemobjpool {
  * functions.
  */
 #define OBJ_INTERNAL_OBJECT_MASK ((1ULL) << 63)
+#define OBJ_ROOT_SIZE(oobh) ((oobh)->size & ~OBJ_INTERNAL_OBJECT_MASK)
+#define OBJ_IS_INTERNAL(oobh) (((oobh)->size & OBJ_INTERNAL_OBJECT_MASK))
+#define OBJ_IS_ROOT(oobh) (OBJ_IS_INTERNAL(oobh) && OBJ_ROOT_SIZE(oobh))
 
 /*
  * Out-Of-Band Header - it is padded to 48B to fit one cache line (64B)
@@ -229,3 +242,21 @@ OBJ_OID_IS_VALID(PMEMobjpool *pop, PMEMoid oid)
 
 void obj_init(void);
 void obj_fini(void);
+int obj_read_remote(void *ctx, uintptr_t base, void *dest, void *addr,
+		size_t length);
+
+#ifdef USE_VG_MEMCHECK
+int obj_vg_register(uint64_t off, void *arg);
+#endif
+
+/*
+ * (debug helper macro) logs notice message if used inside a transaction
+ */
+#ifdef DEBUG
+#define _POBJ_DEBUG_NOTICE_IN_TX()\
+	_pobj_debug_notice(__func__, NULL, 0)
+#else
+#define _POBJ_DEBUG_NOTICE_IN_TX() do {} while (0)
+#endif
+
+#endif

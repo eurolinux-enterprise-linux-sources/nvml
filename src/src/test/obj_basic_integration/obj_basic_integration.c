@@ -77,8 +77,8 @@ struct dummy_root {
 static int
 dummy_node_constructor(PMEMobjpool *pop, void *ptr, void *arg)
 {
-	struct dummy_node *n = ptr;
-	int *test_val = arg;
+	struct dummy_node *n = (struct dummy_node *)ptr;
+	int *test_val = (int *)arg;
 	n->value = *test_val;
 	pmemobj_persist(pop, &n->value, sizeof(n->value));
 
@@ -95,7 +95,7 @@ test_alloc_api(PMEMobjpool *pop)
 
 	UT_ASSERT_rt(OID_INSTANCEOF(node_zeroed.oid, struct dummy_node));
 
-	int *test_val = MALLOC(sizeof(*test_val));
+	int *test_val = (int *)MALLOC(sizeof(*test_val));
 	*test_val = TEST_VALUE;
 	POBJ_NEW(pop, &node_constructed, struct dummy_node_c,
 			dummy_node_constructor, test_val);
@@ -414,8 +414,8 @@ test_tx_api(PMEMobjpool *pop)
 
 	int *vstate = NULL; /* volatile state */
 
-	TX_BEGIN_LOCK(pop, TX_LOCK_MUTEX, &D_RW(root)->lock) {
-		vstate = MALLOC(sizeof(*vstate));
+	TX_BEGIN_PARAM(pop, TX_PARAM_MUTEX, &D_RW(root)->lock) {
+		vstate = (int *)MALLOC(sizeof(*vstate));
 		*vstate = TEST_VALUE;
 		TX_ADD(root);
 		D_RW(root)->value = *vstate;
@@ -428,7 +428,7 @@ test_tx_api(PMEMobjpool *pop)
 	UT_ASSERTeq(vstate, NULL);
 	UT_ASSERTeq(D_RW(root)->value, TEST_VALUE);
 
-	TX_BEGIN_LOCK(pop, TX_LOCK_MUTEX, &D_RW(root)->lock) {
+	TX_BEGIN_PARAM(pop, TX_PARAM_MUTEX, &D_RW(root)->lock) {
 		TX_ADD(root);
 		D_RW(root)->node = TX_ALLOC(struct dummy_node, SIZE_MAX);
 		UT_ASSERT(0); /* should not get to this point */
@@ -438,7 +438,7 @@ test_tx_api(PMEMobjpool *pop)
 	} TX_END
 
 	errno = 0;
-	TX_BEGIN_LOCK(pop, TX_LOCK_MUTEX, &D_RW(root)->lock) {
+	TX_BEGIN_PARAM(pop, TX_PARAM_MUTEX, &D_RW(root)->lock) {
 		D_RW(root)->node = TX_ZALLOC(struct dummy_node, SIZE_MAX);
 		UT_ASSERT(0); /* should not get to this point */
 	} TX_ONABORT {
@@ -447,7 +447,17 @@ test_tx_api(PMEMobjpool *pop)
 	} TX_END
 
 	errno = 0;
-	TX_BEGIN_LOCK(pop, TX_LOCK_MUTEX, &D_RW(root)->lock) {
+	TX_BEGIN_PARAM(pop, TX_PARAM_MUTEX, &D_RW(root)->lock) {
+		D_RW(root)->node = TX_XALLOC(struct dummy_node, SIZE_MAX,
+				POBJ_XALLOC_ZERO);
+		UT_ASSERT(0); /* should not get to this point */
+	} TX_ONABORT {
+		UT_ASSERT(TOID_IS_NULL(D_RO(root)->node));
+		UT_ASSERTeq(errno, ENOMEM);
+	} TX_END
+
+	errno = 0;
+	TX_BEGIN_LOCK(pop, TX_PARAM_MUTEX, &D_RW(root)->lock) {
 		D_RW(root)->node = TX_ALLOC(struct dummy_node,
 			PMEMOBJ_MAX_ALLOC_SIZE + 1);
 		UT_ASSERT(0); /* should not get to this point */
@@ -457,7 +467,7 @@ test_tx_api(PMEMobjpool *pop)
 	} TX_END
 
 	errno = 0;
-	TX_BEGIN_LOCK(pop, TX_LOCK_MUTEX, &D_RW(root)->lock) {
+	TX_BEGIN_PARAM(pop, TX_PARAM_MUTEX, &D_RW(root)->lock) {
 		D_RW(root)->node = TX_ZALLOC(struct dummy_node,
 			PMEMOBJ_MAX_ALLOC_SIZE + 1);
 		UT_ASSERT(0); /* should not get to this point */
@@ -467,7 +477,7 @@ test_tx_api(PMEMobjpool *pop)
 	} TX_END
 
 	errno = 0;
-	TX_BEGIN_LOCK(pop, TX_LOCK_MUTEX, &D_RW(root)->lock) {
+	TX_BEGIN_PARAM(pop, TX_PARAM_MUTEX, &D_RW(root)->lock) {
 		TX_ADD(root);
 		D_RW(root)->node = TX_ZNEW(struct dummy_node);
 		TX_REALLOC(D_RO(root)->node, SIZE_MAX);
@@ -478,7 +488,7 @@ test_tx_api(PMEMobjpool *pop)
 	UT_ASSERT(TOID_IS_NULL(D_RO(root)->node));
 
 	errno = 0;
-	TX_BEGIN_LOCK(pop, TX_LOCK_MUTEX, &D_RW(root)->lock) {
+	TX_BEGIN_PARAM(pop, TX_PARAM_MUTEX, &D_RW(root)->lock) {
 		TX_ADD(root);
 		D_RW(root)->node = TX_ZNEW(struct dummy_node);
 		TX_REALLOC(D_RO(root)->node, PMEMOBJ_MAX_ALLOC_SIZE + 1);
@@ -489,7 +499,7 @@ test_tx_api(PMEMobjpool *pop)
 	UT_ASSERT(TOID_IS_NULL(D_RO(root)->node));
 
 	errno = 0;
-	TX_BEGIN_LOCK(pop, TX_LOCK_MUTEX, &D_RW(root)->lock) {
+	TX_BEGIN_PARAM(pop, TX_PARAM_MUTEX, &D_RW(root)->lock) {
 		TX_ADD(root);
 		D_RW(root)->node = TX_ZNEW(struct dummy_node);
 		TX_MEMSET(D_RW(D_RW(root)->node)->teststr, 'a', TEST_STR_LEN);
@@ -501,7 +511,7 @@ test_tx_api(PMEMobjpool *pop)
 	UT_ASSERT(strncmp(D_RW(D_RW(root)->node)->teststr, TEST_STR,
 		TEST_STR_LEN) == 0);
 
-	TX_BEGIN_LOCK(pop, TX_LOCK_MUTEX, &D_RW(root)->lock) {
+	TX_BEGIN_PARAM(pop, TX_PARAM_MUTEX, &D_RW(root)->lock) {
 		TX_ADD(root);
 		UT_ASSERT(!TOID_IS_NULL(D_RW(root)->node));
 		TX_FREE(D_RW(root)->node);
@@ -520,12 +530,45 @@ test_tx_api(PMEMobjpool *pop)
 
 	errno = 0;
 	TX_BEGIN(pop) {
-		TX_BEGIN((void *)(uintptr_t)7) {
+		TX_BEGIN((PMEMobjpool *)(uintptr_t)7) {
 		} TX_ONCOMMIT {
 			UT_ASSERT(0);
 		} TX_END
 		UT_ASSERT(errno == EINVAL);
 	} TX_END
+
+	UT_OUT("%s", pmemobj_errormsg());
+	TX_BEGIN(pop) {
+		pmemobj_tx_abort(ECANCELED);
+	} TX_END
+	UT_OUT("%s", pmemobj_errormsg());
+}
+
+static void
+test_offsetof(void)
+{
+	TOID(struct dummy_root) r;
+	TOID(struct dummy_node) n;
+
+	UT_COMPILE_ERROR_ON(TOID_OFFSETOF(r, value) !=
+				offsetof(struct dummy_root, value));
+	UT_COMPILE_ERROR_ON(TOID_OFFSETOF(r, lock) !=
+				offsetof(struct dummy_root, lock));
+	UT_COMPILE_ERROR_ON(TOID_OFFSETOF(r, node) !=
+				offsetof(struct dummy_root, node));
+	UT_COMPILE_ERROR_ON(TOID_OFFSETOF(r, dummies) !=
+				offsetof(struct dummy_root, dummies));
+	UT_COMPILE_ERROR_ON(TOID_OFFSETOF(r, moved) !=
+				offsetof(struct dummy_root, moved));
+
+	UT_COMPILE_ERROR_ON(TOID_OFFSETOF(n, value) !=
+				offsetof(struct dummy_node, value));
+	UT_COMPILE_ERROR_ON(TOID_OFFSETOF(n, teststr) !=
+				offsetof(struct dummy_node, teststr));
+	UT_COMPILE_ERROR_ON(TOID_OFFSETOF(n, plist) !=
+				offsetof(struct dummy_node, plist));
+	UT_COMPILE_ERROR_ON(TOID_OFFSETOF(n, plist_m) !=
+				offsetof(struct dummy_node, plist_m));
 }
 
 int
@@ -551,8 +594,24 @@ main(int argc, char *argv[])
 	test_realloc_api(pop);
 	test_list_api(pop);
 	test_tx_api(pop);
+	test_offsetof();
 
 	pmemobj_close(pop);
+
+	if ((pop = pmemobj_open(path, POBJ_LAYOUT_NAME(basic))) == NULL)
+		UT_FATAL("!pmemobj_open: %s", path);
+
+	/* second open should fail, checks file locking */
+	if ((pmemobj_open(path, POBJ_LAYOUT_NAME(basic))) != NULL)
+		UT_FATAL("!pmemobj_open: %s", path);
+
+	pmemobj_close(pop);
+
+	int result = pmemobj_check(path, POBJ_LAYOUT_NAME(basic));
+	if (result < 0)
+		UT_OUT("!%s: pmemobj_check", path);
+	else if (result == 0)
+		UT_OUT("%s: pmemobj_check: not consistent", path);
 
 	DONE(NULL);
 }

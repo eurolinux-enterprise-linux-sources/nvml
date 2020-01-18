@@ -34,11 +34,11 @@
  * data_store.c -- tree_map example usage
  */
 
+#include <ex_common.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <time.h>
 #include <assert.h>
 #include "map.h"
@@ -47,6 +47,7 @@
 #include "map_rbtree.h"
 #include "map_hashmap_atomic.h"
 #include "map_hashmap_tx.h"
+#include "map_skiplist.h"
 
 POBJ_LAYOUT_BEGIN(data_store);
 POBJ_LAYOUT_ROOT(data_store, struct store_root);
@@ -115,6 +116,8 @@ parse_map_type(const char *type)
 		return MAP_HASHMAP_ATOMIC;
 	else if (strcmp(type, "hashmap_tx") == 0)
 		return MAP_HASHMAP_TX;
+	else if (strcmp(type, "skiplist") == 0)
+		return MAP_SKIPLIST;
 	return NULL;
 
 }
@@ -122,8 +125,8 @@ parse_map_type(const char *type)
 int main(int argc, const char *argv[]) {
 	if (argc < 3) {
 		printf("usage: %s "
-			"<ctree|btree|rbtree|hashmap_atomic|hashmap_tx>"
-			" file-name [nops]\n", argv[0]);
+			"<ctree|btree|rbtree|hashmap_atomic|"
+			"hashmap_tx|skiplist> file-name [nops]\n", argv[0]);
 		return 1;
 	}
 
@@ -147,9 +150,9 @@ int main(int argc, const char *argv[]) {
 	}
 
 	PMEMobjpool *pop;
-	srand(time(NULL));
+	srand((unsigned)time(NULL));
 
-	if (access(path, F_OK) != 0) {
+	if (file_exists(path) != 0) {
 		if ((pop = pmemobj_create(path, POBJ_LAYOUT_NAME(data_store),
 			PMEMOBJ_MIN_POOL, 0666)) == NULL) {
 			perror("failed to create pool\n");
@@ -172,12 +175,12 @@ int main(int argc, const char *argv[]) {
 	}
 	/* delete the map if it exists */
 	if (!map_check(mapc, D_RW(root)->map))
-		map_delete(mapc, &D_RW(root)->map);
+		map_destroy(mapc, &D_RW(root)->map);
 
 	/* insert random items in a transaction */
 	int aborted = 0;
 	TX_BEGIN(pop) {
-		map_new(mapc, &D_RW(root)->map, NULL);
+		map_create(mapc, &D_RW(root)->map, NULL);
 
 		for (int i = 0; i < nops; ++i) {
 			/* new_store_item is transactional! */

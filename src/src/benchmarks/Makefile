@@ -43,6 +43,8 @@ vpath %.c $(TOP)/src/examples/libpmemobj/hashmap
 
 vpath %.c $(TOP)/src/libpmemobj
 vpath %.c $(TOP)/src/common
+vpath %.c $(TOP)/src/librpmem
+vpath %.c $(TOP)/src/rpmem_common
 
 
 BENCHMARK = pmembench
@@ -60,11 +62,6 @@ all: $(TARGET)
 SRC=pmembench.c\
     benchmark_time.c\
     benchmark_worker.c\
-    util.c\
-    util_linux.c\
-    out.c\
-    set.c\
-    set_linux.c\
     clo.c\
     clo_vec.c\
     config_reader.c\
@@ -76,12 +73,17 @@ SRC=pmembench.c\
     pmem_memcpy.c\
     pmem_flush.c\
     pmemobj_gen.c\
+    pmemobj_persist.c\
     obj_pmalloc.c\
     obj_locks.c\
     obj_lanes.c\
     map_bench.c\
     pmemobj_tx.c\
-    pmemobj_atomic_lists.c
+    pmemobj_atomic_lists.c\
+    rpmem_ssh.c\
+    rpmem_cmd.c\
+    rpmem_common.c\
+    rpmem_util.c
 
 # Configuration file without the .cfg extension
 CONFIGS=pmembench_log\
@@ -91,6 +93,7 @@ CONFIGS=pmembench_log\
 	pmembench_memcpy\
 	pmembench_flush\
 	pmembench_obj_pmalloc\
+	pmembench_obj_persist\
 	pmembench_obj_gen\
 	pmembench_obj_locks\
 	pmembench_obj_lanes\
@@ -99,13 +102,31 @@ CONFIGS=pmembench_log\
 	pmembench_atomic_lists
 
 OBJS=$(SRC:.c=.o)
+ifneq ($(filter 1 2, $(CSTYLEON)),)
+TMP_HEADERS := $(addsuffix tmp, $(HEADERS))
+endif
 LDFLAGS = -L$(LIBS_PATH)
 LDFLAGS += -L../examples/libpmemobj/map
 LDFLAGS += $(EXTRA_LDFLAGS)
-LIBS += -lpmemobj -lpmemlog -lpmemblk -lpmem -lvmem -pthread -lm
+ifeq ($(DEBUG),)
+LIBS += ../nondebug/libpmemcommon.a
+else
+LIBS += ../debug/libpmemcommon.a
+endif
+LIBS += -lpmemobj -lpmemlog -lpmemblk -lpmem -lvmem -pthread -lm -ldl
 ifeq ($(call check_librt), n)
 LIBS += -lrt
 endif
+
+ifeq ($(BUILD_RPMEM),y)
+SRC += rpmem_persist.c
+LIBS += -lrpmem
+CONFIGS += pmembench_rpmem
+else
+$(info NOTE: Skipping librpmem benchmark because libfabric is missing \
+-- see src/librpmem/README for details.)
+endif
+
 CFLAGS  = -std=gnu99
 CFLAGS += -Wall
 CFLAGS += -Werror
@@ -117,6 +138,8 @@ CFLAGS += -I../include
 CFLAGS += -I../libpmemobj
 CFLAGS += -I../common
 CFLAGS += -I../examples/libpmemobj/map
+CFLAGS += -I../rpmem_common
+CFLAGS += -I../librpmem
 CFLAGS += -DSRCVERSION='"$(SRCVERSION)"'
 ifeq ($(GLIB),y)
 CFLAGS += $(shell $(PKG_CONFIG) --cflags glib-2.0)
@@ -148,19 +171,23 @@ CFLAGS += $(EXTRA_CFLAGS)
 
 objdir=.
 
-%.o: %.c
+%.o: %.c Makefile
+	$(call check-cstyle, $<)
 	@mkdir -p .deps
 	$(CC) -MD -c -o $@ $(CFLAGS) $<
 	$(create-deps)
 
-$(BENCHMARK): $(OBJS) $(LIBMAP)
-	$(CC) -o $@ $(LDFLAGS) $^ $(LIBS)
+%.htmp: %.h
+	$(call check-cstyle, $<, $@)
+
+$(BENCHMARK): $(TMP_HEADERS) $(OBJS) $(LIBMAP)
+	$(CC) -o $@ $(LDFLAGS) $(OBJS) $(LIBMAP) $(LIBS)
 
 $(LIBMAP):
 	$(MAKE) -C $(LIBMAP_DIR) map
 
 clean:
-	$(RM) $(OBJS)
+	$(RM) $(OBJS) $(TMP_HEADERS)
 	$(RM) *.csv
 
 clobber: clean

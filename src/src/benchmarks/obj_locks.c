@@ -41,7 +41,6 @@
 #include "libpmemobj.h"
 #include "benchmark.h"
 
-#include "util.h"
 #include "out.h"
 #include "lane.h"
 #include "redo.h"
@@ -97,7 +96,7 @@ struct prog_args {
  * mutex similar to PMEMmutex, but with pthread_mutex_t in RAM
  */
 typedef union padded_volatile_pmemmutex {
-	char padding[_POBJ_CL_ALIGNMENT];
+	char padding[_POBJ_CL_SIZE];
 	struct {
 		uint64_t runid;
 		pthread_mutex_t *mutexp; /* pointer to pthread mutex in RAM */
@@ -390,7 +389,7 @@ exit_bench_rwlock(struct mutex_bench *mb)
 {
 	if (mb->pa->use_pthread) {
 		/* deinitialize pthread mutex objects */
-		for (unsigned int i = 0; i < mb->pa->n_locks; i++) {
+		for (unsigned i = 0; i < mb->pa->n_locks; i++) {
 			pthread_rwlock_t *p = (pthread_rwlock_t *)&mb->locks[i];
 			pthread_rwlock_destroy(p);
 		}

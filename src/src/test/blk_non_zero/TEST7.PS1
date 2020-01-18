@@ -39,14 +39,12 @@ Param(
     )
 $Env:UNITTEST_NAME = "blk_non_zero\TEST7"
 $Env:UNITTEST_NUM = "7"
-# XXX:  bash has a few calls to tools that we don't have on
-# windows (yet) that set PMEM_IS_PMEM and NON_PMEM_IS_PMEM based
-# on their output
-$Env:PMEM_IS_PMEM = $true
-$Env:NON_PMEM_IS_PMEM = $true
+
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
+
+require_test_type medium
 
 # doesn't make sense to run in local directory
 require_fs_type pmem non-pmem
@@ -56,11 +54,12 @@ setup
 # mix writes with set_zero and set_error and check results
 $FILE_SIZE = $((1024*1024*1024))
 
-expect_normal_exit ..\..\x64\debug\blk_non_zero$EXESUFFIX 512 `
+expect_normal_exit $Env:EXE_DIR\blk_non_zero$Env:EXESUFFIX 512 `
 $DIR/testfile1 c $FILE_SIZE	w:100 w:200 w:300 w:400 `
 r:100 r:200 r:300 r:400	w:100 z:200 w:300 z:400 `
 r:100 r:200 r:300 r:400	e:100 w:200 e:300 w:400	`
 r:100 r:200 r:300 r:400
 
-# check will print the appropriate pass/fail message
 check
+
+pass

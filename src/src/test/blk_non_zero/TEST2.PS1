@@ -1,5 +1,6 @@
 #
 # Copyright 2015-2016, Intel Corporation
+# Copyright (c) 2016, Microsoft Corporation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -39,11 +40,7 @@ Param(
     )
 $Env:UNITTEST_NAME = "blk_non_zero\TEST2"
 $Env:UNITTEST_NUM = "2"
-# XXX:  bash has a few calls to tools that we don't have on
-# windows (yet) that set PMEM_IS_PMEM and NON_PMEM_IS_PMEM based
-# on their output
-$Env:PMEM_IS_PMEM = $true
-$Env:NON_PMEM_IS_PMEM = $true
+
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
@@ -55,13 +52,14 @@ require_test_type long
 setup
 
 # write re-use test case
-create_nonzeroed_file 1024 $((824 * 1024)) $DIR\testfile1
+create_nonzeroed_file 1G 824M $DIR\testfile1
 
-expect_normal_exit ..\..\x64\debug\blk_non_zero$EXESUFFIX 512 $DIR\testfile1 c 0 `
+expect_normal_exit $Env:EXE_DIR\blk_non_zero$Env:EXESUFFIX 512 $DIR\testfile1 c 0 `
 w:0 w:1 w:2 w:3 w:4 r:4 r:3 r:2 r:1 r:0
 
-expect_normal_exit ..\..\x64\debug\blk_non_zero$EXESUFFI 512 $DIR\testfile1 o `
+expect_normal_exit $Env:EXE_DIR\blk_non_zero$EXESUFFI 512 $DIR\testfile1 o `
 w:0 r:4 r:3 r:2 r:1 r:0 w:0 r:0
 
-# check will print the appropriate pass/fail message
 check
+
+pass

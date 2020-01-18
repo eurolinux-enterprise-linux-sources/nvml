@@ -41,9 +41,9 @@
 
 #include "unittest.h"
 
-#include <libpmemobj/p.hpp>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
+#include <libpmemobj++/p.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
 
 namespace nvobj = nvml::obj;
 
@@ -287,6 +287,8 @@ main(int argc, char *argv[])
 	pool_test_drain(pop);
 	pool_test_memcpy(pop);
 	pool_test_memset(pop);
+
+	pop.close();
 
 	DONE(NULL);
 }

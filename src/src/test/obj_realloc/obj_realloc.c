@@ -37,22 +37,15 @@
 #include <string.h>
 
 #include "unittest.h"
-#include "libpmemobj.h"
-#include "redo.h"
-#include "memops.h"
-#include "pmalloc.h"
-#include "heap_layout.h"
-#include "memblock.h"
+
 #include "heap.h"
-#include "util.h"
-#include "lane.h"
-#include "list.h"
 #include "obj.h"
+#include "util.h"
 
 #define MIN_ALLOC_SIZE	MIN_RUN_SIZE
 #define MAX_ALLOC_SIZE	CHUNKSIZE
-#define ALLOC_CLASS_MUL	RUN_UNIT_MAX
-#define MAX_ALLOC_MUL	RUN_UNIT_MAX
+#define ALLOC_CLASS_MUL	RUN_UNIT_MAX_ALLOC
+#define MAX_ALLOC_MUL	RUN_UNIT_MAX_ALLOC
 #define MAX_ALLOC_CLASS	5
 #define ALLOC_HDR	(OBJ_OOB_SIZE + sizeof(struct allocation_header))
 
@@ -152,7 +145,7 @@ test_realloc(PMEMobjpool *pop, size_t size_from, size_t size_to,
 	} else if (check_integrity) {
 		check_size = size_to >= usable_size_from ?
 				usable_size_from : size_to;
-		checksum = fill_buffer((void *)D_RW(D_RW(root)->obj),
+		checksum = fill_buffer((unsigned char *)D_RW(D_RW(root)->obj),
 				check_size);
 	}
 
@@ -172,7 +165,7 @@ test_realloc(PMEMobjpool *pop, size_t size_from, size_t size_to,
 		UT_ASSERT(util_is_zeroed(D_RO(D_RO(root)->obj), size_to));
 	} else if (check_integrity) {
 		uint16_t checksum2 = ut_checksum(
-				(void *)D_RW(D_RW(root)->obj), check_size);
+				(uint8_t *)D_RW(D_RW(root)->obj), check_size);
 		if (checksum2 != checksum)
 			UT_ASSERTinfo(0, "memory corruption");
 	}

@@ -1,5 +1,6 @@
 #
 # Copyright 2015-2016, Intel Corporation
+# Copyright (c) 2016, Microsoft Corporation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -39,14 +40,12 @@ Param(
     )
 $Env:UNITTEST_NAME = "blk_non_zero\TEST0"
 $Env:UNITTEST_NUM = "0"
-# XXX:  bash has a few calls to tools that we don't have on
-# windows (yet) that set PMEM_IS_PMEM and NON_PMEM_IS_PMEM based
-# on their output
-$Env:PMEM_IS_PMEM = $true
-$Env:NON_PMEM_IS_PMEM = $true
+
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
+
+require_test_type medium
 
 # doesn't make sense to run in local directory
 require_fs_type non-pmem pmem
@@ -54,10 +53,11 @@ require_fs_type non-pmem pmem
 setup
 
 # single arena and minimum pmemblk pool file case
-create_nonzeroed_file 17 8 $DIR\testfile1
+create_nonzeroed_file 17M 8K $DIR\testfile1
 
-expect_normal_exit ..\..\x64\debug\blk_non_zero$EXESUFFIX 512 $DIR\testfile1 c 0 `
+expect_normal_exit $Env:EXE_DIR\blk_non_zero$Env:EXESUFFIX 512 $DIR\testfile1 c 0 `
 r:0 r:1 r:34217 r:34218 z:0 z:1 r:0 e:3 r:4
 
-# check will print the appropriate pass/fail message
 check
+
+pass

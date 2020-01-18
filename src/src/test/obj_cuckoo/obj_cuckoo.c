@@ -38,19 +38,26 @@
 
 #include "unittest.h"
 #include "cuckoo.h"
-#include "libpmemobj.h"
 #include "util.h"
+#include "libpmemobj.h"
 
 #define TEST_INSERTS 100
 #define TEST_VAL(x) ((void *)((uintptr_t)(x)))
 
-FUNC_MOCK(malloc, void *, size_t size)
-	FUNC_MOCK_RUN(1) /* internal out_err malloc */
-	FUNC_MOCK_RUN_RET_DEFAULT_REAL(malloc, size)
-	FUNC_MOCK_RUN(2) /* tab malloc */
-	FUNC_MOCK_RUN(0) /* cuckoo malloc */
-		return NULL;
-FUNC_MOCK_END
+static int Rcounter_malloc;
+
+static void *
+__wrap_malloc(size_t size)
+{
+	switch (__sync_fetch_and_add(&Rcounter_malloc, 1)) {
+		case 1: /* internal out_err malloc */
+		default:
+			return malloc(size);
+		case 2: /* tab malloc */
+		case 0: /* cuckoo malloc */
+			return NULL;
+	}
+}
 
 static void
 test_cuckoo_new_delete()
@@ -96,13 +103,67 @@ test_insert_get_remove()
 	cuckoo_delete(c);
 }
 
+/*
+ * rand64 -- (internal) 64-bit random function of doubtful quality, but good
+ *	enough for the test.
+ */
+static uint64_t
+rand64(void)
+{
+	return (((uint64_t)rand()) << 32) | rand();
+}
+
+#define NVALUES (100000)
+#define TEST_VALUE ((void *)0x1)
+#define INITIAL_SEED 54321
+
+/*
+ * test_load_factor -- calculates the average load factor of the hash table
+ *	when inserting <0, 1M> elements in random order.
+ *
+ * The factor itself isn't really that important because the implementation
+ *	is optimized for lookup speed, but it should be reasonable.
+ */
+static void
+test_load_factor()
+{
+	struct cuckoo *c = cuckoo_new();
+	UT_ASSERT(c != NULL);
+
+	/*
+	 * The seed is intentionally constant so that the test result is
+	 * consistent (at least on the same platform).
+	 */
+	srand(INITIAL_SEED);
+
+	float avg_load = 0.f;
+	rand64();
+	int inserted = 0;
+	for (int i = 0; ; ++i) {
+		if (cuckoo_insert(c, rand64() % NVALUES, TEST_VALUE) == 0) {
+			inserted++;
+			avg_load += (float)inserted / cuckoo_get_size(c);
+			if (inserted == NVALUES)
+				break;
+		}
+	}
+	avg_load /= inserted;
+
+	UT_ASSERT(avg_load >= 0.4f);
+
+	cuckoo_delete(c);
+}
+
 int
 main(int argc, char *argv[])
 {
 	START(argc, argv, "obj_cuckoo");
 
+	Malloc = __wrap_malloc;
+
 	test_cuckoo_new_delete();
 	test_insert_get_remove();
+	test_load_factor();
 
 	DONE(NULL);
 }

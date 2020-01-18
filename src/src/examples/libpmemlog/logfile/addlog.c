@@ -38,13 +38,13 @@
  *	addlog /path/to/pm-aware/file "first line of entry" "second line"
  */
 
+#include <ex_common.h>
 #include <sys/stat.h>
 #include <stdio.h>
 #include <fcntl.h>
 #include <time.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <libpmemlog.h>
 
 #include "logentry.h"
@@ -66,7 +66,9 @@ main(int argc, char *argv[])
 	const char *path = argv[1];
 
 	/* create the log in the given file, or open it if already created */
-	if ((plp = pmemlog_create(path, 0, S_IWUSR | S_IRUSR)) == NULL &&
+	plp = pmemlog_create(path, 0, CREATE_MODE_RW);
+
+	if (plp == NULL &&
 	    (plp = pmemlog_open(path)) == NULL) {
 		perror(path);
 		exit(1);

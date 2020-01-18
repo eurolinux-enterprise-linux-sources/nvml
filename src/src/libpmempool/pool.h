@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,11 +36,11 @@
 
 #include <stdbool.h>
 #include <sys/types.h>
-#include <sys/queue.h>
 
 #include "libpmemobj.h"
 
-#include "util.h"
+#include "queue.h"
+#include "set.h"
 #include "log.h"
 #include "blk.h"
 #include "btt_layout.h"
@@ -63,6 +63,7 @@ struct pool_params {
 	mode_t mode;
 	int is_poolset;
 	int is_part;
+	int is_dev_dax;
 	union {
 		struct {
 			uint64_t bsize;
@@ -108,7 +109,7 @@ struct pool_data {
 	enum {
 		UUID_NOP = 0,
 		UUID_FROM_BTT,
-		UUID_REGENERATED,
+		UUID_NOT_FROM_BTT,
 	} uuid_op;
 	struct arena bttc;
 	TAILQ_HEAD(arenashead, arena) arenas;
@@ -120,20 +121,24 @@ void pool_data_free(struct pool_data *pool);
 void pool_params_from_header(struct pool_params *params,
 	const struct pool_hdr *hdr);
 
+int pool_set_parse(struct pool_set **setp, const char *path);
 void *pool_set_file_map(struct pool_set_file *file, uint64_t offset);
 int pool_read(struct pool_data *pool, void *buff, size_t nbytes,
 	uint64_t off);
 int pool_write(struct pool_data *pool, const void *buff, size_t nbytes,
 	uint64_t off);
-int pool_copy(struct pool_data *pool, const char *dst_path);
+int pool_copy(struct pool_data *pool, const char *dst_path, int overwrite);
+int pool_set_part_copy(struct pool_set_part *dpart,
+	struct pool_set_part *spart, int overwrite);
 int pool_memset(struct pool_data *pool, uint64_t off, int c, size_t count);
 
 unsigned pool_set_files_count(struct pool_set_file *file);
-int pool_set_file_map_headers(struct pool_set_file *file, int rdonly);
+int pool_set_file_map_headers(struct pool_set_file *file, int rdonly, int prv);
 void pool_set_file_unmap_headers(struct pool_set_file *file);
 
 void pool_hdr_default(enum pool_type type, struct pool_hdr *hdrp);
 enum pool_type pool_hdr_get_type(const struct pool_hdr *hdrp);
+enum pool_type pool_set_type(struct pool_set *set);
 
 int pool_btt_info_valid(struct btt_info *infop);
 

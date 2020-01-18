@@ -63,12 +63,7 @@ static int
 lane_need_recovery_redo(struct redo_log *redo, size_t nentries)
 {
 	/* Needs recovery if any of redo log entries has finish flag set */
-	for (size_t i = 0; i < nentries; i++) {
-		if (redo[i].offset & REDO_FINISH_FLAG)
-			return 1;
-	}
-
-	return 0;
+	return redo_log_nflags(redo, nentries) > 0;
 }
 
 /*
@@ -276,9 +271,9 @@ info_obj_redo(int v, struct redo_log *redo, size_t nentries)
 			"Value: 0x%016jx "
 			"Finish flag: %d\n",
 			i,
-			redo[i].offset & REDO_FLAG_MASK,
+			redo_log_offset(&redo[i]),
 			redo[i].value,
-			redo[i].offset & REDO_FINISH_FLAG);
+			redo_log_is_last(&redo[i]));
 	}
 }
 
@@ -310,7 +305,7 @@ static void
 info_obj_pvector(struct pmem_info *pip, int vnum, int vobj,
 	struct pvector *vec, const char *name, pvector_callback_fn cb)
 {
-	struct pvector_context *ctx = pvector_init(pip->obj.pop, vec);
+	struct pvector_context *ctx = pvector_new(pip->obj.pop, vec);
 	if (ctx == NULL) {
 		outv_err("Cannot initialize pvector context\n");
 		exit(EXIT_FAILURE);
@@ -471,7 +466,7 @@ static void
 info_obj_lane_section(struct pmem_info *pip, int v, struct lane_layout *lane,
 	enum lane_section_type type)
 {
-	if (!(pip->args.obj.lane_sections & (1U << type)))
+	if (!(pip->args.obj.lane_sections & (1ULL << type)))
 		return;
 
 	outv_nl(v);
@@ -771,7 +766,7 @@ info_obj_zone_chunks(struct pmem_info *pip, struct zone *zone,
 		enum chunk_type type = zone->chunk_headers[c].type;
 		uint64_t size_idx = zone->chunk_headers[c].size_idx;
 		if (util_ranges_contain(&pip->args.obj.chunk_ranges, c)) {
-			if (pip->args.obj.chunk_types & (1U << type)) {
+			if (pip->args.obj.chunk_types & (1ULL << type)) {
 				stats->n_chunks++;
 				stats->n_chunks_type[type]++;
 
@@ -1140,7 +1135,7 @@ info_obj_stats(struct pmem_info *pip)
 }
 
 static struct pmem_info *Pip;
-
+#ifndef _WIN32
 static void
 info_obj_sa_sigaction(int signum, siginfo_t *info, void *context)
 {
@@ -1153,6 +1148,22 @@ static struct sigaction info_obj_sigaction = {
 	.sa_sigaction = info_obj_sa_sigaction,
 	.sa_flags = SA_SIGINFO
 };
+#else
+#define CALL_FIRST 1
+
+static LONG CALLBACK
+exception_handler(_In_ PEXCEPTION_POINTERS ExceptionInfo)
+{
+	PEXCEPTION_RECORD record = ExceptionInfo->ExceptionRecord;
+	if (record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) {
+		return EXCEPTION_CONTINUE_SEARCH;
+	}
+	uintptr_t offset = (uintptr_t)record->ExceptionInformation[1] -
+		(uintptr_t)Pip->obj.pop;
+	outv_err("Invalid offset 0x%lx\n", offset);
+	exit(EXIT_FAILURE);
+}
+#endif
 
 /*
  * info_obj -- print information about obj pool type
@@ -1167,10 +1178,16 @@ pmempool_info_obj(struct pmem_info *pip)
 	pip->obj.size = pip->pfile->size;
 
 	Pip = pip;
+#ifndef _WIN32
 	if (sigaction(SIGSEGV, &info_obj_sigaction, NULL)) {
+#else
+	if (AddVectoredExceptionHandler(CALL_FIRST, exception_handler) ==
+		NULL) {
+#endif
 		perror("sigaction");
 		return -1;
 	}
+
 
 	pip->obj.uuid_lo = pmemobj_get_uuid_lo(pip->obj.pop);
 

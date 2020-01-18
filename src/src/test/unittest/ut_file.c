@@ -307,7 +307,6 @@ ut_munmap(const char *file, int line, const char *func, void *addr,
 	return retval;
 }
 
-#ifndef _WIN32
 /*
  * ut_mprotect -- a mprotect call that cannot return -1
  */
@@ -325,6 +324,7 @@ ut_mprotect(const char *file, int line, const char *func, void *addr,
 	return retval;
 }
 
+#ifndef _WIN32
 /*
  * ut_symlink -- a symlink that cannot return -1
  */
@@ -450,6 +450,8 @@ ut_truncate(const char *file, int line, const char *func, const char *path,
 	return retval;
 }
 
+#endif
+
 /*
  * ut_ftruncate -- a ftruncate that cannot return -1
  */
@@ -465,7 +467,6 @@ ut_ftruncate(const char *file, int line, const char *func, int fd,
 
 	return retval;
 }
-#endif
 
 /*
  * ut_chmod -- a chmod that cannot return -1

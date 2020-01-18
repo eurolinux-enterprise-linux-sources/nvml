@@ -67,10 +67,10 @@ main(int argc, char *argv[])
 		UT_FATAL("!pmemobj_create: %s", path);
 
 	PMEMoid root = pmemobj_root(pop, sizeof(struct test_root));
-	struct test_root *r = pmemobj_direct(root);
+	struct test_root *r = (struct test_root *)pmemobj_direct(root);
 	UT_ASSERTne(r, NULL);
 
-	struct pvector_context *ctx = pvector_init(pop, &r->vec);
+	struct pvector_context *ctx = pvector_new(pop, &r->vec);
 
 	uint64_t *val = pvector_push_back(ctx);
 	*val = 5;
@@ -116,7 +116,7 @@ main(int argc, char *argv[])
 
 	pvector_delete(ctx);
 
-	ctx = pvector_init(pop, &r->vec);
+	ctx = pvector_new(pop, &r->vec);
 	for (int i = 0; i < PVECTOR_INSERT_VALUES; ++i) {
 		val = pvector_push_back(ctx);
 		UT_ASSERTne(val, NULL);
@@ -138,6 +138,8 @@ main(int argc, char *argv[])
 	UT_ASSERTeq(pvector_first(ctx), 0);
 
 	pvector_delete(ctx);
+
+	pmemobj_close(pop);
 
 	DONE(NULL);
 }

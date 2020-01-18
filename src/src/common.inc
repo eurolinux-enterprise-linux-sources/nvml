@@ -39,9 +39,11 @@ MKDIR = mkdir
 INSTALL = install
 CP = cp
 CSTYLE = $(TOP)/utils/cstyle
+CSTYLEON = 0
 STYLE_CHECK = $(TOP)/utils/style_check.sh
 PKG_CONFIG = pkg-config
 CLANG_FORMAT ?= clang-format
+HEADERS = $(wildcard *.h) $(wildcard *.hpp)
 
 ifeq ($(shell command -v $(PKG_CONFIG) && echo y || echo n), n)
 $(error $(PKG_CONFIG) not found)
@@ -54,7 +56,7 @@ check_flag = $(shell echo "int main(){return 0;}" |\
 
 # Check for issues with older clang compilers which assert on delete persistent<[][]>.
 check_clang_template_bug = $(shell echo "using namespace nvml::obj; int main() { delete_persistent<int[][3]>(make_persistent<int[][3]>(2), 2); return 0; }" |\
-	$(CXX) --std=c++11 -x c++ -I$(TOP)/src/include/ -include libpmemobj/make_persistent_array.hpp -L$(TOP)/src/debug/ -c -o /dev/null - 2>/dev/null && echo y || echo n)
+	$(CXX) --std=c++11 -x c++ -I$(TOP)/src/include/ -include libpmemobj++/make_persistent_array.hpp -L$(TOP)/src/debug/ -c -o /dev/null - 2>/dev/null && echo y || echo n)
 
 # Check for issues with older gcc compilers which do not expand variadic template
 # variables in lambda expressions.
@@ -73,13 +75,13 @@ cxx_ok=$(if $(findstring n,$(CXX_TESTS)),n,y)
 check_cxx_chrono = $(shell echo "int main(){return 0;}" |\
 	$(CXX) -std=c++11 -x c++ -include future -o /dev/null - 2>/dev/null && echo y || echo n)
 
-check_Wconversion = $(shell echo "long int random(void); char test(void); char test(void){char a = 0; char b = 'a'; char ret = random() == 1 ? a : b; return ret;}" |\
+check_Wconversion = $(shell echo "long random(void); char test(void); char test(void){char a = 0; char b = 'a'; char ret = random() == 1 ? a : b; return ret;}" |\
 	$(CC) -c $(CFLAGS) -Wconversion -x c -o /dev/null - 2>/dev/null && echo y || echo n)
 
 check_librt = $(shell echo "int main() { struct timespec t; return clock_gettime(CLOCK_MONOTONIC, &t); }" |\
 	$(CC) $(CFLAGS) -x c -include time.h -o /dev/null - 2>/dev/null && echo y || echo n)
 
-install_recursive = $(shell find $(1) -type f -exec install -m $(2) -D {} $(3)/{} \;)
+install_recursive = $(shell cd $(1) && find . -type f -exec install -m $(2) -D {} $(3)/{} \;)
 
 install_recursive_filter = $(shell cd $(1) && find . -type f -name "$(2)" -exec install -m $(3) -D {} $(4)/{} \;)
 
@@ -113,12 +115,26 @@ LIB_PREFIX ?= lib
 
 all:
 
+#[!q][!u] to skip common/queue.h
 cstyle-%:
-	$(STYLE_CHECK) $* $(wildcard *.[ch]) $(wildcard *.[ch]pp)
+	$(STYLE_CHECK) $* $(wildcard [!q][!u]*.[ch]) $(wildcard *.[ch]pp)
 
 cstyle: cstyle-check
 
 format: cstyle-format
+
+ifeq ($(CSTYLEON),1)
+define check-cstyle
+	@$(STYLE_CHECK) check $1 && if [ "$2" != "" ]; then mkdir -p `dirname $2` && touch $2; fi
+endef
+else ifeq ($(CSTYLEON),2)
+define check-cstyle
+	@$(STYLE_CHECK) check $1 && if [ "$2" != "" ]; then mkdir -p `dirname $2` && touch $2; fi || true
+endef
+else
+define check-cstyle
+endef
+endif
 
 define sub-target-foreach
 $(1)-$(2):
@@ -140,8 +156,27 @@ endif
 
 INC_PREFIX ?= include
 
+test_build=$(addprefix -b, $(TEST_BUILD))
+
 export libdir := $(exec_prefix)/$(LIB_PREFIX)
 export includedir := $(prefix)/$(INC_PREFIX)
 export pkgconfigdir := $(libdir)/pkgconfig
 export bindir := $(exec_prefix)/bin
 export bashcompdir := $(sysconfdir)/bash_completion.d
+
+check_ibv_fork_init = $(shell echo "\#include <infiniband/verbs.h> int main(void) { return ibv_fork_init(); }" |\
+	$(CC) -c $(CFLAGS) -x c -o /dev/null -libverbs - 2>/dev/null && echo y || echo n)
+
+export HAS_LIBFABRIC := $(call check_package, libfabric)
+
+ifeq ($(HAS_LIBFABRIC),y)
+ifeq ($(RPMEM_DISABLE_LIBIBVERBS),y)
+export HAS_LIBIBVERBS := n
+export BUILD_RPMEM := y
+else
+export HAS_LIBIBVERBS := $(call check_ibv_fork_init)
+export BUILD_RPMEM := $(HAS_LIBIBVERBS)
+endif
+else
+export BUILD_RPMEM := n
+endif

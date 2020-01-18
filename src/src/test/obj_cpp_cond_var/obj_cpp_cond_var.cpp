@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,10 +36,11 @@
 
 #include "unittest.h"
 
-#include <libpmemobj/condition_variable.hpp>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
+#include <libpmemobj++/condition_variable.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
 
+#include <functional>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -50,6 +51,11 @@ namespace nvobj = nvml::obj;
 
 namespace
 {
+
+/*
+ * Due to premature wake-ups with the TIMEDOUT status on the Windows platform,
+ * an "epsilon" tolerance has been introduced where appropriate.
+ */
 
 /* convenience typedef */
 typedef std::function<void(nvobj::persistent_ptr<struct root>)> reader_type;
@@ -69,6 +75,13 @@ const int limit = 7000;
 
 /* cond wait time in milliseconds */
 const std::chrono::milliseconds wait_time(150);
+
+/*
+ * Premature wake-up tolerance.
+ * XXX Windows - this needs to be investigated, it shouldn't timeout this long
+ * before the actual timeout.
+ */
+const auto epsilon = std::chrono::milliseconds(16);
 
 /*
  * write_notify -- (internal) bump up the counter up to a limit and notify
@@ -126,7 +139,7 @@ reader_lock(nvobj::persistent_ptr<struct root> proot)
 {
 	std::unique_lock<nvobj::mutex> lock(proot->pmutex);
 	while (proot->counter != limit)
-		proot->cond.wait(proot->pmutex);
+		proot->cond.wait(lock);
 
 	UT_ASSERTeq(proot->counter, limit);
 	lock.unlock();
@@ -152,15 +165,20 @@ void
 reader_mutex_until(nvobj::persistent_ptr<struct root> proot)
 {
 	proot->pmutex.lock();
-	auto until = std::chrono::steady_clock::now();
+	auto until = std::chrono::system_clock::now();
 	until += wait_time;
 	auto ret = proot->cond.wait_until(proot->pmutex, until);
 
-	auto now = std::chrono::steady_clock::now();
-	if (ret == std::cv_status::timeout)
-		UT_ASSERT(now >= until);
-	else
+	auto now = std::chrono::system_clock::now();
+	if (ret == std::cv_status::timeout) {
+		auto diff =
+			std::chrono::duration_cast<std::chrono::milliseconds>(
+				until - now);
+		if (now < until)
+			UT_ASSERT(diff < epsilon);
+	} else {
 		UT_ASSERTeq(proot->counter, limit);
+	}
 	proot->pmutex.unlock();
 }
 
@@ -178,10 +196,15 @@ reader_mutex_until_pred(nvobj::persistent_ptr<struct root> proot)
 	});
 
 	auto now = std::chrono::system_clock::now();
-	if (ret == false)
-		UT_ASSERT(now >= until);
-	else
+	if (ret == false) {
+		auto diff =
+			std::chrono::duration_cast<std::chrono::milliseconds>(
+				until - now);
+		if (now < until)
+			UT_ASSERT(diff < epsilon);
+	} else {
 		UT_ASSERTeq(proot->counter, limit);
+	}
 	proot->pmutex.unlock();
 }
 
@@ -194,13 +217,18 @@ reader_lock_until(nvobj::persistent_ptr<struct root> proot)
 	std::unique_lock<nvobj::mutex> lock(proot->pmutex);
 	auto until = std::chrono::system_clock::now();
 	until += wait_time;
-	auto ret = proot->cond.wait_until(proot->pmutex, until);
+	auto ret = proot->cond.wait_until(lock, until);
 
 	auto now = std::chrono::system_clock::now();
-	if (ret == std::cv_status::timeout)
-		UT_ASSERT(now >= until);
-	else
+	if (ret == std::cv_status::timeout) {
+		auto diff =
+			std::chrono::duration_cast<std::chrono::milliseconds>(
+				until - now);
+		if (now < until)
+			UT_ASSERT(diff < epsilon);
+	} else {
 		UT_ASSERTeq(proot->counter, limit);
+	}
 	lock.unlock();
 }
 
@@ -213,15 +241,19 @@ reader_lock_until_pred(nvobj::persistent_ptr<struct root> proot)
 	std::unique_lock<nvobj::mutex> lock(proot->pmutex);
 	auto until = std::chrono::system_clock::now();
 	until += wait_time;
-	auto ret = proot->cond.wait_until(proot->pmutex, until, [&]() {
-		return proot->counter == limit;
-	});
+	auto ret = proot->cond.wait_until(
+		lock, until, [&]() { return proot->counter == limit; });
 
 	auto now = std::chrono::system_clock::now();
-	if (ret == false)
-		UT_ASSERT(now >= until);
-	else
+	if (ret == false) {
+		auto diff =
+			std::chrono::duration_cast<std::chrono::milliseconds>(
+				until - now);
+		if (now < until)
+			UT_ASSERT(diff < epsilon);
+	} else {
 		UT_ASSERTeq(proot->counter, limit);
+	}
 	lock.unlock();
 }
 
@@ -237,10 +269,15 @@ reader_mutex_for(nvobj::persistent_ptr<struct root> proot)
 	auto ret = proot->cond.wait_for(proot->pmutex, wait_time);
 
 	auto now = std::chrono::system_clock::now();
-	if (ret == std::cv_status::timeout)
-		UT_ASSERT(now >= until);
-	else
+	if (ret == std::cv_status::timeout) {
+		auto diff =
+			std::chrono::duration_cast<std::chrono::milliseconds>(
+				until - now);
+		if (now < until)
+			UT_ASSERT(diff < epsilon);
+	} else {
 		UT_ASSERTeq(proot->counter, limit);
+	}
 	proot->pmutex.unlock();
 }
 
@@ -258,10 +295,15 @@ reader_mutex_for_pred(nvobj::persistent_ptr<struct root> proot)
 	});
 
 	auto now = std::chrono::system_clock::now();
-	if (ret == false)
-		UT_ASSERT(now >= until);
-	else
+	if (ret == false) {
+		auto diff =
+			std::chrono::duration_cast<std::chrono::milliseconds>(
+				until - now);
+		if (now < until)
+			UT_ASSERT(diff < epsilon);
+	} else {
 		UT_ASSERTeq(proot->counter, limit);
+	}
 	proot->pmutex.unlock();
 }
 
@@ -274,13 +316,18 @@ reader_lock_for(nvobj::persistent_ptr<struct root> proot)
 	std::unique_lock<nvobj::mutex> lock(proot->pmutex);
 	auto until = std::chrono::system_clock::now();
 	until += wait_time;
-	auto ret = proot->cond.wait_for(proot->pmutex, wait_time);
+	auto ret = proot->cond.wait_for(lock, wait_time);
 
 	auto now = std::chrono::system_clock::now();
-	if (ret == std::cv_status::timeout)
-		UT_ASSERT(now >= until);
-	else
+	if (ret == std::cv_status::timeout) {
+		auto diff =
+			std::chrono::duration_cast<std::chrono::milliseconds>(
+				until - now);
+		if (now < until)
+			UT_ASSERT(diff < epsilon);
+	} else {
 		UT_ASSERTeq(proot->counter, limit);
+	}
 	lock.unlock();
 }
 
@@ -293,15 +340,19 @@ reader_lock_for_pred(nvobj::persistent_ptr<struct root> proot)
 	std::unique_lock<nvobj::mutex> lock(proot->pmutex);
 	auto until = std::chrono::system_clock::now();
 	until += wait_time;
-	auto ret = proot->cond.wait_for(proot->pmutex, wait_time, [&]() {
-		return proot->counter == limit;
-	});
+	auto ret = proot->cond.wait_for(
+		lock, wait_time, [&]() { return proot->counter == limit; });
 
 	auto now = std::chrono::system_clock::now();
-	if (ret == false)
-		UT_ASSERT(now >= until);
-	else
+	if (ret == false) {
+		auto diff =
+			std::chrono::duration_cast<std::chrono::milliseconds>(
+				until - now);
+		if (now < until)
+			UT_ASSERT(diff < epsilon);
+	} else {
 		UT_ASSERTeq(proot->counter, limit);
+	}
 	lock.unlock();
 }
 

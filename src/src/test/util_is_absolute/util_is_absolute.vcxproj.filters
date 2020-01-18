@@ -7,22 +7,15 @@
     </Filter>
     <Filter Include="Match Files">
       <UniqueIdentifier>{aa2a2c2a-cd47-4f1a-841b-e3d019df7f13}</UniqueIdentifier>
+      <Extensions>match</Extensions>
     </Filter>
-    <Filter Include="Test scripts">
+    <Filter Include="Test Scripts">
       <UniqueIdentifier>{5c4a9c4d-89c3-4de4-9f98-2a940a42e2d4}</UniqueIdentifier>
+      <Extensions>ps1</Extensions>
     </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="util_is_absolute.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\common\util_windows.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\common\out.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\common\pthread_windows.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -31,7 +24,7 @@
       <Filter>Match Files</Filter>
     </None>
     <None Include="TEST1.ps1">
-      <Filter>Test scripts</Filter>
+      <Filter>Test Scripts</Filter>
     </None>
   </ItemGroup>
 </Project>

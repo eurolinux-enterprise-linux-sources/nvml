@@ -37,6 +37,9 @@ include $(TOP)/src/common.inc
 
 INCLUDE = $(TOP)/src/include
 
+RPMEM_COMMON = $(TOP)/src/rpmem_common
+vpath %.c $(RPMEM_COMMON)
+
 COMMON = $(TOP)/src/common
 vpath %.c $(COMMON)
 
@@ -65,12 +68,7 @@ CFLAGS += -Wmissing-variable-declarations
 endif
 
 ifeq ($(DEBUG),1)
-ifeq ($(call check_flag, -Og), y)
-CFLAGS += -Og -fno-omit-frame-pointer
-else
-CFLAGS += -O0
-endif
-CFLAGS += -ggdb -DDEBUG $(EXTRA_CFLAGS_DEBUG)
+CFLAGS += -O0 -ggdb -DDEBUG $(EXTRA_CFLAGS_DEBUG)
 LIB_SUBDIR = /nvml_debug
 OBJDIR = debug
 else
@@ -118,7 +116,17 @@ LIB_OUTDIR = $(objdir)/..
 LDFLAGS += -L$(LIB_OUTDIR)
 
 ifneq ($(SOURCE),)
-OBJS += $(addprefix $(objdir)/, $(patsubst $(COMMON)/%, %, $(SOURCE:.c=.o)))
+_OBJS = $(SOURCE:.c=.o)
+_OBJS_COMMON = $(patsubst $(COMMON)/%, %, $(_OBJS))
+_OBJS_RPMEM_COMMON = $(patsubst $(RPMEM_COMMON)/%, %, $(_OBJS_COMMON))
+OBJS += $(addprefix $(objdir)/, $(_OBJS_RPMEM_COMMON))
+endif
+
+ifneq ($(HEADERS),)
+ifneq ($(filter 1 2, $(CSTYLEON)),)
+TMP_HEADERS := $(addsuffix tmp, $(HEADERS))
+TMP_HEADERS := $(addprefix $(objdir)/, $(TMP_HEADERS))
+endif
 endif
 
 ifneq ($(LIBRARY_NAME),)
@@ -126,13 +134,9 @@ LIB_NAME = lib$(LIBRARY_NAME)
 endif
 
 ifneq ($(LIBRARY_SO_VERSION),)
-
 LIB_MAP = $(LIB_NAME).map
 LIB_SONAME = $(LIB_NAME).so.$(LIBRARY_SO_VERSION)
 LIB_SO = $(LIB_OUTDIR)/$(LIB_NAME).so
-LIB_AR = $(LIB_OUTDIR)/$(LIB_NAME).a
-LIB_AR_UNSCOPED = $(objdir)/$(LIB_NAME)_unscoped.o
-LIB_AR_ALL = $(objdir)/$(LIB_NAME)_all.o
 
 LIB_SO_SONAME = $(LIB_SO).$(LIBRARY_SO_VERSION)
 
@@ -142,8 +146,15 @@ else
 $(error LIBRARY_VERSION not set)
 endif
 
-TARGET_LIBS = $(LIB_SO_REAL) $(LIB_AR)
+TARGET_LIBS = $(LIB_SO_REAL)
 TARGET_LINKS = $(LIB_SO_SONAME) $(LIB_SO)
+endif
+
+ifneq ($(LIB_NAME),)
+LIB_AR = $(LIB_OUTDIR)/$(LIB_NAME).a
+LIB_AR_UNSCOPED = $(objdir)/$(LIB_NAME)_unscoped.o
+LIB_AR_ALL = $(objdir)/$(LIB_NAME)_all.o
+TARGET_LIBS += $(LIB_AR)
 endif
 
 ifneq ($(EXTRA_TARGETS),)
@@ -164,7 +175,7 @@ endif
 
 MAKEFILE_DEPS=../Makefile.inc Makefile $(TOP)/src/common.inc
 
-all: $(objdir) $(LIB_OUTDIR) $(EXTRA_TARGETS) $(LIB_AR) $(LIB_SO_SONAME) $(LIB_SO_REAL) $(LIB_SO)
+all: $(objdir) $(LIB_OUTDIR) $(EXTRA_TARGETS) $(LIB_AR) $(LIB_SO_SONAME) $(LIB_SO_REAL) $(LIB_SO) $(TMP_HEADERS)
 
 $(objdir) $(LIB_OUTDIR):
 	$(MKDIR) -p $@
@@ -178,41 +189,58 @@ $(LIB_SO_SONAME): $(LIB_SO_REAL) $(MAKEFILE_DEPS)
 $(LIB_SO): $(LIB_SO_SONAME) $(MAKEFILE_DEPS)
 	$(LN) -sf $(shell basename $<) $@
 
-$(LIB_AR): $(LIB_AR_ALL) $(MAKEFILE_DEPS)
-	$(AR) rv $@ $(LIB_AR_ALL)
-
-$(LIB_AR_ALL): $(LIB_AR_UNSCOPED) $(LIB_MAP) $(MAKEFILE_DEPS)
-	$(OBJCOPY) --localize-hidden `sed -n 's/^	*\([a-zA-Z0-9_]*\);$$/-G \1/p' $(LIB_MAP)` $< $@
-
 $(LIB_AR_UNSCOPED): $(OBJS) $(EXTRA_OBJS) $(MAKEFILE_DEPS)
 	$(LD) -o $@ -r $(OBJS) $(EXTRA_OBJS)
+
+ifeq ($(LIB_MAP),)
+$(LIB_AR_ALL): $(LIB_AR_UNSCOPED) $(MAKEFILE_DEPS)
+	$(OBJCOPY) $< $@
+else
+$(LIB_AR_ALL): $(LIB_AR_UNSCOPED) $(LIB_MAP) $(MAKEFILE_DEPS)
+	$(OBJCOPY) --localize-hidden `sed -n 's/^	*\([a-zA-Z0-9_]*\);$$/-G \1/p' $(LIB_MAP)` $< $@
+endif
+
+$(LIB_AR): $(LIB_AR_ALL) $(MAKEFILE_DEPS)
+	$(AR) rv $@ $(LIB_AR_ALL)
 
 $(PMEMBLK_PRIV_OBJ):
 	$(MAKE) -C $(LIBSDIR) libpmemblk
 
 install: all
+ifneq ($(LIBRARY_NAME),)
 	$(INSTALL) -d $(LIBS_DESTDIR)
 	$(INSTALL) -p -m 0755 $(TARGET_LIBS) $(LIBS_DESTDIR)
 	$(CP) -d $(TARGET_LINKS) $(LIBS_DESTDIR)
+endif
 
 uninstall:
+ifneq ($(LIBRARY_NAME),)
 	$(foreach f, $(TARGET_LIBS), $(RM) $(LIBS_DESTDIR)/$(notdir $(f)))
 	$(foreach f, $(TARGET_LINKS), $(RM) $(LIBS_DESTDIR)/$(notdir $(f)))
+endif
 
 clean: $(EXTRA_TARGETS_CLEAN)
-	$(RM) $(OBJS)
+ifneq ($(LIBRARY_NAME),)
+	$(RM) $(OBJS) $(TMP_HEADERS)
 	$(RM) $(LIB_AR_ALL) $(LIB_AR_UNSCOPED)
+endif
 
 clobber: clean $(EXTRA_TARGETS_CLOBBER)
+ifneq ($(LIBRARY_NAME),)
 	$(RM) $(LIB_AR) $(LIB_SO_SONAME) $(LIB_SO_REAL) $(LIB_SO)
 	$(RM) -r $(objdir)/.deps
+endif
 
 $(eval $(cstyle-rule))
 
 $(objdir)/%.o: %.c $(MAKEFILE_DEPS)
+	$(call check-cstyle, $<)
 	@mkdir -p $(objdir)/.deps
 	$(CC) -MD -c -o $@ $(CFLAGS) $(INCS) -fPIC $<
 	$(create-deps)
+
+$(objdir)/%.htmp: %.h
+	$(call check-cstyle, $<, $@)
 
 .PHONY: all clean clobber install uninstall cstyle
 

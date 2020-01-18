@@ -30,18 +30,25 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <errno.h>
-#include <pthread.h>
-
 /*
  * sync.h -- internal to obj synchronization API
  */
+
+#ifndef LIBPMEMOBJ_SYNC_H
+#define LIBPMEMOBJ_SYNC_H 1
+
+#include <errno.h>
+#include <stdint.h>
+#include <pthread.h>
+
+#include "libpmemobj.h"
+#include "out.h"
 
 /*
  * internal definitions of PMEM-locks
  */
 typedef union padded_pmemmutex {
-	char padding[_POBJ_CL_ALIGNMENT];
+	char padding[_POBJ_CL_SIZE];
 	struct {
 		uint64_t runid;
 		pthread_mutex_t mutex;
@@ -49,7 +56,7 @@ typedef union padded_pmemmutex {
 } PMEMmutex_internal;
 
 typedef union padded_pmemrwlock {
-	char padding[_POBJ_CL_ALIGNMENT];
+	char padding[_POBJ_CL_SIZE];
 	struct {
 		uint64_t runid;
 		pthread_rwlock_t rwlock;
@@ -57,7 +64,7 @@ typedef union padded_pmemrwlock {
 } PMEMrwlock_internal;
 
 typedef union padded_pmemcond {
-	char padding[_POBJ_CL_ALIGNMENT];
+	char padding[_POBJ_CL_SIZE];
 	struct {
 		uint64_t runid;
 		pthread_cond_t cond;
@@ -95,3 +102,5 @@ pmemobj_mutex_unlock_nofail(PMEMobjpool *pop, PMEMmutex *mutexp)
 }
 
 int pmemobj_mutex_assert_locked(PMEMobjpool *pop, PMEMmutex *mutexp);
+
+#endif

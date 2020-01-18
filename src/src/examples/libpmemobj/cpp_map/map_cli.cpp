@@ -32,10 +32,11 @@
 
 #include "ctree_map_transient.hpp"
 #include <ctree_map_persistent.hpp>
+#include <ex_common.h>
 #include <iostream>
-#include <libpmemobj/pool.hpp>
+#include <libpmemobj++/pool.hpp>
 #include <memory>
-#include <unistd.h>
+#include <string.h>
 
 namespace
 {
@@ -48,7 +49,7 @@ using nvml::obj::pool;
 using nvml::obj::pool_base;
 
 /* convenience typedefs */
-typedef long long int value_t;
+typedef long long value_t;
 typedef uint64_t key_type;
 typedef examples::ctree_map_p<key_type, value_t> pmap;
 typedef examples::ctree_map_transient<key_type, value_t> vmap;
@@ -223,9 +224,9 @@ main(int argc, char *argv[])
 
 	pool<root> pop;
 
-	if (access(path.c_str(), F_OK) != 0) {
+	if (file_exists(path.c_str()) != 0) {
 		pop = pool<root>::create(path, LAYOUT, PMEMOBJ_MIN_POOL,
-					 S_IRWXU);
+					 CREATE_MODE_RW);
 	} else {
 		pop = pool<root>::open(path, LAYOUT);
 	}

@@ -40,6 +40,8 @@ export UNITTEST_NUM=11
 # standard unit test setup
 . ../unittest/unittest.sh
 
+require_test_type medium
+
 setup
 umask 0
 
@@ -49,7 +51,7 @@ umask 0
 #
 create_poolset $DIR/testset 20M:$DIR/testfile1:x 20M:$DIR/testfile2:x
 
-expect_normal_exit ./log_pool$EXESUFFIX c $DIR/testset 0 0640
+expect_normal_exit ./log_pool$EXESUFFIX c $DIR/testset 0 0600
 
 check_files $DIR/testset $DIR/testfile1 $DIR/testfile2
 

@@ -1,0 +1,25 @@
+pmempool: fix mapping type in pool_params_parse
+
+BZ: 1436820
+
+commit 670e94e62d8dfdd9a66435dcf415b0a3fffc65c6
+Author: Lukasz Dorau <lukasz.dorau@intel.com>
+Date:   Wed Dec 14 16:58:03 2016 +0100
+
+    pmempool: fix mapping type in pool_params_parse
+    
+    This change is required on account of DAX devices.
+
+diff --git a/src/libpmempool/pool.c b/src/libpmempool/pool.c
+index 6705bfe..7c4ec1a 100644
+--- a/src/libpmempool/pool.c
++++ b/src/libpmempool/pool.c
+@@ -349,7 +349,7 @@ pool_params_parse(const PMEMpoolcheck *ppc, struct pool_params *params,
+ 		}
+ 		params->size = (size_t)s;
+ 		addr = mmap(NULL, (uint64_t)params->size, PROT_READ,
+-			MAP_PRIVATE, fd, 0);
++			MAP_SHARED, fd, 0);
+ 		if (addr == MAP_FAILED) {
+ 			ret = -1;
+ 			goto out_close;

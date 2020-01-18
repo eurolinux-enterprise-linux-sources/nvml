@@ -36,11 +36,11 @@
 
 //! [make_example]
 #include <fcntl.h>
-#include <libpmemobj/make_persistent.hpp>
-#include <libpmemobj/p.hpp>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
-#include <libpmemobj/transaction.hpp>
+#include <libpmemobj++/make_persistent.hpp>
+#include <libpmemobj++/p.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
+#include <libpmemobj++/transaction.hpp>
 
 using namespace nvml::obj;
 
@@ -71,8 +71,7 @@ make_persistent_example()
 	};
 
 	// create a pmemobj pool
-	auto pop = pool<root>::create("poolfile", "layout", PMEMOBJ_MIN_POOL,
-				      S_IWUSR | S_IRUSR);
+	auto pop = pool<root>::create("poolfile", "layout", PMEMOBJ_MIN_POOL);
 	auto proot = pop.get_root();
 
 	// typical usage schemes
@@ -92,11 +91,11 @@ make_persistent_example()
 
 //! [make_array_example]
 #include <fcntl.h>
-#include <libpmemobj/make_persistent_array.hpp>
-#include <libpmemobj/p.hpp>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
-#include <libpmemobj/transaction.hpp>
+#include <libpmemobj++/make_persistent_array.hpp>
+#include <libpmemobj++/p.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
+#include <libpmemobj++/transaction.hpp>
 
 using namespace nvml::obj;
 
@@ -126,8 +125,7 @@ make_persistent_array_example()
 	};
 
 	// create a pmemobj pool
-	auto pop = pool<root>::create("poolfile", "layout", PMEMOBJ_MIN_POOL,
-				      S_IWUSR | S_IRUSR);
+	auto pop = pool<root>::create("poolfile", "layout", PMEMOBJ_MIN_POOL);
 	auto proot = pop.get_root();
 
 	// typical usage schemes
@@ -151,11 +149,11 @@ make_persistent_array_example()
 
 //! [make_atomic_example]
 #include <fcntl.h>
-#include <libpmemobj/make_persistent_atomic.hpp>
-#include <libpmemobj/p.hpp>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
-#include <libpmemobj/transaction.hpp>
+#include <libpmemobj++/make_persistent_atomic.hpp>
+#include <libpmemobj++/p.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
+#include <libpmemobj++/transaction.hpp>
 
 using namespace nvml::obj;
 
@@ -186,8 +184,7 @@ make_persistent_atomic_example()
 	};
 
 	// create a pmemobj pool
-	auto pop = pool<root>::create("poolfile", "layout", PMEMOBJ_MIN_POOL,
-				      S_IWUSR | S_IRUSR);
+	auto pop = pool<root>::create("poolfile", "layout", PMEMOBJ_MIN_POOL);
 	auto proot = pop.get_root();
 
 	// typical usage schemes
@@ -209,11 +206,11 @@ make_persistent_atomic_example()
 
 //! [make_array_atomic_example]
 #include <fcntl.h>
-#include <libpmemobj/make_persistent_array_atomic.hpp>
-#include <libpmemobj/p.hpp>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
-#include <libpmemobj/transaction.hpp>
+#include <libpmemobj++/make_persistent_array_atomic.hpp>
+#include <libpmemobj++/p.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
+#include <libpmemobj++/transaction.hpp>
 
 using namespace nvml::obj;
 
@@ -243,8 +240,7 @@ make_persistent_array_atomic_example()
 	};
 
 	// create a pmemobj pool
-	auto pop = pool<root>::create("poolfile", "layout", PMEMOBJ_MIN_POOL,
-				      S_IWUSR | S_IRUSR);
+	auto pop = pool<root>::create("poolfile", "layout", PMEMOBJ_MIN_POOL);
 	auto proot = pop.get_root();
 
 	// typical usage schemes

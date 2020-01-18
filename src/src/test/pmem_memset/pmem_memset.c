@@ -61,10 +61,10 @@ main(int argc, char *argv[])
 	int dest_off = atoi(argv[2]);
 	size_t bytes = strtoul(argv[3], NULL, 0);
 
-	char buf[bytes];
+	char *buf = MALLOC(bytes);
 
 	memset(dest, 0, bytes);
-	dest1 = malloc(bytes);
+	dest1 = MALLOC(bytes);
 	memset(dest1, 0, bytes);
 
 	/*
@@ -101,8 +101,10 @@ main(int argc, char *argv[])
 				argv[1], bytes / 2);
 	}
 
-	pmem_unmap(dest, mapped_len);
+	UT_ASSERTeq(pmem_unmap(dest, mapped_len), 0);
 
+	FREE(dest1);
+	FREE(buf);
 	CLOSE(fd);
 
 	DONE(NULL);

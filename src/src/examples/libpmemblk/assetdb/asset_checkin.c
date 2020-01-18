@@ -37,9 +37,9 @@
  *	asset_checkin /path/to/pm-aware/file asset-ID
  */
 
+#include <ex_common.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
 #include <time.h>

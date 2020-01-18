@@ -40,6 +40,8 @@ export UNITTEST_NUM=0
 # standard unit test setup
 . ../unittest/unittest.sh
 
+require_test_type medium
+
 require_fs_type non-pmem
 
 setup
@@ -113,7 +115,7 @@ expect_normal_exit ./util_poolset$EXESUFFIX c $MIN_POOL\
 	$DIR/testset6\
 	-mo:/proc/testfile72 $DIR/testset7\
 	-mf:$((1024*1024*1024)) $DIR/testset8\
-	-mo:`readlink -mn $DIR/testfile102` $DIR/testset10\
+	-mo:$DIR/testfile102 $DIR/testset10\
 	$DIR/testset11\
 	$DIR/testset12 $DIR/testset13\
 	$DIR/testset14 $DIR/testset15\

@@ -40,8 +40,16 @@
 #include "librpmem.h"
 
 #include "rpmem.h"
+#include "rpmem_common.h"
+#include "rpmem_util.h"
 #include "util.h"
 #include "out.h"
+
+#ifdef HAS_IBVERBS
+#include <infiniband/verbs.h>
+#endif
+
+extern int Rpmem_fork_fail;
 
 /*
  * librpmem_init -- load-time initialization for librpmem
@@ -52,10 +60,17 @@ ATTR_CONSTRUCTOR
 void
 librpmem_init(void)
 {
+	util_init();
 	out_init(RPMEM_LOG_PREFIX, RPMEM_LOG_LEVEL_VAR, RPMEM_LOG_FILE_VAR,
 			RPMEM_MAJOR_VERSION, RPMEM_MINOR_VERSION);
 	LOG(3, NULL);
-	util_init();
+	rpmem_util_cmds_init();
+#ifdef HAS_IBVERBS
+	Rpmem_fork_fail = ibv_fork_init();
+	if (Rpmem_fork_fail)
+		RPMEM_LOG(ERR, "Initialization libibverbs to support "
+			"fork() failed. See librpmem(3) for details.");
+#endif
 }
 
 /*
@@ -68,6 +83,7 @@ void
 librpmem_fini(void)
 {
 	LOG(3, NULL);
+	rpmem_util_cmds_fini();
 	out_fini();
 }
 

@@ -58,18 +58,16 @@
 
 /*
  * The MAX_CLASS_STATS variable defines how many allocation classes can be
- * handled. Because the biggest reasonable run block size is 32 kB the
- * allocation classes are pretty much capped at 512. Doubled for good measure.
+ * handled - it's equal to the maximum number of buckets.
  */
-#define MAX_CLASS_STATS\
-	((int)((CHUNKSIZE / RUN_UNIT_MAX / ALLOC_BLOCK_SIZE) * 2))
+#define MAX_CLASS_STATS (MAX_BUCKETS + 1)
 
 /*
  * pmempool_info_args -- structure for storing command line arguments
  */
 struct pmempool_info_args {
 	char *file;		/* input file */
-	unsigned int col_width;	/* column width for printing fields */
+	unsigned col_width;	/* column width for printing fields */
 	bool human;		/* sizes in human-readable formats */
 	bool force;		/* force parsing pool */
 	pmem_pool_type_t type;	/* forced pool type */

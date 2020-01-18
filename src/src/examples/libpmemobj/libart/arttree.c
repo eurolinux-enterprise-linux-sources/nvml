@@ -83,7 +83,7 @@ struct ds_context
 	size_t psize;		/* size of pool */
 	PMEMobjpool *pop;	/* pmemobj handle */
 	bool fileio;
-	unsigned int fmode;
+	unsigned fmode;
 	int fd;			/* file descriptor for file io mode */
 	unsigned char *key;	/* for SEARCH, INSERT and REMOVE */
 	uint32_t key_len;
@@ -176,7 +176,7 @@ initialize_context(struct ds_context *ctx, int ac, char *av[])
 				}
 				break;
 			case 'n': {
-				long int insertions;
+				long insertions;
 				insertions = strtol(optarg, NULL, 0);
 				if (insertions > 0 && insertions < LONG_MAX) {
 					ctx->insertions = insertions;
@@ -184,7 +184,7 @@ initialize_context(struct ds_context *ctx, int ac, char *av[])
 				break;
 			}
 			case 's': {
-				long int poolsize;
+				long poolsize;
 				poolsize = strtol(optarg, NULL, 0);
 				if (poolsize >= PMEMOBJ_MIN_POOL) {
 					ctx->psize = poolsize;

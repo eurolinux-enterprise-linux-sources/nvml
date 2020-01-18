@@ -33,7 +33,19 @@
 /*
  * lane.h -- internal definitions for lanes
  */
+
+#ifndef LIBPMEMOBJ_LANE_H
+#define LIBPMEMOBJ_LANE_H 1
+
+#include <stdint.h>
+
+#include "libpmemobj.h"
+#include "redo.h"
+
 #define LANE_SECTION_LEN 1024
+
+#define REDO_NUM_ENTRIES \
+	((LANE_SECTION_LEN - 2 * sizeof(uint64_t)) / sizeof(struct redo_log))
 
 /*
  * Distance between lanes used by threads required to prevent threads from
@@ -42,12 +54,16 @@
  */
 #define LANE_JUMP (64 / sizeof(uint64_t))
 
+#define RLANE_DEFAULT 0
+
 enum lane_section_type {
 	LANE_SECTION_ALLOCATOR,
 	LANE_SECTION_LIST,
 	LANE_SECTION_TRANSACTION,
 
-	MAX_LANE_SECTION
+	MAX_LANE_SECTION,
+
+	LANE_ID = MAX_LANE_SECTION
 };
 
 struct lane_section_layout {
@@ -71,20 +87,25 @@ struct lane {
 };
 
 struct lane_descriptor {
+	/*
+	 * Number of lanes available at runtime must be <= total number of lanes
+	 * available in the pool. Number of lanes can be limited by shortage of
+	 * other resources e.g. available RNIC's submission queue sizes.
+	 */
+	unsigned runtime_nlanes;
 	unsigned next_lane_idx;
 	uint64_t *lane_locks;
 	struct lane *lane;
 };
 
-typedef int (*section_layout_op)(PMEMobjpool *pop,
-	struct lane_section_layout *layout);
-typedef int (*section_constr)(PMEMobjpool *pop, struct lane_section *section);
-typedef void (*section_destr)(PMEMobjpool *pop, struct lane_section *section);
+typedef int (*section_layout_op)(PMEMobjpool *pop, void *data, unsigned length);
+typedef void *(*section_constr)(PMEMobjpool *pop);
+typedef void (*section_destr)(PMEMobjpool *pop, void *rt);
 typedef int (*section_global_op)(PMEMobjpool *pop);
 
 struct section_operations {
-	section_constr construct;
-	section_destr destruct;
+	section_constr construct_rt;
+	section_destr destroy_rt;
 	section_layout_op check;
 	section_layout_op recover;
 	section_global_op boot;
@@ -107,7 +128,7 @@ void lane_cleanup(PMEMobjpool *pop);
 int lane_recover_and_section_boot(PMEMobjpool *pop);
 int lane_check(PMEMobjpool *pop);
 
-void lane_hold(PMEMobjpool *pop, struct lane_section **section,
+unsigned lane_hold(PMEMobjpool *pop, struct lane_section **section,
 	enum lane_section_type type);
 void lane_release(PMEMobjpool *pop);
 
@@ -123,5 +144,7 @@ __attribute__((constructor)) static void _section_parm_##n(void)\
 static void _section_parm_##n(void)\
 { Section_ops[n] = ops; }\
 MSVC_CONSTR(_section_parm_##n)
+
+#endif
 
 #endif

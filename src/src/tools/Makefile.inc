@@ -1,4 +1,4 @@
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -39,6 +39,7 @@ INSTALL_TARGET ?= y
 
 INCS += -I.
 INCS += -I$(TOP)/src/include
+INCS += -I$(TOP)/src/common
 CFLAGS += -std=gnu99
 CFLAGS += -Wall
 CFLAGS += -Werror
@@ -93,6 +94,18 @@ PMEMBLK_PRIV_OBJ=$(LIBSDIR_PRIV)/libpmemblk/libpmemblk_unscoped.o
 
 LIBS += -pthread
 
+ifeq ($(TOOLS_COMMON), y)
+LIBPMEMCOMMON=y
+endif
+
+ifeq ($(LIBPMEMCOMMON), y)
+DYNAMIC_LIBS += $(LIBSDIR_DEBUG)/libpmemcommon.a
+STATIC_DEBUG_LIBS += $(LIBSDIR_DEBUG)/libpmemcommon.a
+STATIC_NONDEBUG_LIBS += $(LIBSDIR_NONDEBUG)/libpmemcommon.a
+CFLAGS += -I$(TOP)/src/common
+LIBS += -ldl
+endif
+
 ifeq ($(LIBPMEMPOOL), y)
 DYNAMIC_LIBS += -lpmempool
 STATIC_DEBUG_LIBS += $(LIBSDIR_DEBUG)/libpmempool.a
@@ -112,6 +125,7 @@ STATIC_NONDEBUG_LIBS += $(LIBSDIR_NONDEBUG)/libpmemlog.a
 endif
 
 ifeq ($(LIBPMEMOBJ), y)
+LIBS += -ldl
 DYNAMIC_LIBS += -lpmemobj
 STATIC_DEBUG_LIBS += $(LIBSDIR_DEBUG)/libpmemobj.a
 STATIC_NONDEBUG_LIBS += $(LIBSDIR_NONDEBUG)/libpmemobj.a
@@ -130,10 +144,10 @@ STATIC_NONDEBUG_LIBS += $(LIBSDIR_NONDEBUG)/libvmem.a
 endif
 
 ifeq ($(TOOLS_COMMON), y)
-vpath %.c $(TOP)/src/common
 vpath %.c $(TOP)/src/tools/pmempool
 
-OBJS += common.o output.o util.o util_linux.o set.o set_linux.o
+OBJS += common.o output.o
+
 CFLAGS += -I$(TOP)/src/common
 CFLAGS += -I$(TOP)/src/libpmemlog
 CFLAGS += -I$(TOP)/src/libpmemblk
@@ -155,6 +169,12 @@ ifneq ($(LIBPMEMBLK_PRIV),)
 OBJS += pmemblk_priv.o
 endif
 
+ifneq ($(HEADERS),)
+ifneq ($(filter 1 2, $(CSTYLEON)),)
+TMP_HEADERS := $(addsuffix tmp, $(HEADERS))
+endif
+endif
+
 MAKEFILE_DEPS=$(TOP)/src/tools/Makefile.inc $(TOP)/src/common.inc
 
 ifneq ($(TARGET),)
@@ -163,8 +183,10 @@ else
 all:
 endif
 
+SYNC_FILE=.synced
+
 clean:
-	$(RM) $(OBJS) $(CLEAN_FILES)
+	$(RM) $(OBJS) $(CLEAN_FILES) $(SYNC_FILE) $(TMP_HEADERS)
 
 clobber: clean
 ifneq ($(TARGET),)
@@ -202,7 +224,7 @@ endif
 %.txt: %
 	man ./$< > $@
 
-$(TARGET) $(TARGET_STATIC_DEBUG) $(TARGET_STATIC_NONDEBUG): $(OBJS) $(MAKEFILE_DEPS)
+$(TARGET) $(TARGET_STATIC_DEBUG) $(TARGET_STATIC_NONDEBUG): $(TMP_HEADERS) $(OBJS) $(MAKEFILE_DEPS)
 
 $(TARGET_STATIC_DEBUG): $(STATIC_DEBUG_LIBS)
 	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(STATIC_DEBUG_LIBS) $(LIBS)
@@ -211,7 +233,7 @@ $(TARGET_STATIC_NONDEBUG): $(STATIC_NONDEBUG_LIBS)
 	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(STATIC_NONDEBUG_LIBS) $(LIBS)
 
 $(TARGET):
-	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(LIBS) $(DYNAMIC_LIBS)
+	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(DYNAMIC_LIBS) $(LIBS)
 
 $(PMEMLOG_PRIV_OBJ):
 	$(MAKE) -C $(LIBSDIR) libpmemlog
@@ -234,11 +256,28 @@ pmemblk_priv.o: $(PMEMBLK_PRIV_OBJ)
 objdir=.
 
 %.o: %.c $(MAKEFILE_DEPS)
+	$(call check-cstyle, $<)
 	@mkdir -p .deps
 	$(CC) -MD $(CFLAGS) $(INCS) -c -o $@ $<
 	$(create-deps)
 
+%.htmp: %.h
+	$(call check-cstyle, $<, $@)
+
 test check pcheck: all
+
+TESTCONFIG=$(TOP)/src/test/testconfig.sh
+DIR_SYNC=$(TOP)/src/test/.sync-dir
+
+$(TESTCONFIG):
+
+sync-remotes: all $(SYNC_FILE)
+
+$(SYNC_FILE): $(TARGET) $(TESTCONFIG)
+ifeq ($(SCP_TO_REMOTE_NODES), y)
+	cp $(TARGET) $(DIR_SYNC)
+	@touch $(SYNC_FILE)
+endif
 
 .PHONY: all clean clobber install uninstall test check pcheck
 

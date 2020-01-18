@@ -33,29 +33,33 @@
 #
 # src/test/rpmemd_obc/Makefile -- build rpmemd_obc test
 #
+SCP_TO_REMOTE_NODES = y
+
 vpath %.c ../../tools/rpmemd
-vpath %.c ../../common
 vpath %.c ../../rpmem_common
+vpath %.c ../../librpmem
+
+LIBPMEM=y
 
 TARGET = rpmemd_obc
 OBJS = rpmemd_obc_test.o\
        rpmemd_obc_test_common.o\
-       rpmemd_obc_test_accept.o\
+       rpmemd_log.o\
+       rpmem_common.o\
+       rpmem_util.o\
+       rpmem_ssh.o\
+       rpmem_cmd.o\
+       rpmemd_obc.o\
+       rpmemd_obc_test_msg_hdr.o\
        rpmemd_obc_test_misc.o\
        rpmemd_obc_test_create.o\
        rpmemd_obc_test_open.o\
-       rpmemd_obc_test_close.o\
-       rpmemd_obc_test_remove.o\
-       rpmemd_obc_test_msg_hdr.o\
-       rpmemd_log.o\
-       rpmem_common.o\
-       rpmemd_obc.o
+       rpmemd_obc_test_close.o
 
-out.o: CFLAGS += -DDEBUG -DSRCVERSION=\"utversion\"
-
+LIBPMEMCOMMON=y
 include ../Makefile.inc
 
 CFLAGS += -DRPMEMC_LOG_RPMEMD
 INCS += -I../../tools/rpmemd
-INCS += -I../../common
 INCS += -I../../rpmem_common
+INCS += -I../../librpmem

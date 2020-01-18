@@ -40,6 +40,8 @@ export UNITTEST_NUM=0
 # standard unit test setup
 . ../unittest/unittest.sh
 
+require_test_type medium
+
 require_fs_type non-pmem
 
 configure_valgrind memcheck force-enable
@@ -56,8 +58,6 @@ if ! eval LD_LIBRARY_PATH=$TEST_LD_LIBRARY_PATH LD_PRELOAD=$TEST_LD_PRELOAD $TRA
 fi
 
 expect_normal_exit ./obj_memcheck$EXESUFFIX t $DIR/testfile
-
-ignore_debug_info_errors ${VALGRIND_LOG_FILE}
 
 check
 

@@ -51,96 +51,81 @@
 #include "rpmem_common_log.h"
 
 /*
- * rpmem_obc_send -- (internal) send a message
+ * rpmem_xwrite -- send entire buffer or fail
  *
- * Return values:
- * 0   - successfully written all bytes
- * < 0 - error or connection closed
+ * Returns 1 if send returned 0.
  */
 int
-rpmem_obc_send(int sockfd, const void *buf, size_t len)
+rpmem_xwrite(int fd, const void *buf, size_t len, int flags)
 {
 	size_t wr = 0;
 	const uint8_t *cbuf = buf;
 	while (wr < len) {
-		ssize_t ret = write(sockfd, &cbuf[wr], len - wr);
-		if (ret == 0) {
-			RPMEMC_LOG(ERR, "!write");
-			errno = ECONNRESET;
-			return -1;
-		}
+		ssize_t sret;
+		if (!flags)
+			sret = write(fd, &cbuf[wr], len - wr);
+		else
+			sret = send(fd, &cbuf[wr], len - wr, flags);
 
-		if (ret < 0)
-			return (int)ret;
+		if (sret == 0)
+			return 1;
 
-		wr += (size_t)ret;
+		if (sret < 0)
+			return (int)sret;
+
+		wr += (size_t)sret;
 	}
 
 	return 0;
 }
 
 /*
- * rpmem_obc_recv -- (internal) receive a message
+ * rpmem_xread -- read entire buffer or fail
  *
- * Return values:
- * 0   - successfully read all data
- * < 0 - error
- * 1   - connection closed
+ * Returns 1 if recv returned 0.
  */
 int
-rpmem_obc_recv(int sockfd, void *buf, size_t len)
+rpmem_xread(int fd, void *buf, size_t len, int flags)
 {
 	size_t rd = 0;
 	uint8_t *cbuf = buf;
 	while (rd < len) {
-		ssize_t ret = read(sockfd, &cbuf[rd], len - rd);
-		if (ret == 0) {
-			errno = ECONNRESET;
+		ssize_t sret;
+
+		if (!flags)
+			sret = read(fd, &cbuf[rd], len - rd);
+		else
+			sret = recv(fd, &cbuf[rd], len - rd, flags);
+
+		if (sret == 0) {
+			RPMEMC_DBG(ERR, "recv/read returned 0");
 			return 1;
 		}
 
-		if (ret < 0) {
-			RPMEMC_LOG(ERR, "!read");
-			return (int)ret;
-		}
+		if (sret < 0)
+			return (int)sret;
 
-		rd += (size_t)ret;
+		rd += (size_t)sret;
 	}
 
 	return 0;
 }
 
+static const char *pm2str[MAX_RPMEM_PM] = {
+	[RPMEM_PM_APM] = "Applicance Persistency Method",
+	[RPMEM_PM_GPSPM] = "General Purpose Server Persistency Method",
+};
+
 /*
- * rpmem_obc_keepalive -- activate TCP keepalive
+ * rpmem_persist_method_to_str -- convert enum rpmem_persist_method to string
  */
-int
-rpmem_obc_keepalive(int fd)
+const char *
+rpmem_persist_method_to_str(enum rpmem_persist_method pm)
 {
-	int ret;
-	int optval = 1;
-	socklen_t optlen = sizeof(optval);
+	if (pm >= MAX_RPMEM_PM)
+		return NULL;
 
-	ret = setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &optval, optlen);
-	if (ret) {
-		RPMEMC_LOG(ERR, "!setsockopt(SO_KEEPALIVE)");
-		return ret;
-	}
-
-	optval = RPMEM_TCP_KEEPIDLE;
-	ret = setsockopt(fd, SOL_TCP, TCP_KEEPIDLE, &optval, optlen);
-	if (ret) {
-		RPMEMC_LOG(ERR, "!setsockopt(TC_KEEPIDLE)");
-		return ret;
-	}
-
-	optval = RPMEM_TCP_KEEPINTVL;
-	ret = setsockopt(fd, SOL_TCP, TCP_KEEPINTVL, &optval, optlen);
-	if (ret) {
-		RPMEMC_LOG(ERR, "!setsockopt(TC_KEEPINTVL)");
-		return ret;
-	}
-
-	return 0;
+	return pm2str[pm];
 }
 
 static const char *provider2str[MAX_RPMEM_PROV] = {
@@ -185,6 +170,7 @@ rpmem_get_ip_str(const struct sockaddr *addr)
 	static char str[INET6_ADDRSTRLEN + NI_MAXSERV + 1];
 	char ip[INET6_ADDRSTRLEN];
 	struct sockaddr_in *in4;
+	struct sockaddr_in6 *in6;
 
 	switch (addr->sa_family) {
 	case AF_INET:
@@ -196,7 +182,13 @@ rpmem_get_ip_str(const struct sockaddr *addr)
 			return NULL;
 		break;
 	case AF_INET6:
-		/* IPv6 not supported */
+		in6 = (struct sockaddr_in6 *)addr;
+		if (!inet_ntop(AF_INET6, &in6->sin6_addr, ip, sizeof(ip)))
+			return NULL;
+		if (snprintf(str, sizeof(str), "%s:%u",
+				ip, ntohs(in6->sin6_port)) < 0)
+			return NULL;
+		break;
 	default:
 		return NULL;
 	}
@@ -205,71 +197,130 @@ rpmem_get_ip_str(const struct sockaddr *addr)
 }
 
 /*
- * rpmem_target_split -- split target into user, node and service
- *
- * The user, node and service must be freed by the caller.
+ * rpmem_target_parse -- parse target info
  */
-int
-rpmem_target_split(const char *target, char **user,
-	char **node, char **service)
+struct rpmem_target_info *
+rpmem_target_parse(const char *target)
 {
-	if (user)
-		*user = NULL;
-	if (node)
-		*node = NULL;
+	struct rpmem_target_info *info = calloc(1, sizeof(*info));
+	if (!info)
+		return NULL;
 
-	if (service)
-		*service = NULL;
+	char *str = strdup(target);
+	if (!str)
+		goto err_strdup;
 
-	char *target_dup = strdup(target);
-	if (!target_dup)
-		goto err_target_dup;
-
-	char *u = NULL;
-	char *n = strchr(target_dup, '@');
-	if (n) {
-		u = target_dup;
-		*n = '\0';
-		n++;
+	char *tmp = strchr(str, '@');
+	if (tmp) {
+		*tmp = '\0';
+		info->flags |= RPMEM_HAS_USER;
+		strncpy(info->user, str, sizeof(info->user) - 1);
+		tmp++;
 	} else {
-		n = target_dup;
+		tmp = str;
 	}
 
-	char *s = strchr(n, ':');
-	if (s) {
-		*s = '\0';
-		s++;
+	if (*tmp == '[') {
+		tmp++;
+		/* IPv6 */
+		char *end = strchr(tmp, ']');
+		if (!end) {
+			errno = EINVAL;
+			goto err_ipv6;
+		}
+
+		*end = '\0';
+		strncpy(info->node, tmp, sizeof(info->node) - 1);
+		tmp = end + 1;
+
+		end = strchr(tmp, ':');
+		if (end) {
+			*end = '\0';
+			end++;
+			info->flags |= RPMEM_HAS_SERVICE;
+			strncpy(info->service, end, sizeof(info->service) - 1);
+		}
+	} else {
+		char *first = strchr(tmp, ':');
+		char *last = strrchr(tmp, ':');
+		if (first == last) {
+			/* IPv4 - one colon */
+			if (first) {
+				*first = '\0';
+				first++;
+				info->flags |= RPMEM_HAS_SERVICE;
+				strncpy(info->service, first,
+						sizeof(info->service) - 1);
+			}
+		}
+
+		strncpy(info->node, tmp, sizeof(info->node) - 1);
 	}
 
-	if (node) {
-		*node = strdup(n);
-		if (!(*node))
-			goto err_dup_node;
+	if (*info->node == '\0') {
+		errno = EINVAL;
+		goto err_node;
 	}
 
-	if (u && user) {
-		*user = strdup(u);
-		if (!(*user))
-			goto err_dup_user;
+	free(str);
+
+	/* make sure that user, node and service are NULL-terminated */
+	info->user[sizeof(info->user) - 1] = '\0';
+	info->node[sizeof(info->node) - 1] = '\0';
+	info->service[sizeof(info->service) - 1] = '\0';
+
+	return info;
+err_node:
+err_ipv6:
+	free(str);
+err_strdup:
+	free(info);
+	return NULL;
+}
+
+/*
+ * rpmem_target_free -- free target info
+ */
+void
+rpmem_target_free(struct rpmem_target_info *info)
+{
+	free(info);
+}
+
+/*
+ * rpmem_get_ssh_conn_addr -- returns an address which the ssh connection is
+ * established on
+ *
+ * This function utilizes the SSH_CONNECTION environment variable to retrieve
+ * the server IP address. See ssh(1) for details.
+ */
+char *
+rpmem_get_ssh_conn_addr(void)
+{
+	char *ssh_conn = getenv("SSH_CONNECTION");
+	if (!ssh_conn) {
+		RPMEMC_LOG(ERR, "SSH_CONNECTION variable is not set");
+		return NULL;
 	}
 
-	if (s && service) {
-		*service = strdup(s);
-		if (!(*service))
-			goto err_dup_service;
-	}
+	char *sp = strchr(ssh_conn, ' ');
+	if (!sp)
+		goto err_fmt;
 
-	free(target_dup);
+	char *addr = strchr(sp + 1, ' ');
+	if (!addr)
+		goto err_fmt;
 
-	return 0;
-err_dup_service:
-	if (user)
-		free(*user);
-err_dup_user:
-	if (node)
-		free(*node);
-err_dup_node:
-	free(target_dup);
-err_target_dup:
-	return -1;
+	addr++;
+
+	sp = strchr(addr, ' ');
+	if (!sp)
+		goto err_fmt;
+
+	*sp = '\0';
+
+	return addr;
+err_fmt:
+	RPMEMC_LOG(ERR, "invalid format of SSH_CONNECTION variable");
+	return NULL;
 }

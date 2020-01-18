@@ -32,13 +32,15 @@
 #
 
 #
-# src/test/obj_tx_strdup/TEST0 -- unit test for pmemobj_tx_strdup
+# src/test/obj_tx_strdup/TEST1 -- unit test for pmemobj_tx_strdup
 #
 export UNITTEST_NAME=obj_tx_strdup/TEST1
 export UNITTEST_NUM=1
 
 # standard unit test setup
 . ../unittest/unittest.sh
+
+require_test_type medium
 
 configure_valgrind pmemcheck force-enable
 setup

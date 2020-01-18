@@ -36,16 +36,10 @@
 #include <string.h>
 #include <stddef.h>
 
+#include "tx.h"
 #include "unittest.h"
-#include "libpmemobj.h"
 #include "util.h"
 #include "valgrind_internal.h"
-#include "redo.h"
-#include "memops.h"
-#include "pmalloc.h"
-#include "lane.h"
-#include "list.h"
-#include "obj.h"
 
 #define LAYOUT_NAME "tx_add_range"
 
@@ -54,7 +48,7 @@
 #define ROOT_TAB_SIZE\
 	(((MAX_CACHED_RANGE_SIZE + 16) * MAX_CACHED_RANGES) / sizeof(int))
 
-#define REOPEN_COUNT	(PMEMOBJ_MIN_POOL / ROOT_TAB_SIZE / 2)
+#define REOPEN_COUNT	10
 
 enum type_number {
 	TYPE_OBJ,
@@ -401,6 +395,30 @@ do_tx_add_range_commit(PMEMobjpool *pop)
 }
 
 /*
+ * do_tx_xadd_range_commit -- call pmemobj_tx_xadd_range and commit the tx
+ */
+static void
+do_tx_xadd_range_commit(PMEMobjpool *pop)
+{
+	int ret;
+	TOID(struct object) obj;
+	TOID_ASSIGN(obj, do_tx_zalloc(pop, TYPE_OBJ));
+
+	TX_BEGIN(pop) {
+		ret = pmemobj_tx_xadd_range(obj.oid, VALUE_OFF, VALUE_SIZE,
+				POBJ_XADD_NO_FLUSH);
+		UT_ASSERTeq(ret, 0);
+
+		D_RW(obj)->value = TEST_VALUE_1;
+		/* let pmemcheck find we didn't flush it */
+	} TX_ONABORT {
+		UT_ASSERT(0);
+	} TX_END
+
+	UT_ASSERTeq(D_RO(obj)->value, TEST_VALUE_1);
+}
+
+/*
  * do_tx_add_range_overlapping -- call pmemobj_tx_add_range with overlapping
  */
 static void
@@ -557,7 +575,22 @@ do_tx_add_range_reopen(char *path)
 
 		pmemobj_close(pop);
 	}
+}
 
+static void
+do_tx_add_range_too_large(PMEMobjpool *pop)
+{
+	TOID(struct object) obj;
+	TOID_ASSIGN(obj, do_tx_zalloc(pop, TYPE_OBJ));
+
+	TX_BEGIN(pop) {
+		pmemobj_tx_add_range(obj.oid, 0,
+			PMEMOBJ_MAX_ALLOC_SIZE + 1);
+	} TX_ONCOMMIT {
+		UT_ASSERT(0);
+	} TX_END
+
+	UT_ASSERTne(errno, 0);
 }
 
 int
@@ -600,6 +633,9 @@ main(int argc, char *argv[])
 		VALGRIND_WRITE_STATS;
 		do_tx_add_range_overlapping(pop);
 		VALGRIND_WRITE_STATS;
+		do_tx_add_range_too_large(pop);
+		VALGRIND_WRITE_STATS;
+		do_tx_xadd_range_commit(pop);
 		pmemobj_close(pop);
 	}
 

@@ -36,9 +36,9 @@
 
 //! [pool_example]
 #include <fcntl.h>
-#include <libpmemobj/p.hpp>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
+#include <libpmemobj++/p.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
 
 using namespace nvml::obj;
 
@@ -54,8 +54,8 @@ pool_example()
 	};
 
 	// create a pmemobj pool
-	auto pop = pool<root>::create("poolfile", "layout", PMEMOBJ_MIN_POOL,
-				      S_IWUSR | S_IRUSR);
+	auto pop = pool<root>::create("poolfile", "layout", PMEMOBJ_MIN_POOL);
+
 	// close a pmemobj pool
 	pop.close();
 
@@ -84,9 +84,9 @@ pool_example()
 
 //! [pool_base_example]
 #include <fcntl.h>
-#include <libpmemobj/make_persistent_atomic.hpp>
-#include <libpmemobj/p.hpp>
-#include <libpmemobj/pool.hpp>
+#include <libpmemobj++/make_persistent_atomic.hpp>
+#include <libpmemobj++/p.hpp>
+#include <libpmemobj++/pool.hpp>
 
 using namespace nvml::obj;
 
@@ -101,8 +101,8 @@ pool_base_example()
 	};
 
 	// create a pmemobj pool
-	auto pop = pool_base::create("poolfile", "", PMEMOBJ_MIN_POOL,
-				     S_IWUSR | S_IRUSR);
+	auto pop = pool_base::create("poolfile", "", PMEMOBJ_MIN_POOL);
+
 	// close a pmemobj pool
 	pop.close();
 

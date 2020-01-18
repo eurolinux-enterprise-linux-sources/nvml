@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,7 +36,9 @@
 
 #include <stdint.h>
 #include <sys/param.h>
+#include <endian.h>
 
+#include "queue.h"
 #include "out.h"
 #include "btt.h"
 #include "libpmempool.h"
@@ -446,15 +448,12 @@ flog_entry_check(PMEMpoolcheck *ppc, union location *loc, uint32_t i,
 		 * - current_btt_flog.seq == 0b01 and
 		 * - second flog entry in pair is zeroed
 		 * or
-		 * btt_map[current_btt_flog.lba] == current_btt_flog.new_map
+		 * current_btt_flog.old_map != current_btt_flog.new_map
 		 */
 		if (entry == new_entry)
 			flog_valid = (next == 1) && (flog_cur->seq == 1) &&
 				util_is_zeroed((const void *)&flog[1],
 				sizeof(flog[1]));
-		else
-			flog_valid = (loc->arenap->map[flog_cur->lba] &
-				BTT_MAP_ENTRY_LBA_MASK) == new_entry;
 
 		if (flog_valid) {
 			/* totally fine case */
@@ -537,7 +536,10 @@ arena_map_flog_check(PMEMpoolcheck *ppc, union location *loc)
 
 	if (CHECK_IS_NOT(ppc, ADVANCED) && loc->list_inval->count +
 			loc->list_flog_inval->count > 0) {
-		ppc->result = CHECK_RESULT_NOT_CONSISTENT;
+		ppc->result = CHECK_RESULT_CANNOT_REPAIR;
+		CHECK_INFO(ppc, REQUIRE_ADVANCED);
+		CHECK_ERR(ppc, "BTT Map and / or BTT Flog contain invalid "
+			"entries");
 		check_end(ppc->data);
 		goto cleanup;
 	}
@@ -664,6 +666,7 @@ static const struct step steps[] = {
 	},
 	{
 		.check	= NULL,
+		.fix	= NULL,
 	},
 };
 
@@ -673,6 +676,8 @@ static const struct step steps[] = {
 static inline int
 step_exe(PMEMpoolcheck *ppc, union location *loc)
 {
+	ASSERT(loc->step < ARRAY_SIZE(steps));
+
 	const struct step *step = &steps[loc->step++];
 
 	if (!step->fix)

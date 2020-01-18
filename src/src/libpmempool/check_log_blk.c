@@ -36,6 +36,7 @@
 
 #include <inttypes.h>
 #include <sys/param.h>
+#include <endian.h>
 
 #include "out.h"
 #include "btt.h"
@@ -365,6 +366,7 @@ static const struct step steps[] = {
 	},
 	{
 		.check	= NULL,
+		.fix	= NULL,
 	},
 };
 
@@ -374,6 +376,8 @@ static const struct step steps[] = {
 static inline int
 step_exe(PMEMpoolcheck *ppc, union location *loc)
 {
+	ASSERT(loc->step < ARRAY_SIZE(steps));
+
 	const struct step *step = &steps[loc->step++];
 
 	if (!(step->type & ppc->pool->params.type))

@@ -42,14 +42,12 @@ Param(
 
 $Env:UNITTEST_NAME = "blk_pool\TEST6"
 $Env:UNITTEST_NUM = "6"
-# XXX:  bash has a few calls to tools that we don't have on
-# windows (yet) that set PMEM_IS_PMEM and NON_PMEM_IS_PMEM based
-# on their output
-$Env:PMEM_IS_PMEM = $true
-$Env:NON_PMEM_IS_PMEM = $true
+
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
+
+require_test_type medium
 
 setup
 
@@ -59,10 +57,11 @@ echo $null >> $DIR\testfile
 # TEST6 existing file, file length < min required size, poolsize == 0,
 #       bsize == 0
 #
-expect_normal_exit ..\..\x64\debug\blk_pool$Env:EXESUFFIX `
+expect_normal_exit $Env:EXE_DIR\blk_pool$Env:EXESUFFIX `
     c \NULL\testfile 0 0 0640
 
 check_files $DIR\testfile
 
-# check will print the appropriate pass/fail message
 check
+
+pass

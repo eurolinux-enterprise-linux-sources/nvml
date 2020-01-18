@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -89,6 +89,8 @@ signal_handler(int sig)
 #define PMEM_FILE_ALL_FLAGS\
 	(PMEM_FILE_CREATE|PMEM_FILE_EXCL|PMEM_FILE_SPARSE|PMEM_FILE_TMPFILE)
 
+static int is_dev_dax = 0;
+
 /*
  * parse_flags -- parse 'flags' string
  */
@@ -117,6 +119,9 @@ parse_flags(const char *flags_str)
 		case 'X':
 			/* not supported flag */
 			ret |= (PMEM_FILE_ALL_FLAGS + 1);
+			break;
+		case 'D':
+			is_dev_dax = 1;
 			break;
 		default:
 			UT_FATAL("unknown flags: %c", *flags_str);
@@ -153,7 +158,9 @@ do_check(int fd, void *addr, size_t mlen)
 	memset(pat, 0xA5, CHECK_BYTES);
 	memcpy(addr, pat, CHECK_BYTES);
 
-	pmem_unmap(addr, mlen);
+	UT_ASSERTeq(pmem_msync(addr, CHECK_BYTES), 0);
+
+	UT_ASSERTeq(pmem_unmap(addr, mlen), 0);
 
 	if (!sigsetjmp(Jmp, 1)) {
 		/* same memcpy from above should now fail */
@@ -227,7 +234,15 @@ main(int argc, char *argv[])
 		}
 
 		if (addr) {
-			if ((flags & PMEM_FILE_TMPFILE) == 0) {
+			/* is_pmem must be true for device DAX */
+			int is_pmem_check = pmem_is_pmem(addr, mlen);
+			UT_ASSERT(!is_dev_dax || is_pmem_check);
+
+			/* check is_pmem returned from pmem_map_file */
+			if (use_is_pmem)
+				UT_ASSERTeq(is_pmem, is_pmem_check);
+
+			if ((flags & PMEM_FILE_TMPFILE) == 0 && !is_dev_dax) {
 				fd = OPEN(argv[i], O_RDWR);
 
 				if (!use_mlen) {
@@ -244,7 +259,7 @@ main(int argc, char *argv[])
 							argv[i]);
 				}
 			} else {
-				pmem_unmap(addr, mlen);
+				UT_ASSERTeq(pmem_unmap(addr, mlen), 0);
 			}
 		}
 	}

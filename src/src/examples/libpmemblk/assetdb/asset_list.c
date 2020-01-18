@@ -37,9 +37,9 @@
  *	asset_list /path/to/pm-aware/file
  */
 
+#include <ex_common.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
 #include <time.h>
