@@ -1,4 +1,4 @@
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -28,30 +28,44 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
-# src/Makefile.inc -- common Makefile rules for NVM library
+# src/common.inc -- common Makefile rules for PMDK
 #
 
 TOP := $(dir $(lastword $(MAKEFILE_LIST)))..
 
+# import user variables
+ifneq ($(wildcard $(TOP)/user.mk),)
+include $(TOP)/user.mk
+endif
+
 LN = ln
-OBJCOPY = objcopy
+OBJCOPY ?= objcopy
 MKDIR = mkdir
 INSTALL = install
 CP = cp
 CSTYLE = $(TOP)/utils/cstyle
-CSTYLEON = 0
+CSTYLEON ?= 0
 STYLE_CHECK = $(TOP)/utils/style_check.sh
+CHECK_SHEBANG = $(TOP)/utils/check-shebang.sh
 CHECK_OS = $(TOP)/utils/check-os.sh
 OS_BANNED = $(TOP)/utils/os-banned
 COVERAGE = 0
 
-PKG_CONFIG = pkg-config
-CLANG_FORMAT ?= clang-format
+PKG_CONFIG ?= pkg-config
 HEADERS = $(wildcard *.h) $(wildcard *.hpp)
+
+ifeq ($(shell command -v clang-format-3.8 > /dev/null && echo y || echo n), y)
+CLANG_FORMAT ?= clang-format-3.8
+else
+CLANG_FORMAT ?= clang-format
+endif
 
 GCOV_CFLAGS=-fprofile-arcs -ftest-coverage --coverage
 GCOV_LDFLAGS=-fprofile-arcs -ftest-coverage
 GCOV_LIBS=-lgcov
+
+osdep = $(1)_$(shell uname -s | tr "[:upper:]" "[:lower:]")$(2)
+get_arch = $(shell $(CC) -dumpmachine | awk -F'[/-]' '{print $$1}')
 
 ifeq ($(shell command -v $(PKG_CONFIG) && echo y || echo n), n)
 $(error $(PKG_CONFIG) not found)
@@ -60,10 +74,12 @@ endif
 check_package = $(shell $(PKG_CONFIG) $(1) && echo y || echo n)
 
 check_flag = $(shell echo "int main(){return 0;}" |\
-	$(CC) $(CFLAGS) $(1) -x c -o /dev/null - 2>/dev/null && echo y || echo n)
+	$(CC) $(CFLAGS) -Werror $(1) -x c -o /dev/null - 2>/dev/null && echo y || echo n)
+
+check_compiler = $(shell $(CC) --version | grep $(1) && echo y || echo n)
 
 # Check for issues with older clang compilers which assert on delete persistent<[][]>.
-check_clang_template_bug = $(shell echo "using namespace nvml::obj; int main() { delete_persistent<int[][3]>(make_persistent<int[][3]>(2), 2); return 0; }" |\
+check_clang_template_bug = $(shell echo "using namespace pmem::obj; int main() { delete_persistent<int[][3]>(make_persistent<int[][3]>(2), 2); return 0; }" |\
 	$(CXX) --std=c++11 -x c++ -I$(TOP)/src/include/ -include libpmemobj++/make_persistent_array.hpp -L$(TOP)/src/debug/ -c -o /dev/null - 2>/dev/null && echo y || echo n)
 
 # Check for issues with older gcc compilers which do not expand variadic template
@@ -74,7 +90,7 @@ check_gcc_variadic_template_bug = $(shell echo "void print() {} template<typenam
 check_cxx_flags = $(shell echo "int main(){return 0;}" |\
 	$(CXX) $(1) -x c++ -o /dev/null - 2>/dev/null && echo y || echo n)
 
-CXX_TESTS=$(check_clang_template_bug)$(check_gcc_variadic_template_bug)
+CXX_TESTS=$(check_gcc_variadic_template_bug)
 
 cxx_ok=$(if $(findstring n,$(CXX_TESTS)),n,y)
 
@@ -116,6 +132,8 @@ export mandir := $(datarootdir)/man
 export docdir := $(datarootdir)/doc
 export man1dir := $(mandir)/man1
 export man3dir := $(mandir)/man3
+export man5dir := $(mandir)/man5
+export man7dir := $(mandir)/man7
 export cstyle_bin := $(CSTYLE)
 export clang_format_bin := $(CLANG_FORMAT)
 
@@ -212,12 +230,75 @@ export pkgconfigdir := $(libdir)/pkgconfig
 export bindir := $(exec_prefix)/bin
 export bashcompdir := $(sysconfdir)/bash_completion.d
 
+LIBFABRIC_MIN_VERSION := 1.4.2
+
 # Keep in sync with requirements in src/test/unittest/unittest.sh and
 # utils/docker/images/install-libfabric.sh.
-export BUILD_RPMEM := $(call check_package, libfabric --atleast-version=1.4.2)
+export BUILD_RPMEM := $(call check_package, libfabric --atleast-version=$(LIBFABRIC_MIN_VERSION))
 ifneq ($(BUILD_RPMEM),y)
-	export BUILD_RPMEM_INFO := libfabric (version >= 1.4.2) is missing -- \
+export BUILD_RPMEM_INFO := libfabric (version >= $(LIBFABRIC_MIN_VERSION)) is missing -- \
 see src/librpmem/README for details.
 endif
 
+NDCTL_MIN_VERSION := 59.2
+
 sparse-c = $(shell for c in *.c; do sparse -Wsparse-all -Wno-declaration-after-statement $(CFLAGS) $(INCS) $$c || true; done)
+
+ifeq ($(shell uname -s),FreeBSD)
+
+GLIBC_CXXFLAGS=-D_GLIBCXX_USE_C99
+UNIX98_CFLAGS=
+OS_INCS=-I$(TOP)/src/freebsd/include -I/usr/local/include
+OS_LIBS=-L/usr/local/lib
+LIBDL=
+LIBUTIL=-lutil
+LIBUUID=-luuid
+LIBCXXABI=-lcxxrt
+LIBNDCTL=
+OS_DIMM=none
+
+else
+
+GLIBC_CXXFLAGS=
+UNIX98_CFLAGS=-D__USE_UNIX98
+OS_INCS=
+OS_LIBS=
+LIBDL=-ldl
+LIBUTIL=
+LIBUUID=
+LIBCXXABI=-lc++abi
+
+# XXX: disable building with ndctl, unless explicitly enabled
+NDCTL_ENABLE ?= n
+
+# Detect libndctl if not disabled.
+ifneq ($(NDCTL_ENABLE),n)
+HAS_NDCTL :=  $(shell echo "int main() {struct ndctl_cmd *cmd; ndctl_cmd_smart_get_shutdown_count(cmd);return 0;}" | \
+ $(CC) -x c -include ndctl/libndctl.h -o /dev/null - -lndctl 2>/dev/null && echo y || echo n)
+HAS_DAXCTL := $(call check_package, libdaxctl --atleast-version $(NDCTL_MIN_VERSION))
+endif
+
+# If neither disabled or enabled, set it based on libndctl presence.
+ifeq ($(NDCTL_ENABLE),)
+ifeq ($(HAS_NDCTL)$(HAS_DAXCTL),yy)
+export NDCTL_ENABLE=y
+else
+export NDCTL_ENABLE=n
+endif
+endif
+
+ifeq ($(NDCTL_ENABLE),y)
+ifeq ($(HAS_NDCTL),n)
+$(error libndctl(version >= $(NDCTL_MIN_VERSION)) is missing -- see README)
+endif
+ifeq ($(HAS_DAXCTL),n)
+$(error libdaxclt(version >= $(NDCTL_MIN_VERSION)) is missing -- see README)
+endif
+LIBNDCTL = $(shell $(PKG_CONFIG) --libs libndctl libdaxctl)
+OS_DIMM=ndctl
+else
+OS_DIMM=none
+LIBNDCTL=
+endif
+
+endif

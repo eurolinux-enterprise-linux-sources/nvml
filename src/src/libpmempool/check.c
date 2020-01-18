@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -63,19 +63,37 @@ static const struct step steps[] = {
 	},
 	{
 		.type		= POOL_TYPE_BLK | POOL_TYPE_LOG |
-					POOL_TYPE_OBJ | POOL_TYPE_UNKNOWN,
+					POOL_TYPE_OBJ | POOL_TYPE_CTO,
+		.func		= check_sds,
+		.part		= true,
+	},
+	{
+		.type		= POOL_TYPE_BLK | POOL_TYPE_LOG |
+					POOL_TYPE_OBJ | POOL_TYPE_CTO |
+					POOL_TYPE_UNKNOWN,
 		.func		= check_pool_hdr,
 		.part		= true,
 	},
 	{
 		.type		= POOL_TYPE_BLK | POOL_TYPE_LOG |
-					POOL_TYPE_OBJ | POOL_TYPE_UNKNOWN,
+					POOL_TYPE_OBJ | POOL_TYPE_CTO |
+					POOL_TYPE_UNKNOWN,
 		.func		= check_pool_hdr_uuids,
 		.part		= true,
 	},
 	{
-		.type		= POOL_TYPE_BLK | POOL_TYPE_LOG,
-		.func		= check_log_blk,
+		.type		= POOL_TYPE_LOG,
+		.func		= check_log,
+		.part		= false,
+	},
+	{
+		.type		= POOL_TYPE_BLK,
+		.func		= check_blk,
+		.part		= false,
+	},
+	{
+		.type		= POOL_TYPE_CTO,
+		.func		= check_cto,
 		.part		= false,
 	},
 	{
@@ -89,7 +107,8 @@ static const struct step steps[] = {
 		.part		= false,
 	},
 	{
-		.type		= POOL_TYPE_BLK | POOL_TYPE_LOG | POOL_TYPE_BTT,
+		.type		= POOL_TYPE_BLK | POOL_TYPE_LOG |
+					POOL_TYPE_BTT | POOL_TYPE_CTO,
 		.func		= check_write,
 		.part		= false,
 	},

@@ -1,4 +1,4 @@
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -32,24 +32,35 @@
 # src/libpmem/Makefile -- Makefile for libpmem
 #
 
+include ../common.inc
+
+ARCH := $(call get_arch)
+
 LIBRARY_NAME = pmem
 LIBRARY_SO_VERSION = 1
 LIBRARY_VERSION = 0.0
 SOURCE =\
 	$(COMMON)/file.c\
-	$(COMMON)/file_linux.c\
-	$(COMMON)/os_linux.c\
-	$(COMMON)/os_thread_linux.c\
+	$(COMMON)/file_posix.c\
+	$(COMMON)/fs_posix.c\
+	$(COMMON)/mmap.c\
+	$(COMMON)/mmap_posix.c\
+	$(COMMON)/os_posix.c\
+	$(COMMON)/os_thread_posix.c\
+	$(COMMON)/os_deep_linux.c\
+	$(COMMON)/os_auto_flush_linux.c\
 	$(COMMON)/out.c\
 	$(COMMON)/util.c\
-	$(COMMON)/util_linux.c\
-	$(COMMON)/mmap.c\
-	$(COMMON)/mmap_linux.c\
+	$(COMMON)/util_posix.c\
 	libpmem.c\
-	cpu.c\
 	pmem.c\
-	pmem_linux.c
+	pmem_posix.c
+
+include $(ARCH)/sources.inc
 
 include ../Makefile.inc
 
+include $(ARCH)/flags.inc
+
+CFLAGS += -I.
 LIBS += -pthread

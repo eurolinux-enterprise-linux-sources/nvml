@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -33,18 +33,10 @@
 #
 # examples/libpmemobj/Makefile -- build the libpmemobj examples
 #
-include ../../common.inc
-
 PROGS = manpage btree pi lists setjmp
 DIRS = pminvaders pmemlog pmemblk string_store string_store_tx\
 	string_store_tx_type hashmap tree_map pmemobjfs map libart array\
-	linkedlist list_map
-
-ifeq ($(call cxx_ok), y)
-DIRS += cpp pman cpp_map panaconda doc_snippets
-else
-$(info NOTE: Skipping C++ examples because of compiler issues)
-endif
+	linkedlist list_map slab_allocator
 
 LIBS = -lpmemobj -lpmem -pthread -lm -pthread
 
@@ -56,7 +48,6 @@ pmemobjfs: map
 manpage: manpage.o
 btree: btree.o
 pi: pi.o
-queue: queue.o
 lists: lists.o
 
 setjmp: CFLAGS += -O2

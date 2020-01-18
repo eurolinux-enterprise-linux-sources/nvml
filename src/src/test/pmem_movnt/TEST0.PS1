@@ -1,5 +1,5 @@
 #
-# Copyright 2015-2017, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 # Copyright (c) 2016, Microsoft Corporation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -39,8 +39,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "pmem_movnt/TEST0"
-$Env:UNITTEST_NUM = "0"
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
@@ -54,15 +52,28 @@ setup
 $Env:PMEM_IS_PMEM_FORCE=1
 $Env:PMEM_LOG_LEVEL=15
 
-$Env:PMEM_MOVNT_THRESHOLD=$null
+function test {
+	expect_normal_exit $Env:EXE_DIR\pmem_movnt$Env:EXESUFFIX
+}
 
-expect_normal_exit $Env:EXE_DIR\pmem_movnt$Env:EXESUFFIX
+function test_all {
+	$Env:PMEM_MOVNT_THRESHOLD=$null
 
-Get-Content pmem$Env:UNITTEST_NUM.log | Select-String `
-	-Pattern "PMEM_MOVNT_THRESHOLD|pmem_flush" | `
-	%{[string]$_ -replace '^.* len ',"" -replace '^.*][ ]*',''} `
-	> grep$Env:UNITTEST_NUM.log
+	$Env:PMEM_MOVNT_THRESHOLD=1024
 
-check
+	$Env:PMEM_MOVNT_THRESHOLD=5
+
+	$Env:PMEM_MOVNT_THRESHOLD=-15
+}
+
+test_all
+
+$Env:PMEM_AVX512F = 1
+
+test_all
+
+$Env:PMEM_AVX = 1
+
+test_all
 
 pass

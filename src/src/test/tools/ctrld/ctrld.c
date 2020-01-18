@@ -32,6 +32,9 @@
 
 /*
  * ctrld.c -- simple application which helps running tests on remote node.
+ *
+ * XXX - wait_port is not supported on FreeBSD because there are currently
+ *       no test cases that require it.
  */
 
 #include <stdio.h>
@@ -40,6 +43,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <dirent.h>
+#include <signal.h>
+#include <limits.h>
 #include <sys/queue.h>
 #include <sys/types.h>
 #include <sys/file.h>
@@ -49,6 +54,12 @@
 #include <stdarg.h>
 
 #include "os.h"
+
+#ifdef __FreeBSD__
+#include "signals_freebsd.h"
+#else
+#include "signals_linux.h"
+#endif
 
 #define APP_NAME "ctrld"
 #define BUFF_SIZE 4096
@@ -84,42 +95,6 @@ log_err(const char *file, int lineno, const char *fmt, ...)
 
 #define CTRLD_LOG(...) log_err(__FILE__, __LINE__, __VA_ARGS__)
 
-/* table of signal names */
-#define SIGNAL_2_STR(sig) [sig] = #sig
-static const char *signal2str[] = {
-	SIGNAL_2_STR(SIGHUP),
-	SIGNAL_2_STR(SIGINT),
-	SIGNAL_2_STR(SIGQUIT),
-	SIGNAL_2_STR(SIGILL),
-	SIGNAL_2_STR(SIGTRAP),
-	SIGNAL_2_STR(SIGABRT),
-	SIGNAL_2_STR(SIGBUS),
-	SIGNAL_2_STR(SIGFPE),
-	SIGNAL_2_STR(SIGKILL),
-	SIGNAL_2_STR(SIGUSR1),
-	SIGNAL_2_STR(SIGSEGV),
-	SIGNAL_2_STR(SIGUSR2),
-	SIGNAL_2_STR(SIGPIPE),
-	SIGNAL_2_STR(SIGALRM),
-	SIGNAL_2_STR(SIGTERM),
-	SIGNAL_2_STR(SIGSTKFLT),
-	SIGNAL_2_STR(SIGCHLD),
-	SIGNAL_2_STR(SIGCONT),
-	SIGNAL_2_STR(SIGSTOP),
-	SIGNAL_2_STR(SIGTSTP),
-	SIGNAL_2_STR(SIGTTIN),
-	SIGNAL_2_STR(SIGTTOU),
-	SIGNAL_2_STR(SIGURG),
-	SIGNAL_2_STR(SIGXCPU),
-	SIGNAL_2_STR(SIGXFSZ),
-	SIGNAL_2_STR(SIGVTALRM),
-	SIGNAL_2_STR(SIGPROF),
-	SIGNAL_2_STR(SIGWINCH),
-	SIGNAL_2_STR(SIGPOLL),
-	SIGNAL_2_STR(SIGPWR),
-	SIGNAL_2_STR(SIGSYS)
-};
-
 struct inode_item {
 	LIST_ENTRY(inode_item) next;
 	unsigned long inode;
@@ -137,12 +112,16 @@ usage(void)
 {
 	CTRLD_LOG("usage: %s <pid file> <cmd> [<arg>]", APP_NAME);
 	CTRLD_LOG("commands:");
+	CTRLD_LOG("  exe <command> [<args...>] -- "
+			"run specified command");
 	CTRLD_LOG("  run  <timeout> <command> [<args...>] -- "
 			"run specified command with given timeout");
 	CTRLD_LOG("  wait [<timeout>]                     -- "
 			"wait for command");
+#ifndef __FreeBSD_
 	CTRLD_LOG("  wait_port <port>                     -- "
 			"wait until a port is opened");
+#endif
 	CTRLD_LOG("  kill <signal>                        -- "
 			"send a signal to command");
 	exit(EXIT_FAILURE);
@@ -171,10 +150,13 @@ alloc_argv(unsigned argc, char *argv[], unsigned off)
 }
 
 /*
- * do_run -- execute the 'run' command
+ * do_run_or_exe -- execute the 'run' or the 'exe' command
+ *
+ * if timeout is equal to 0 cmd will be just executed (the 'exe' command)
+ * otherwise it will be run and wait with timeout (the 'run' command)
  */
 static int
-do_run(const char *pid_file, char *cmd, char *argv[], unsigned timeout)
+do_run_or_exe(const char *pid_file, char *cmd, char *argv[], unsigned timeout)
 {
 	int rv = -1;
 
@@ -195,9 +177,11 @@ do_run(const char *pid_file, char *cmd, char *argv[], unsigned timeout)
 		goto err;
 	}
 
-	if (daemon(1, 0)) {
-		CTRLD_LOG("!daemon");
-		goto err;
+	if (timeout != 0) {
+		if (daemon(1, 0)) {
+			CTRLD_LOG("!daemon");
+			goto err;
+		}
 	}
 
 	int child = fork();
@@ -224,25 +208,30 @@ do_run(const char *pid_file, char *cmd, char *argv[], unsigned timeout)
 		goto err;
 	}
 
-	int child_timeout = fork();
-	switch (child_timeout) {
-	case -1:
-		CTRLD_LOG("!fork");
-		fprintf(fh, "-1r%d", errno);
-		goto err;
-	case 0:
-		fclose(fh);
-		sleep(timeout);
-		return 0;
-	default:
-		break;
+	int child_timeout = -1;
+	if (timeout != 0) {
+		child_timeout = fork();
+		switch (child_timeout) {
+		case -1:
+			CTRLD_LOG("!fork");
+			fprintf(fh, "-1r%d", errno);
+			goto err;
+		case 0:
+			fclose(fh);
+			sleep(timeout);
+			return 0;
+		default:
+			break;
+		}
 	}
 
 	int ret = 0;
 	int pid = wait(&ret);
 	if (pid == child) {
-		/* kill the timeout child */
-		kill(child_timeout, SIGTERM);
+		if (timeout != 0) {
+			/* kill the timeout child */
+			kill(child_timeout, SIGTERM);
+		}
 
 		if (WIFSIGNALED(ret)) {
 			ret = 128 + WTERMSIG(ret);
@@ -262,7 +251,7 @@ do_run(const char *pid_file, char *cmd, char *argv[], unsigned timeout)
 
 		fprintf(fh, "%dr%d", child, ret);
 
-	} else if (pid == child_timeout) {
+	} else if (timeout != 0 && pid == child_timeout) {
 		CTRLD_LOG("run: timeout");
 		if (kill(child, SIGTERM) && errno != ESRCH) {
 			CTRLD_LOG("!kill");
@@ -373,6 +362,7 @@ out:
 	return ret;
 }
 
+#ifndef __FreeBSD__	/* XXX wait_port support */
 /*
  * contains_inode -- check if list contains specified inode
  */
@@ -597,6 +587,7 @@ err:
 	fclose(fh);
 	return -1;
 }
+#endif	/* __FreeBSD__ wait_port support */
 
 /*
  * convert_signal_name -- convert a signal name to a signal number
@@ -604,7 +595,7 @@ err:
 static int
 convert_signal_name(const char *signal_name)
 {
-	for (int sig = SIGHUP; sig <= SIGSYS; sig++)
+	for (int sig = SIGHUP; sig <= SIGNALMAX; sig++)
 		if (strcmp(signal_name, signal2str[sig]) == 0)
 			return sig;
 	return -1;
@@ -685,7 +676,22 @@ main(int argc, char *argv[])
 		return -1;
 	}
 
-	if (strcmp(cmd, "run") == 0) {
+	if (strcmp(cmd, "exe") == 0) {
+		if (argc < 4)
+			usage();
+
+		char *command = argv[3];
+		char **nargv = alloc_argv((unsigned)argc, argv, 3);
+		if (!nargv) {
+			CTRLD_LOG("!get_argv");
+			return 1;
+		}
+
+		log_run(pid_file, command, nargv);
+		ret = do_run_or_exe(pid_file, command, nargv, 0 /* timeout */);
+
+		free(nargv);
+	} else if (strcmp(cmd, "run") == 0) {
 		if (argc < 5)
 			usage();
 
@@ -698,7 +704,7 @@ main(int argc, char *argv[])
 		}
 
 		log_run(pid_file, command, nargv);
-		ret = do_run(pid_file, command, nargv, timeout);
+		ret = do_run_or_exe(pid_file, command, nargv, timeout);
 
 		free(nargv);
 	} else if (strcmp(cmd, "wait") == 0) {
@@ -727,6 +733,7 @@ main(int argc, char *argv[])
 
 		CTRLD_LOG("kill %s %s", pid_file, argv[3]);
 		ret = do_kill(pid_file, signo);
+#ifndef __FreeBSD__
 	} else if (strcmp(cmd, "wait_port") == 0) {
 		if (argc != 4)
 			usage();
@@ -735,6 +742,7 @@ main(int argc, char *argv[])
 
 		CTRLD_LOG("wait_port %s %u", pid_file, port);
 		ret = do_wait_port(pid_file, port);
+#endif
 	} else {
 		usage();
 	}

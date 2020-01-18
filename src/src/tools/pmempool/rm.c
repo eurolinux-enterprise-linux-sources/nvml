@@ -83,8 +83,8 @@ static const char *help_str =
 "  -v, --verbose        Be verbose.\n"
 "  -s, --only-pools     Remove only pool files (default).\n"
 "  -a, --all            Remove all poolset files - local and remote.\n"
-"  -l, --local-set      Remove local poolset files\n"
-"  -r, --remote-set     Remove remote poolset files\n"
+"  -l, --local          Remove local poolset files\n"
+"  -r, --remote         Remove remote poolset files\n"
 "  -f, --force          Ignore nonexisting files.\n"
 "  -i, --interactive    Prompt before every single removal.\n"
 "\n"
@@ -147,7 +147,7 @@ rm_file(const char *file)
 	const char *pre_msg = write_protected ? "write-protected " : "";
 	char ans = ask_Yn(cask, "remove %sfile '%s' ?", pre_msg, file);
 	if (ans == INV_ANS)
-		outv(1, "invalid answer");
+		outv(1, "invalid answer\n");
 
 	if (ans == 'y') {
 		if (util_unlink(file)) {
@@ -182,7 +182,7 @@ remove_remote(const char *target, const char *pool_set)
 	char ans = ask_Yn(cask, "remove remote pool '%s' on '%s'?",
 		pool_set, target);
 	if (ans == INV_ANS)
-		outv(1, "invalid answer");
+		outv(1, "invalid answer\n");
 
 	if (ans != 'y')
 		return 0;
@@ -297,14 +297,6 @@ rm_poolset(const char *file)
 int
 pmempool_rm_func(char *appname, int argc, char *argv[])
 {
-#ifdef USE_RPMEM
-	/*
-	 * Try to load librpmem, if loading failed -
-	 * assume it is not available.
-	 */
-	rpmem_avail = !util_remote_load();
-#endif
-
 	/* by default do not remove any poolset files */
 	rm_poolset_mode = RM_POOLSET_NONE;
 
@@ -349,6 +341,15 @@ pmempool_rm_func(char *appname, int argc, char *argv[])
 		print_usage(appname);
 		return 1;
 	}
+
+#ifdef USE_RPMEM
+	/*
+	 * Try to load librpmem, if loading failed -
+	 * assume it is not available.
+	 */
+	util_remote_init();
+	rpmem_avail = !util_remote_load();
+#endif
 
 	int lret = 0;
 	for (int i = optind; i < argc; i++) {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -71,7 +71,7 @@ enum pobj_tx_param {
 	TX_PARAM_NONE,
 	TX_PARAM_MUTEX,	 /* PMEMmutex */
 	TX_PARAM_RWLOCK, /* PMEMrwlock */
-	/* EXPERIMENTAL */ TX_PARAM_CB,	 /* pmemobj_tx_callback cb, void *arg */
+	TX_PARAM_CB,	 /* pmemobj_tx_callback cb, void *arg */
 };
 
 #if !defined(_has_deprecated_with_message) && defined(__clang__)
@@ -80,7 +80,8 @@ enum pobj_tx_param {
 #endif
 #endif
 
-#if !defined(_has_deprecated_with_message) && defined(__GNUC__)
+#if !defined(_has_deprecated_with_message) && \
+		defined(__GNUC__) && !defined(__INTEL_COMPILER)
 #if __GNUC__ * 100 + __GNUC_MINOR__ >= 601 /* 6.1 */
 #define _has_deprecated_with_message
 #endif
@@ -103,12 +104,9 @@ enum tx_lock_deprecated pobj_tx_lock {
 typedef void (*pmemobj_tx_callback)(PMEMobjpool *pop, enum pobj_tx_stage stage,
 		void *);
 
-#define POBJ_FLAG_ZERO		(((uint64_t)1) << 0)
-#define POBJ_FLAG_NO_FLUSH	(((uint64_t)1) << 1)
-
-#define POBJ_XALLOC_ZERO	POBJ_FLAG_ZERO
-#define POBJ_XALLOC_NO_FLUSH	POBJ_FLAG_NO_FLUSH
-#define POBJ_XALLOC_VALID_FLAGS	(POBJ_XALLOC_ZERO | POBJ_XALLOC_NO_FLUSH)
+#define POBJ_TX_XALLOC_VALID_FLAGS	(POBJ_XALLOC_ZERO |\
+	POBJ_XALLOC_NO_FLUSH |\
+	POBJ_XALLOC_CLASS_MASK)
 
 #define POBJ_XADD_NO_FLUSH	POBJ_FLAG_NO_FLUSH
 #define POBJ_XADD_VALID_FLAGS	POBJ_XADD_NO_FLUSH
@@ -205,7 +203,6 @@ int pmemobj_tx_add_range_direct(const void *ptr, size_t size);
  * Behaves exactly the same as pmemobj_tx_add_range when 'flags' equals 0.
  * 'Flags' is a bitmask of the following values:
  *  - POBJ_XADD_NO_FLUSH - skips flush on commit
- * This is EXPERIMENTAL API.
  */
 int pmemobj_tx_xadd_range(PMEMoid oid, uint64_t off, size_t size,
 		uint64_t flags);
@@ -214,7 +211,6 @@ int pmemobj_tx_xadd_range(PMEMoid oid, uint64_t off, size_t size,
  * Behaves exactly the same as pmemobj_tx_add_range_direct when 'flags' equals
  * 0. 'Flags' is a bitmask of the following values:
  *  - POBJ_XADD_NO_FLUSH - skips flush on commit
- * This is EXPERIMENTAL API.
  */
 int pmemobj_tx_xadd_range_direct(const void *ptr, size_t size, uint64_t flags);
 
@@ -238,7 +234,6 @@ PMEMoid pmemobj_tx_alloc(size_t size, uint64_t type_num);
  *  - POBJ_XALLOC_NO_FLUSH - skip flush on commit
  *
  * This function must be called during TX_STAGE_WORK.
- * This is EXPERIMENTAL API.
  */
 PMEMoid pmemobj_tx_xalloc(size_t size, uint64_t type_num, uint64_t flags);
 

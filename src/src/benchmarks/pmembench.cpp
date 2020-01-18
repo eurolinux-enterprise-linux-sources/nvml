@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -45,6 +45,7 @@
 #include <err.h>
 #include <getopt.h>
 #include <linux/limits.h>
+#include <sched.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -56,6 +57,7 @@
 #include "file.h"
 #include "mmap.h"
 #include "os.h"
+#include "os_thread.h"
 #include "queue.h"
 #include "scenario.hpp"
 #include "set.h"
@@ -172,7 +174,7 @@ static struct version_s {
 static struct bench_list benchmarks;
 
 /* common arguments for benchmarks */
-static struct benchmark_clo pmembench_clos[10];
+static struct benchmark_clo pmembench_clos[12];
 
 /* list of arguments for pmembench */
 static struct benchmark_clo pmembench_opts[2];
@@ -295,18 +297,45 @@ pmembench_costructor(void)
 		clo_field_offset(struct benchmark_args, thread_affinity);
 	pmembench_clos[8].def = "false";
 
-	pmembench_clos[9].opt_short = 'e';
-	pmembench_clos[9].opt_long = "min-exe-time";
-	pmembench_clos[9].type = CLO_TYPE_UINT;
-	pmembench_clos[9].descr = "Minimal execution time in seconds";
+	/*
+	 * XXX: add link to blog post about optimal affinity
+	 * when it will be done
+	 */
+	pmembench_clos[9].opt_short = 'I';
+	pmembench_clos[9].opt_long = "affinity-list";
+	pmembench_clos[9].descr =
+		"Set affinity mask as a list of CPUs separated by semicolon";
+	pmembench_clos[9].type = CLO_TYPE_STR;
 	pmembench_clos[9].off =
+		clo_field_offset(struct benchmark_args, affinity_list);
+	pmembench_clos[9].def = "";
+	pmembench_clos[9].ignore_in_res = true;
+
+	pmembench_clos[10].opt_long = "main-affinity";
+	pmembench_clos[10].descr = "Set affinity for main thread";
+	pmembench_clos[10].type = CLO_TYPE_INT;
+	pmembench_clos[10].off =
+		clo_field_offset(struct benchmark_args, main_affinity);
+	pmembench_clos[10].def = "-1";
+	pmembench_clos[10].ignore_in_res = false;
+	pmembench_clos[10].type_int.size =
+		clo_field_size(struct benchmark_args, main_affinity);
+	pmembench_clos[10].type_int.base = CLO_INT_BASE_DEC;
+	pmembench_clos[10].type_int.min = (-1);
+	pmembench_clos[10].type_int.max = LONG_MAX;
+
+	pmembench_clos[11].opt_short = 'e';
+	pmembench_clos[11].opt_long = "min-exe-time";
+	pmembench_clos[11].type = CLO_TYPE_UINT;
+	pmembench_clos[11].descr = "Minimal execution time in seconds";
+	pmembench_clos[11].off =
 		clo_field_offset(struct benchmark_args, min_exe_time);
-	pmembench_clos[9].def = "0";
-	pmembench_clos[9].type_uint.size =
+	pmembench_clos[11].def = "0";
+	pmembench_clos[11].type_uint.size =
 		clo_field_size(struct benchmark_args, min_exe_time);
-	pmembench_clos[9].type_uint.base = CLO_INT_BASE_DEC;
-	pmembench_clos[9].type_uint.min = 0;
-	pmembench_clos[9].type_uint.max = ULONG_MAX;
+	pmembench_clos[11].type_uint.base = CLO_INT_BASE_DEC;
+	pmembench_clos[11].type_uint.min = 0;
+	pmembench_clos[11].type_uint.max = ULONG_MAX;
 }
 
 /*
@@ -511,6 +540,54 @@ pmembench_parse_clo(struct pmembench *pb, struct benchmark *bench,
 }
 
 /*
+ * pmembench_parse_affinity -- parse affinity list
+ */
+static int
+pmembench_parse_affinity(const char *list, char **saveptr)
+{
+	char *str = NULL;
+	char *end;
+	int cpu = 0;
+
+	if (*saveptr) {
+		str = strtok(NULL, ";");
+		if (str == NULL) {
+			/* end of list - we have to start over */
+			free(*saveptr);
+			*saveptr = NULL;
+		}
+	}
+
+	if (!*saveptr) {
+		*saveptr = strdup(list);
+		if (*saveptr == NULL) {
+			perror("strdup");
+			return -1;
+		}
+
+		str = strtok(*saveptr, ";");
+		if (str == NULL)
+			goto err;
+	}
+
+	if ((str == NULL) || (*str == '\0'))
+		goto err;
+
+	cpu = strtol(str, &end, 10);
+
+	if (*end != '\0')
+		goto err;
+
+	return cpu;
+err:
+	errno = EINVAL;
+	perror("pmembench_parse_affinity");
+	free(*saveptr);
+	*saveptr = NULL;
+	return -1;
+}
+
+/*
  * pmembench_init_workers -- init benchmark's workers
  */
 static int
@@ -519,11 +596,13 @@ pmembench_init_workers(struct benchmark_worker **workers, size_t nworkers,
 		       struct benchmark_args *args)
 {
 	size_t i;
-	long ncpus = 0;
+	int ncpus = 0;
+	char *saveptr = NULL;
+	int ret = 0;
 
 	if (args->thread_affinity) {
 		ncpus = sysconf(_SC_NPROCESSORS_ONLN);
-		if (ncpus < 0)
+		if (ncpus <= 0)
 			return -1;
 	}
 
@@ -531,24 +610,31 @@ pmembench_init_workers(struct benchmark_worker **workers, size_t nworkers,
 		workers[i] = benchmark_worker_alloc();
 
 		if (args->thread_affinity) {
+			int cpu;
 			os_cpu_set_t cpuset;
-			os_cpu_zero(&cpuset);
 
-			/*
-			 * Assign threads to every other CPU. Populate all
-			 * available even CPUs first and odd afterwards.
-			 * Wrap-around after populating all available CPUs.
-			 */
-			int cpu =
-				((2 * i) + ((long)(i % ncpus) >= (ncpus / 2))) %
-				ncpus;
+			if (*args->affinity_list != '\0') {
+				cpu = pmembench_parse_affinity(
+					args->affinity_list, &saveptr);
+				if (cpu == -1) {
+					ret = -1;
+					goto end;
+				}
+			} else {
+				cpu = (int)i;
+			}
+
+			assert(ncpus > 0);
+			cpu %= ncpus;
+			os_cpu_zero(&cpuset);
 			os_cpu_set(cpu, &cpuset);
-			errno = os_thread_setaffinity_np(workers[i]->thread,
+			errno = os_thread_setaffinity_np(&workers[i]->thread,
 							 sizeof(os_cpu_set_t),
 							 &cpuset);
 			if (errno) {
 				perror("os_thread_setaffinity_np");
-				return -1;
+				ret = -1;
+				goto end;
 			}
 		}
 
@@ -569,7 +655,10 @@ pmembench_init_workers(struct benchmark_worker **workers, size_t nworkers,
 		workers[i]->exit = bench->info->free_worker;
 		benchmark_worker_init(workers[i]);
 	}
-	return 0;
+
+end:
+	free(saveptr);
+	return ret;
 }
 
 /*
@@ -641,6 +730,7 @@ results_alloc(size_t nrepeats, size_t nthreads, size_t nops)
 
 	for (size_t i = 0; i < nrepeats; i++) {
 		struct bench_results *res = &total->res[i];
+		assert(nthreads != 0);
 		res->thres = (struct thread_results **)malloc(
 			nthreads * sizeof(*res->thres));
 		assert(res->thres != NULL);
@@ -676,6 +766,10 @@ results_free(struct total_results *total)
 static void
 get_total_results(struct total_results *tres)
 {
+	assert(tres->nrepeats != 0);
+	assert(tres->nthreads != 0);
+	assert(tres->nops != 0);
+
 	/* reset results */
 	memset(&tres->total, 0, sizeof(tres->total));
 	memset(&tres->latency, 0, sizeof(tres->latency));
@@ -763,7 +857,7 @@ get_total_results(struct total_results *tres)
 		tres->total.std_dev += dev;
 	}
 
-	tres->total.std_dev = sqrt(tres->total.std_dev);
+	tres->total.std_dev = sqrt(tres->total.std_dev / tres->nrepeats);
 
 	/* latency */
 	for (size_t i = 0; i < tres->nrepeats; i++) {
@@ -792,6 +886,7 @@ get_total_results(struct total_results *tres)
 
 	/* average latency */
 	size_t count = tres->nrepeats * tres->nthreads * tres->nops;
+	assert(count > 0);
 	tres->latency.avg /= count;
 
 	uint64_t *ntotals = (uint64_t *)calloc(count, sizeof(uint64_t));
@@ -823,7 +918,7 @@ get_total_results(struct total_results *tres)
 		}
 	}
 
-	tres->latency.std_dev = sqrt(tres->latency.std_dev);
+	tres->latency.std_dev = sqrt(tres->latency.std_dev / count);
 
 	/* find 99.0% and 99.9% percentiles */
 	qsort(ntotals, count, sizeof(uint64_t), compare_uint64t);
@@ -1092,6 +1187,21 @@ pmembench_single_repeat(struct benchmark *bench, struct benchmark_args *args,
 {
 	int ret = 0;
 
+	if (args->main_affinity != -1) {
+		os_cpu_set_t cpuset;
+		os_cpu_zero(&cpuset);
+		os_thread_t self;
+		os_thread_self(&self);
+		os_cpu_set(args->main_affinity, &cpuset);
+		errno = os_thread_setaffinity_np(&self, sizeof(os_cpu_set_t),
+						 &cpuset);
+		if (errno) {
+			perror("os_thread_setaffinity_np");
+			return -1;
+		}
+		sched_yield();
+	}
+
 	if (bench->info->rm_file) {
 		ret = pmembench_remove_file(args->fname);
 		if (ret != 0) {
@@ -1108,6 +1218,7 @@ pmembench_single_repeat(struct benchmark *bench, struct benchmark_args *args,
 	}
 
 	assert(bench->info->operation != NULL);
+	assert(args->n_threads != 0);
 
 	struct benchmark_worker **workers;
 	workers = (struct benchmark_worker **)malloc(
@@ -1535,3 +1646,14 @@ out:
 	util_mmap_fini();
 	return ret;
 }
+
+#ifdef _MSC_VER
+extern "C" {
+/*
+ * Since libpmemobj is linked statically,
+ * we need to invoke its ctor/dtor.
+ */
+MSVC_CONSTR(libpmemobj_init)
+MSVC_DESTR(libpmemobj_fini)
+}
+#endif

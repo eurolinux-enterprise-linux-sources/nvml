@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  * Copyright (c) 2015-2017, Microsoft Corporation. All rights reserved.
  * Copyright (c) 2016, Hewlett Packard Enterprise Development LP
  *
@@ -37,14 +37,14 @@
  */
 
 /*
- * XXX - The initial approach to NVML for Windows port was to minimize the
+ * XXX - The initial approach to PMDK for Windows port was to minimize the
  * amount of changes required in the core part of the library, and to avoid
  * preprocessor conditionals, if possible.  For that reason, some of the
  * Linux system calls that have no equivalents on Windows have been emulated
  * using Windows API.
  * Note that it was not a goal to fully emulate POSIX-compliant behavior
  * of mentioned functions.  They are used only internally, so current
- * implementation is just good enough to satisfy NVML needs and to make it
+ * implementation is just good enough to satisfy PMDK needs and to make it
  * work on Windows.
  *
  * This is a subject for change in the future.  Likely, all these functions
@@ -256,7 +256,7 @@ mmap_fini(void)
  * to elevate permissions later.
  */
 void *
-mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
+mmap(void *addr, size_t len, int prot, int flags, int fd, os_off_t offset)
 {
 	LOG(4, "addr %p len %zu prot %d flags %d fd %d offset %ju",
 		addr, len, prot, flags, fd, offset);
@@ -407,7 +407,7 @@ mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
 			return MAP_FAILED;
 		}
 
-		if (offset >= (off_t)filesize.QuadPart) {
+		if (offset >= (os_off_t)filesize.QuadPart) {
 			errno = EINVAL;
 			ERR("offset is beyond the file size");
 			CloseHandle(fh);
@@ -502,6 +502,7 @@ mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
 
 	if (base == NULL) {
 		ERR("MapViewOfFileEx, gle: 0x%08x", GetLastError());
+		errno = ENOMEM;
 		CloseHandle(fh);
 		CloseHandle(fmh);
 		return MAP_FAILED;

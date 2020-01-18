@@ -1,5 +1,5 @@
 /*
- * Copyright 2017, Intel Corporation
+ * Copyright 2017-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,8 +34,8 @@
  * os.h -- os abstaction layer
  */
 
-#ifndef NVML_OS_H
-#define NVML_OS_H 1
+#ifndef PMDK_OS_H
+#define PMDK_OS_H 1
 
 #ifdef __cplusplus
 extern "C" {
@@ -45,6 +45,7 @@ extern "C" {
 #include <stdio.h>
 #include <unistd.h>
 
+#include "errno_freebsd.h"
 
 #ifndef _WIN32
 #define OS_DIR_SEPARATOR '/'
@@ -53,6 +54,32 @@ extern "C" {
 #define OS_DIR_SEPARATOR '\\'
 #define OS_DIR_SEP_STR "\\"
 #endif
+
+#ifndef _WIN32
+
+/* madvise() */
+#ifdef __FreeBSD__
+#define os_madvise minherit
+#define MADV_DONTFORK INHERIT_NONE
+#else
+#define os_madvise madvise
+#endif
+
+/* dlopen() */
+#ifdef __FreeBSD__
+#define RTLD_DEEPBIND 0	/* XXX */
+#endif
+
+/* major(), minor() */
+#ifdef __FreeBSD__
+#define os_major (unsigned)major
+#define os_minor (unsigned)minor
+#else
+#define os_major major
+#define os_minor minor
+#endif
+
+#endif /* #ifndef _WIN32 */
 
 struct iovec;
 
@@ -73,7 +100,13 @@ typedef struct _stat64 os_stat_t;
 #endif
 
 #define os_close close
+#define os_fclose fclose
 
+#ifndef _WIN32
+typedef off_t os_off_t;
+#else
+/* XXX: os_off_t defined in platform.h */
+#endif
 int os_open(const char *pathname, int flags, ...);
 int os_stat(const char *pathname, os_stat_t *buf);
 int os_unlink(const char *pathname);
@@ -82,8 +115,8 @@ FILE *os_fopen(const char *pathname, const char *mode);
 FILE *os_fdopen(int fd, const char *mode);
 int os_chmod(const char *pathname, mode_t mode);
 int os_mkstemp(char *temp);
-int os_posix_fallocate(int fd, off_t offset, off_t len);
-int os_ftruncate(int fd, off_t length);
+int os_posix_fallocate(int fd, os_off_t offset, os_off_t len);
+int os_ftruncate(int fd, os_off_t length);
 int os_flock(int fd, int operation);
 ssize_t os_writev(int fd, const struct iovec *iov, int iovcnt);
 int os_clock_gettime(int id, struct timespec *ts);

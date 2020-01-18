@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -34,8 +34,6 @@
 #
 # src/test/obj_debug/TEST0 -- unit test for debug features
 #
-export UNITTEST_NAME=obj_debug/TEST0
-export UNITTEST_NUM=0
 
 # standard unit test setup
 . ../unittest/unittest.sh
@@ -49,7 +47,7 @@ setup
 export PMEMOBJ_LOG_LEVEL=4
 expect_normal_exit ./obj_debug$EXESUFFIX $DIR/testfile1 f
 
-grep _pobj_debug_notice ./pmemobj$UNITTEST_NUM.log > grep$UNITTEST_NUM.log
+$GREP _pobj_debug_notice ./pmemobj$UNITTEST_NUM.log > grep$UNITTEST_NUM.log
 
 check
 

@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -31,11 +31,19 @@
 #
 
 #
-# examples/Makefile -- build the NVM Library examples
+# examples/Makefile -- build the Persistent Memory Development Kit examples
 #
 
+include ../common.inc
+
 DIRS = libpmem libpmemblk libpmemlog libpmemobj libvmem librpmem\
-	libpmempool
+	libpmempool libpmemcto
+
+ifeq ($(call cxx_ok), y)
+DIRS += libpmemobj++
+else
+$(info NOTE: Skipping C++ examples because of compiler issues)
+endif
 
 include Makefile.inc
 

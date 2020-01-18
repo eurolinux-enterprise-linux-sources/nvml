@@ -25,9 +25,6 @@
     <ClCompile Include="..\common\set.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\common\pool_hdr_windows.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="..\common\pool_hdr.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -35,6 +32,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\common\mmap_windows.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\common\fs_windows.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\common\mmap.c">
@@ -50,6 +50,18 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\common\os_thread_windows.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\common\shutdown_state.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\common\os_dimm_none.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\common\os_deep_windows.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\common\os_auto_flush_windows.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -91,6 +103,21 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\common\dlsym.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\common\fs.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\common\os.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\common\os_thread.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\common\os_deep.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\common\os_auto_flush.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

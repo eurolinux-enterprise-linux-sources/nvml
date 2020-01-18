@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
 # Copyright 2015-2017, Intel Corporation
 #
@@ -34,6 +34,7 @@
 #
 # src/test/obj_convert/common.sh -- common part of conversion tool tests
 #
+set -e
 
 # exits in the middle of transaction, so pool cannot be closed
 export MEMCHECK_DONT_CHECK_LEAKS=1
@@ -64,12 +65,12 @@ create_scenario() {
 		./obj_convert$EXESUFFIX $DIR/scenario$2c c $2 &> /dev/null
 }
 
-#PATH_TO_1_0_DBG=/../nvml/src/debug
+#PATH_TO_1_0_DBG=/../pmdk/src/debug
 create_scenario_1_0() {
 	create_scenario $PATH_TO_1_0_DBG $1
 }
 
-#PATH_TO_1_2_DBG=/../nvml2/src/debug
+#PATH_TO_1_2_DBG=/../pmdk2/src/debug
 create_scenario_1_2() {
 	create_scenario $PATH_TO_1_2_DBG $1
 }

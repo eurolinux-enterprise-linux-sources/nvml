@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -193,7 +193,7 @@ struct rpmem_msg_open_resp {
  */
 struct rpmem_msg_close {
 	struct rpmem_msg_hdr hdr;	/* message header */
-	/* no more fields */
+	uint32_t flags;				/* flags */
 } PACKED;
 
 /*
@@ -207,11 +207,16 @@ struct rpmem_msg_close_resp {
 	/* no more fields */
 } PACKED;
 
+#define RPMEM_PERSIST		0x0
+#define RPMEM_DEEP_PERSIST 0x1
+#define RPMEM_FLAGS_ALL		RPMEM_DEEP_PERSIST
+#define RPMEM_FLAGS_MASK	((uint32_t)(~RPMEM_FLAGS_ALL))
 /*
  * rpmem_msg_persist -- remote persist message
  */
 struct rpmem_msg_persist {
-	uint64_t lane;	/* lane identifier */
+	uint32_t flags; /* lane flags */
+	uint32_t lane;	/* lane identifier */
 	uint64_t addr;	/* remote memory address */
 	uint64_t size;	/* remote memory size */
 };
@@ -220,7 +225,8 @@ struct rpmem_msg_persist {
  * rpmem_msg_persist_resp -- remote persist response message
  */
 struct rpmem_msg_persist_resp {
-	uint64_t lane;	/* lane identifier */
+	uint32_t flags;	/* lane flags */
+	uint32_t lane;	/* lane identifier */
 };
 
 /*
@@ -244,6 +250,11 @@ struct rpmem_msg_set_attr_resp {
 	struct rpmem_msg_hdr_resp hdr;	/* message header */
 } PACKED;
 
+/*
+ * XXX Begin: Suppress gcc conversion warnings for FreeBSD be*toh macros.
+ */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
 /*
  * rpmem_ntoh_msg_ibc_attr -- convert rpmem_msg_ibc attr to host byte order
  */
@@ -376,7 +387,10 @@ rpmem_ntoh_msg_open(struct rpmem_msg_open *msg)
 	msg->provider = be32toh(msg->provider);
 	rpmem_ntoh_msg_pool_desc(&msg->pool_desc);
 }
-
+/*
+ * XXX End: Suppress gcc conversion warnings for FreeBSD be*toh macros
+ */
+#pragma GCC diagnostic pop
 /*
  * rpmem_hton_msg_open -- convert rpmem_msg_open to network byte order
  */

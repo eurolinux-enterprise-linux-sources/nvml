@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  * Copyright (c) 2016, Microsoft Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,6 +41,7 @@
 #include <sys/param.h>
 #include <endian.h>
 
+#include "os.h"
 #include "common.h"
 #include "output.h"
 #include "info.h"
@@ -385,7 +386,7 @@ info_btt_info(struct pmem_info *pip, int v, struct btt_info *infop)
 	outv_field(v, "Area flog offset", "0x%lx", infop->flogoff);
 	outv_field(v, "Info block backup offset", "0x%lx", infop->infooff);
 	outv_field(v, "Checksum", "%s", out_get_checksum(infop,
-				sizeof(*infop), &infop->checksum));
+			sizeof(*infop), &infop->checksum, 0));
 
 	return 0;
 }
@@ -394,7 +395,7 @@ info_btt_info(struct pmem_info *pip, int v, struct btt_info *infop)
  * info_btt_layout -- print information about BTT layout
  */
 static int
-info_btt_layout(struct pmem_info *pip, off_t btt_off)
+info_btt_layout(struct pmem_info *pip, os_off_t btt_off)
 {
 	int ret = 0;
 

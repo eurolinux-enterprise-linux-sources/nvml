@@ -1,5 +1,5 @@
 /*
- * Copyright 2017, Intel Corporation
+ * Copyright 2017-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -179,7 +179,7 @@ file_error(const int fd, const char *fpath)
  * print_uuid -- print uuid
  */
 static void
-print_uuid(uint8_t *uuid)
+print_uuid(uuid_t uuid)
 {
 	char uuidstr[POOL_HDR_UUID_STR_LEN];
 	if (util_uuid_to_string(uuid, uuidstr) == 0) {
@@ -315,13 +315,13 @@ main(int argc, char *argv[])
 	/* allocate file */
 	if (!opts.trunc) {
 		if (os_posix_fallocate(fd, 0,
-				(off_t)opts.poolsize) != 0) {
+				(os_off_t)opts.poolsize) != 0) {
 			perror("posix_fallocate");
 			res = file_error(fd, opts.fpath);
 			goto error;
 		}
 	} else {
-		if (os_ftruncate(fd, (off_t)opts.poolsize) != 0) {
+		if (os_ftruncate(fd, (os_off_t)opts.poolsize) != 0) {
 			perror("ftruncate");
 			res = file_error(fd, opts.fpath);
 			goto error;
@@ -329,7 +329,7 @@ main(int argc, char *argv[])
 	}
 
 	/* map created file */
-	void *base = util_map(fd, opts.poolsize, MAP_SHARED, 0, 0);
+	void *base = util_map(fd, opts.poolsize, MAP_SHARED, 0, 0, NULL);
 	if (!base) {
 		perror("util_map");
 		res = file_error(fd, opts.fpath);

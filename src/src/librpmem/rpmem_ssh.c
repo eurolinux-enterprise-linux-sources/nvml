@@ -40,6 +40,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #include "util.h"
 #include "os.h"
@@ -246,8 +248,6 @@ rpmem_ssh_execv(const struct rpmem_target_info *info, const char **argv)
 
 	return rps;
 err_run:
-	rpmem_cmd_term(rps->cmd);
-	rpmem_cmd_wait(rps->cmd, NULL);
 err_push:
 	free(cmd);
 err_cmd:

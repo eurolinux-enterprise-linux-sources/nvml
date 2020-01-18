@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -34,8 +34,6 @@
 #
 # src/test/vmmalloc_init/TEST6 -- unit test for vmmalloc_init
 #
-export UNITTEST_NAME=vmmalloc_init/TEST6
-export UNITTEST_NUM=6
 
 # standard unit test setup
 . ../unittest/unittest.sh
@@ -46,10 +44,13 @@ require_fs_type any
 # there's no point in testing statically linked builds
 require_build_type debug
 require_no_asan
+require_no_freebsd
 
 # Valgrind does not call vmmalloc's malloc implementation from library
 # loaded with RTLD_DEEPBIND.
 configure_valgrind memcheck force-disable $TEST_LD_LIBRARY_PATH/libvmmalloc.so
+configure_valgrind helgrind force-disable $TEST_LD_LIBRARY_PATH/libvmmalloc.so
+configure_valgrind drd force-disable $TEST_LD_LIBRARY_PATH/libvmmalloc.so
 
 setup
 
@@ -58,7 +59,7 @@ export TEST_LD_PRELOAD=libvmmalloc.so
 
 expect_normal_exit ./vmmalloc_init$EXESUFFIX d  2> stderr$UNITTEST_NUM.log
 
-egrep 'VMMALLOC_POOL_SIZE|VMMALLOC_POOL_DIR|TMPDIR|mkstemp|size\ 4321' \
+$GREP -E 'VMMALLOC_POOL_SIZE|VMMALLOC_POOL_DIR|TMPDIR|mkstemp|size\ 4321' \
     vmmalloc$UNITTEST_NUM.log > grep$UNITTEST_NUM.log
 
 check

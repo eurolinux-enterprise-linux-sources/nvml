@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -30,7 +30,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #
-# Makefile -- top-level Makefile for NVM Library
+# Makefile -- top-level Makefile for PMDK
 #
 # Use "make" to build the library.
 #
@@ -56,7 +56,7 @@
 # Use "make dpkg" to build dpkg packages
 #
 # Use "make source DESTDIR=path_to_dir" to copy source files
-# from HEAD to 'path_to_dir/nvml' directory.
+# from HEAD to 'path_to_dir/pmdk' directory.
 #
 # As root, use "make install" to install the library in the usual
 # locations (/usr/local/lib, /usr/local/include, and /usr/local/share/man).
@@ -72,6 +72,9 @@ RPM_BUILDDIR=rpmbuild
 DPKG_BUILDDIR=dpkgbuild
 EXPERIMENTAL ?= n
 BUILD_PACKAGE_CHECK ?= y
+BUILD_RPMEM ?= y
+TEST_CONFIG_FILE ?= $(CURDIR)/src/test/testconfig.sh
+
 rpm : override DESTDIR=$(CURDIR)/$(RPM_BUILDDIR)
 dpkg: override DESTDIR=$(CURDIR)/$(DPKG_BUILDDIR)
 rpm dpkg: override prefix=/usr
@@ -123,18 +126,19 @@ sparse:
 
 source:
 	$(if $(shell git rev-parse 2>&1), $(error Not a git repository))
-	$(if $(shell git status --porcelain), $(error Working directory is dirty: $(shell git status --porcelain)))
 	$(if $(DESTDIR), , $(error Please provide DESTDIR variable))
-	mkdir -p $(DESTDIR)/nvml
-	echo -n $(SRCVERSION) > $(DESTDIR)/nvml/.version
-	git archive HEAD | tar -x -C $(DESTDIR)/nvml
+	$(if $(shell git status --porcelain), $(error Working directory is dirty: $(shell git status --porcelain)))
+	mkdir -p $(DESTDIR)/pmdk
+	echo -n $(SRCVERSION) > $(DESTDIR)/pmdk/.version
+	git archive HEAD | tar -x -C $(DESTDIR)/pmdk
 
 pkg-clean:
 	$(RM) -r $(DESTDIR)
 
 rpm dpkg: pkg-clean source
-	+utils/build-$@.sh $(SRCVERSION) $(DESTDIR)/nvml $(DESTDIR) $(CURDIR)/$@\
-			${EXPERIMENTAL} ${BUILD_PACKAGE_CHECK} $(CURDIR)/src/test/testconfig.sh
+	+utils/build-$@.sh -t $(SRCVERSION) -s $(DESTDIR)/pmdk -w $(DESTDIR) -o $(CURDIR)/$@\
+			-e $(EXPERIMENTAL) -c $(BUILD_PACKAGE_CHECK) -r $(BUILD_RPMEM)\
+			-f $(TEST_CONFIG_FILE) -n $(NDCTL_ENABLE)
 
 install uninstall:
 	$(MAKE) -C src $@

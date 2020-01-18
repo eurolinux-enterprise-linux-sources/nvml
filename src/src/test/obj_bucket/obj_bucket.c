@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,7 +34,7 @@
  * obj_bucket.c -- unit test for bucket
  */
 #include "bucket.h"
-#include "container_ctree.h"
+#include "container_ravl.h"
 #include "util.h"
 #include "unittest.h"
 
@@ -127,8 +127,6 @@ static const struct memory_block_ops mock_ops = {
 	.get_state = NULL,
 	.get_user_data = NULL,
 	.get_real_data = mock_get_real_data,
-	.claim = NULL,
-	.claim_revoke = NULL,
 	.get_user_size = NULL,
 	.get_real_size = mock_get_real_size,
 	.write_header = NULL,
@@ -190,3 +188,12 @@ main(int argc, char *argv[])
 
 	DONE(NULL);
 }
+
+
+#ifdef _MSC_VER
+/*
+ * Since libpmemobj is linked statically, we need to invoke its ctor/dtor.
+ */
+MSVC_CONSTR(libpmemobj_init)
+MSVC_DESTR(libpmemobj_fini)
+#endif

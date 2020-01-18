@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -39,4 +39,8 @@ OBJS = vmmalloc_calloc.o
 include ../Makefile.inc
 
 INCS += -I../../jemalloc/include/
-INCS += -I../../nondebug/jemalloc/include/
+ifneq ($(DEBUG),1)
+INCS += -I../../nondebug/libvmmalloc/jemalloc/include/
+else
+INCS += -I../../debug/libvmmalloc/jemalloc/include/
+endif

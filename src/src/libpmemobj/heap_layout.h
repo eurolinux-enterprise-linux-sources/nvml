@@ -65,6 +65,9 @@
 	((struct zone *)((uintptr_t)&(((struct heap_layout *)(layoutp))->zone0)\
 					+ ZONE_MAX_SIZE * (zone_id)))
 
+#define CHUNK_MASK ((CHUNKSIZE) - 1)
+#define CHUNK_ALIGN_UP(value) ((((value) + CHUNK_MASK) & ~CHUNK_MASK))
+
 enum chunk_flags {
 	CHUNK_FLAG_COMPACT_HEADER	=	0x0001,
 	CHUNK_FLAG_HEADER_NONE		=	0x0002,
@@ -117,7 +120,7 @@ struct heap_header {
 	char signature[HEAP_SIGNATURE_LEN];
 	uint64_t major;
 	uint64_t minor;
-	uint64_t size;
+	uint64_t unused; /* might be garbage */
 	uint64_t chunksize;
 	uint64_t chunks_per_zone;
 	uint8_t reserved[960];

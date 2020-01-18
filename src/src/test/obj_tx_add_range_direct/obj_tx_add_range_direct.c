@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -549,6 +549,7 @@ do_tx_add_range_too_large(PMEMobjpool *pop)
 	} TX_END
 
 	UT_ASSERTne(errno, 0);
+	errno = 0;
 }
 
 static void
@@ -557,7 +558,7 @@ do_tx_add_range_lots_of_small_snapshots(PMEMobjpool *pop)
 	size_t s = TX_DEFAULT_RANGE_CACHE_SIZE * 2;
 	size_t snapshot_s = 8;
 	PMEMoid obj;
-	int ret = pmemobj_alloc(pop, &obj, s, 0, NULL, NULL);
+	int ret = pmemobj_zalloc(pop, &obj, s, 0);
 	UT_ASSERTeq(ret, 0);
 
 	TX_BEGIN(pop) {
@@ -603,6 +604,7 @@ do_tx_add_cache_overflowing_range(PMEMobjpool *pop)
 	UT_ASSERT(util_is_zeroed(pmemobj_direct(obj), s));
 
 	UT_ASSERTne(errno, 0);
+	errno = 0;
 	pmemobj_free(&obj);
 }
 

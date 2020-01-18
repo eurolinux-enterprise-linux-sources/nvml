@@ -1,7 +1,8 @@
 ignore:
-  - "src/jemalloc/.*"
-  - "src/windows/.*"
-  - "src/test/unittest/.*"
+  - src/jemalloc/
+  - src/windows/
+  - src/test/
+  - src/common/valgrind/
 
 comment:
   layout: "diff"

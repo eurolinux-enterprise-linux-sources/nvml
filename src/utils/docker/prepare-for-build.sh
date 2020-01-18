@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
 # Copyright 2016-2017, Intel Corporation
 #
@@ -33,15 +33,18 @@
 #
 # prepare-for-build.sh - is called inside a Docker container; prepares
 #                        the environment inside a Docker container for
-#                        running build of NVML project.
+#                        running build of PMDK project.
 #
+
+set -e
 
 # Mount filesystem for tests
 echo $USERPASS | sudo -S mount -t tmpfs none /tmp -osize=6G
 
 # Configure tests (e.g. ssh for remote tests) unless the current configuration
 # should be preserved
-if [[ "$KEEP_TEST_CONFIG" != "1" ]]; then
+KEEP_TEST_CONFIG=${KEEP_TEST_CONFIG:-0}
+if [[ "$KEEP_TEST_CONFIG" == 0 ]]; then
 	./configure-tests.sh
 fi
 

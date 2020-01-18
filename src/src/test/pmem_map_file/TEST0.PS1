@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -38,8 +38,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "pmem_map_file/TEST0"
-$Env:UNITTEST_NUM = "0"
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
@@ -47,14 +45,7 @@ $Env:UNITTEST_NUM = "0"
 require_test_type medium
 require_fs_type any
 
-# XXX: no valgrind for Windows
-#configure_valgrind memcheck force-disable
-
 setup
-
-# XXX: no AddressSanitizer on Windows
-# this test invokes sigsegvs by design
-# export ASAN_OPTIONS=handle_segv=0
 
 create_holey_file 2G $DIR\testfile1
 
@@ -71,7 +62,10 @@ expect_normal_exit $Env:EXE_DIR\pmem_map_file$Env:EXESUFFIX `
     $DIR\testfile1 0 E 0 1 1 `
     $DIR\testfile1 4096 T 0644 1 1 `
     $DIR\testfile1 4096 E 0644 1 1 `
-    $DIR\testfile1 0 - 0644 1 1
+    $DIR\testfile1 0 - 0644 1 1 `
+    $DIR\testfile1 4096 C 0644 1 1 `
+    $DIR\testfile1 8192 C 0644 1 1 `
+    $DIR\testfile1 4096 CS 0644 1 1
 
 check_files $DIR\testfile1
 

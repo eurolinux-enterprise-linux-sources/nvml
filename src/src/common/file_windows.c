@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,14 +35,14 @@
  */
 
 /*
- * XXX - The initial approach to NVML for Windows port was to minimize the
+ * XXX - The initial approach to PMDK for Windows port was to minimize the
  * amount of changes required in the core part of the library, and to avoid
  * preprocessor conditionals, if possible.  For that reason, some of the
  * Linux system calls that have no equivalents on Windows have been emulated
  * using Windows API.
  * Note that it was not a goal to fully emulate POSIX-compliant behavior
  * of mentioned functions.  They are used only internally, so current
- * implementation is just good enough to satisfy NVML needs and to make it
+ * implementation is just good enough to satisfy PMDK needs and to make it
  * work on Windows.
  */
 
@@ -58,9 +58,12 @@
  * util_tmpfile -- create a temporary file
  */
 int
-util_tmpfile(const char *dir, const char *templ)
+util_tmpfile(const char *dir, const char *templ, int flags)
 {
-	LOG(3, "dir \"%s\" template \"%s\"", dir, templ);
+	LOG(3, "dir \"%s\" template \"%s\" flags %x", dir, templ, flags);
+
+	/* only O_EXCL is allowed here */
+	ASSERT(flags == 0 || flags == O_EXCL);
 
 	int oerrno;
 	int fd = -1;
@@ -207,4 +210,15 @@ util_file_device_dax_alignment(const char *path)
 	LOG(3, "path \"%s\"", path);
 
 	return 0;
+}
+
+/*
+ * util_ddax_region_find -- returns DEV dax region id that contains file
+ */
+int
+util_ddax_region_find(const char *path)
+{
+	LOG(3, "path \"%s\"", path);
+
+	return -1;
 }

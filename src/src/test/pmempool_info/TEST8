@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -33,8 +33,6 @@
 #
 # pmempool_info/TEST8 -- test for info command
 #
-export UNITTEST_NAME=pmempool_info/TEST8
-export UNITTEST_NUM=8
 
 . ../unittest/unittest.sh
 
@@ -51,11 +49,11 @@ rm -rf $LOG && touch $LOG
 expect_normal_exit $PMEMPOOL$EXESUFFIX create blk 512 $POOL
 expect_normal_exit $PMEMWRITE$EXESUFFIX $POOL 1:e 2:w:TEST
 
-INFO_NLBA=$(expect_normal_exit $PMEMPOOL$EXESUFFIX info $POOL | grep 'External LBA count' | grep -o '[0-9]\+')
-NLBA=$(expect_normal_exit $PMEMPOOL$EXESUFFIX info -m $POOL | grep '[0-9]\+: 0x[0-9]\+.*' | wc -l)
-NZER=$(expect_normal_exit $PMEMPOOL$EXESUFFIX info -mue $POOL | grep '[0-9]\+: 0x[0-9]\+.*' | wc -l)
-NERR=$(expect_normal_exit $PMEMPOOL$EXESUFFIX info -muz $POOL | grep '[0-9]\+: 0x[0-9]\+.*' | wc -l)
-NNON=$(expect_normal_exit $PMEMPOOL$EXESUFFIX info -mez $POOL | grep '[0-9]\+: 0x[0-9]\+.*' | wc -l)
+INFO_NLBA=$(expect_normal_exit $PMEMPOOL$EXESUFFIX info $POOL | $GREP 'External LBA count' | grep -o '[0-9]\+')
+NLBA=$(expect_normal_exit $PMEMPOOL$EXESUFFIX info -m $POOL | $GREP -c '[0-9]\+: 0x[0-9]\+.*')
+NZER=$(expect_normal_exit $PMEMPOOL$EXESUFFIX info -mue $POOL | $GREP -c '[0-9]\+: 0x[0-9]\+.*')
+NERR=$(expect_normal_exit $PMEMPOOL$EXESUFFIX info -muz $POOL | $GREP -c '[0-9]\+: 0x[0-9]\+.*')
+NNON=$(expect_normal_exit $PMEMPOOL$EXESUFFIX info -mez $POOL | $GREP -c '[0-9]\+: 0x[0-9]\+.*')
 
 echo "Number of LBAs: $INFO_NLBA" >> $LOG
 echo "Number of LBAs in map: $NLBA" >> $LOG
@@ -64,8 +62,8 @@ echo "Number of LBAs [error]: $NERR" >> $LOG
 echo "Number of LBAs [no flag]: $NNON" >> $LOG
 
 NSUM=$(($NZER + $NERR + $NNON))
-[[ $NSUM == $NLBA ]] || $(echo "$NSUM != $NLBA" && exit 1)
-[[ $NSUM == $INFO_NLBA ]] || $(echo "$NSUM != $INFO_NLBA" && exit 1)
+[[ $NSUM == $NLBA ]] || fatal "$NSUM != $NLBA"
+[[ $NSUM == $INFO_NLBA ]] || fatal "$NSUM != $INFO_NLBA"
 
 expect_normal_exit $PMEMPOOL$EXESUFFIX info -dz $POOL >> $LOG
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -59,7 +59,8 @@ const char *out_get_uuid_str(uuid_t uuid);
 const char *out_get_time_str(time_t time);
 const char *out_get_size_str(uint64_t size, int human);
 const char *out_get_percentage(double percentage);
-const char *out_get_checksum(void *addr, size_t len, uint64_t *csump);
+const char *out_get_checksum(void *addr, size_t len, uint64_t *csump,
+		uint64_t skip_off);
 const char *out_get_btt_map_entry(uint32_t map);
 const char *out_get_pool_type_str(pmem_pool_type_t type);
 const char *out_get_pool_signature(pmem_pool_type_t type);
@@ -69,7 +70,8 @@ const char *out_get_chunk_type_str(enum chunk_type type);
 const char *out_get_chunk_flags(uint16_t flags);
 const char *out_get_zone_magic_str(uint32_t magic);
 const char *out_get_pmemoid_str(PMEMoid oid, uint64_t uuid_lo);
-const char *out_get_ei_class_str(uint8_t ei_class);
-const char *out_get_ei_data_str(uint8_t ei_class);
-const char *out_get_e_machine_str(uint16_t e_machine);
+const char *out_get_arch_machine_class_str(uint8_t machine_class);
+const char *out_get_arch_data_str(uint8_t data);
+const char *out_get_arch_machine_str(uint16_t machine);
 const char *out_get_alignment_desc_str(uint64_t ad, uint64_t cur_ad);
+const char *out_get_incompat_features_str(uint32_t incompat);

@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2016, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -34,8 +34,6 @@
 #
 # src/test/rpmemd_db/TEST0 -- unit test for remote tests support
 #
-export UNITTEST_NAME=rpmemd_db/TEST0
-export UNITTEST_NUM=0
 
 # standard unit test setup
 . ../unittest/unittest.sh
@@ -73,7 +71,7 @@ expect_normal_exit ./rpmemd_db$EXESUFFIX $LOG_FILE $ROOT_DIR \
 				pool0.set pool1.set
 
 mv rpmem0.log rpmem0_tmp.log
-grep -e flock -e Non-empty rpmem0_tmp.log > rpmem0.log || true
+$GREP -e flock -e Non-empty rpmem0_tmp.log > rpmem0.log || true
 
 check
 

@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -93,6 +93,16 @@ EOF
 # runtest_local -- run test using provided parameters
 #
 runtest_local() {
+	export CLEAN_FAILED_REMOTE=n
+
+	local verbose_old=-1
+	for vt in ${verbose_tests//:/ }; do
+		[ "$RUNTEST_DIR" == "$vt" ] && {
+			verbose_old=$verbose
+			verbose=1
+		}
+	done
+
 	if [ "$dryrun" ]
 	then
 		echo "(in ./$RUNTEST_DIR) $RUNTEST_PARAMS ./$RUNTEST_SCRIPT"
@@ -101,11 +111,13 @@ runtest_local() {
 		# set timeout for "check" tests
 		[ "$verbose" ] && echo "RUNTESTS: Running: (in ./$RUNTEST_DIR) \
 			$RUNTEST_PARAMS ./$RUNTEST_SCRIPT"
-		eval "$RUNTEST_EXTRA VERBOSE=$verbose $RUNTEST_PARAMS timeout \
+		CMD_STR="$RUNTEST_EXTRA VERBOSE=$verbose $RUNTEST_PARAMS timeout \
 			--foreground $killopt $RUNTEST_TIMEOUT ./$RUNTEST_SCRIPT"
+		eval "$CMD_STR"
 	else
 		[ "$verbose" ] && echo "RUNTESTS: Running: (in ./$RUNTEST_DIR) $params ./$script"
-		eval "$RUNTEST_EXTRA VERBOSE=$verbose $RUNTEST_PARAMS ./$RUNTEST_SCRIPT"
+		CMD_STR="$RUNTEST_EXTRA VERBOSE=$verbose $RUNTEST_PARAMS ./$RUNTEST_SCRIPT"
+		eval "$CMD_STR"
 	fi
 
 	retval=$?
@@ -116,10 +128,29 @@ runtest_local() {
 		echo "RUNTESTS: stopping: $RUNTEST_DIR/$RUNTEST_SCRIPT $errmsg, $RUNTEST_PARAMS" >&2
 		if [ "$keep_going" == "y" ]; then
 			keep_going_exit_code=1
+			keep_going_skip=y
+			fail_list="$fail_list $RUNTEST_DIR/$RUNTEST_SCRIPT"
+			((fail_count+=1))
+
+			if [ "$CLEAN_FAILED" == "y" ]; then
+				if [[ $CMD_STR == *"RPMEM_PROVIDER"* ]]; then
+					export CLEAN_FAILED_REMOTE=y
+					eval "$CMD_STR"
+				fi
+				dir_rm=$(<$TEMP_LOC)
+				rm -Rf $dir_rm
+				if [ $? -ne 0 ]; then
+					echo -e "Cannot remove directory with data: $dir_rm"
+				fi
+			fi
 		else
 			exit 1
 		fi
 	}
+	rm -f $TEMP_LOC
+
+	[ "$verbose_old" != "-1" ] && verbose=$verbose_old
+
 	return 0
 }
 
@@ -253,7 +284,9 @@ intersection() {
 # runtest -- given the test directory name, run tests found inside it
 #
 runtest() {
-	export UNITTEST_QUIET=1
+	[ "$UNITTEST_LOG_LEVEL" ] || UNITTEST_LOG_LEVEL=1
+	export UNITTEST_LOG_LEVEL
+
 	[ -f "$1/TEST0" ] || {
 		echo FAIL: $1: test not found. >&2
 		exit 1
@@ -278,9 +311,25 @@ runtest() {
 		local sid=${runscript#TEST}
 		read_test_configuration $sid
 
-		ttype=$(intersection "$testtype" "$req_testtype" "short medium long check")
+		local _testtype="$testtype"
+		# unwind check test type to its subtypes
+		[ "$_testtype" == "check" ] && _testtype="short medium"
+		[ "$_testtype" == "all" ] && _testtype="short medium long"
+
+		ttype=$(intersection "$_testtype" "$req_testtype" "short medium long")
 		[ -z "$ttype" ] && {
+			echo "$UNITTEST_NAME: SKIP test-type $testtype ($req_testtype required)"
 			continue
+		}
+		# collapse test type to check if its valid superset
+		[ "$ttype" == "short medium" ] && ttype="check"
+		[ "$ttype" == "short medium long" ] && ttype="all"
+
+		# check if output test type is single value
+		ttype_array=($ttype)
+		[ "${#ttype_array[@]}" -gt 1 ] && {
+			echo "$UNITTEST_NAME: multiple test types ($ttype)"
+			exit 1
 		}
 
 		[ "$req_rpmem_valgrind" == "y" -a "$RPMEM_VALGRIND_ENABLED" != "y" ] && {
@@ -293,42 +342,54 @@ runtest() {
 		provs=$(intersection "$provider" "$req_provider" "verbs sockets")
 		pmeths=$(intersection "$pmethod" "$req_pmethod" "GPSPM APM")
 
+		# skip remote test if required providers or persistency methods are missing
+		[[ ( -n "$provs" && -z "$pmeths" ) || ( -z "$provs" && -n "$pmeths" ) ]] && continue
+
 		# for each fs-type being tested...
 		for fs in $fss
 		do
 			# don't bother trying when fs-type isn't available...
-			[ "$fs" = pmem -a -z "$PMEM_FS_DIR" ] && {
+			if [ "$fs" == "pmem" ] && [ -z "$PMEM_FS_DIR" ] && [ "$fstype" == "all" ]; then
 				pmem_skip=1
 				continue
-			}
+			fi
 
-			[ "$fs" = non-pmem -a -z "$NON_PMEM_FS_DIR" ] && {
+			if [ "$fs" == "non-pmem" ] && [ -z "$NON_PMEM_FS_DIR" ] && [ "$fstype" == "all" ]; then
 				non_pmem_skip=1
 				continue
-			}
+			fi
 
-			[ "$fs" = any -a -z "$PMEM_FS_DIR" -a -z "$NON_PMEM_FS_DIR" ] && {
+			if [ "$fs" == "any" ] && [ -z "$PMEM_FS_DIR" ] && [ -z "$NON_PMEM_FS_DIR" ] && [ "$fstype" == "all" ]; then
 				continue
-			}
-
-
+			fi
 			# for each build-type being tested...
 			for build in $builds
 			do
 				export RUNTEST_DIR=$1
-				export RUNTEST_PARAMS="TEST=$testtype FS=$fs BUILD=$build"
+				export RUNTEST_PARAMS="TEST=$ttype FS=$fs BUILD=$build"
 				export RUNTEST_EXTRA="CHECK_TYPE=$checktype CHECK_POOL=$check_pool \
 					$special_params"
 				export RUNTEST_SCRIPT="$runscript"
 				export RUNTEST_TIMEOUT="$req_timeout"
 
-				if [ -n "$provs" -a -n "$pmeths" ]; then
-					runtest_remote "$provs" "$pmeths"
-				else
-					runtest_local
+				if [ "$KEEP_GOING" == "y" ] && [ "$CLEAN_FAILED" == "y" ]; then
+					# temporary file used for sharing data
+					# between RUNTESTS and tests processes
+					temp_loc=$(mktemp /tmp/data-location.XXXXXXXX)
+					export TEMP_LOC=$temp_loc
+				fi
+				# to not overwrite logs skip other tests from the group
+				# if KEEP_GOING=y and test fail
+				if [ "$keep_going_skip" == "n" ]; then
+					if [ -n "$provs" -a -n "$pmeths" ]; then
+						runtest_remote "$provs" "$pmeths"
+					else
+						runtest_local
+					fi
 				fi
 			done
 		done
+		keep_going_skip=n
 	done
 
 	cd ..
@@ -363,7 +424,11 @@ check_pool=0
 checktype="none"
 skip_dir=""
 keep_going=n
+keep_going_skip=n
 keep_going_exit_code=0
+fail_count=0
+fail_list=""
+verbose_tests=
 
 #
 # some of defaults can be overwritten with environment variables
@@ -376,6 +441,52 @@ keep_going_exit_code=0
 [ -n "$TEST_PROVIDERS" ] && provider=$TEST_PROVIDERS
 [ -n "$TEST_PMETHODS" ] && pmethod=$TEST_PMETHODS
 [ -n "$KEEP_GOING" ] && keep_going=$KEEP_GOING
+[ -n "$VERBOSE_TESTS" ] && verbose_tests="$VERBOSE_TESTS"
+
+
+PMEMDETECT="tools/pmemdetect/pmemdetect.static-nondebug"
+
+if [ "$PMEM_FS_DIR_FORCE_PMEM" = "1" ]; then
+	if $PMEMDETECT -s $PMEM_FS_DIR; then
+		echo "error: PMEM_FS_DIR_FORCE_PMEM variable is set but PMEM_FS_DIR [" $PMEM_FS_DIR  "] supports MAP_SYNC"
+		echo "Setting this flag prevents from testing an integration between pmem_map_file and pmem_is_pmem."
+		echo "If you want to ignore this error, please set PMEM_FS_DIR_FORCE_PMEM=2."
+		exit 1
+	fi
+fi
+
+if [ -v PMEM_FS_DIR ] && [ ! -d "$PMEM_FS_DIR" ]; then
+	echo "error: PMEM_FS_DIR=$PMEM_FS_DIR doesn't exist"
+	exit 1
+fi
+
+if [ -v NON_PMEM_FS_DIR ] && [ ! -d "$NON_PMEM_FS_DIR" ]; then
+	echo "error: NON_PMEM_FS_DIR=$NON_PMEM_FS_DIR doesn't exist"
+	exit 1
+fi
+
+if [ -d "$PMEM_FS_DIR" ]; then
+	if [ "$PMEM_FS_DIR_FORCE_PMEM" = "1" ] || [ "$PMEM_FS_DIR_FORCE_PMEM" = "2" ]; then
+		PMEM_IS_PMEM=0
+	else
+		$PMEMDETECT "$PMEM_FS_DIR"
+		PMEM_IS_PMEM=$?
+	fi
+
+	if [ $PMEM_IS_PMEM -ne 0 ]; then
+		echo "error: PMEM_FS_DIR=$PMEM_FS_DIR does not point to a PMEM device"
+		exit 1
+	fi
+fi
+
+if [ -d "$NON_PMEM_FS_DIR" ]; then
+	$PMEMDETECT "$NON_PMEM_FS_DIR"
+	NON_PMEM_IS_PMEM=$?
+	if [ $NON_PMEM_IS_PMEM -eq 0 ]; then
+		echo "error: NON_PMEM_FS_DIR=$NON_PMEM_FS_DIR does not point to a non-PMEM device"
+		exit 1
+	fi
+fi
 
 #
 # command-line argument processing...
@@ -629,6 +740,7 @@ fi
 if [ "$1" ]; then
 	for test in $*
 	do
+		[ -d "$test" ] || echo "RUNTESTS: Test does not exist: $test"
 		[ -f "$test/TEST0" ] && runtest $test
 	done
 else
@@ -643,9 +755,12 @@ else
 		runtest $testdir
 	done
 fi
+
 [ "$pmem_skip" ] && echo "SKIPPED fs-type \"pmem\" runs: testconfig.sh doesn't set PMEM_FS_DIR"
 [ "$non_pmem_skip" ] && echo "SKIPPED fs-type \"non-pmem\" runs: testconfig.sh doesn't set NON_PMEM_FS_DIR"
-if [ "$keep_going" == "y" ]; then
+
+if [ "$fail_count" != "0" ]; then
+	echo "$(tput setaf 1)$fail_count tests failed:$(tput sgr0) $fail_list"
 	exit $keep_going_exit_code
 else
 	exit 0

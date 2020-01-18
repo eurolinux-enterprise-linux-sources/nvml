@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  * Copyright (c) 2016, Microsoft Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -35,8 +35,8 @@
  * set.h -- internal definitions for set module
  */
 
-#ifndef NVML_SET_H
-#define NVML_SET_H 1
+#ifndef PMDK_SET_H
+#define PMDK_SET_H 1
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -46,6 +46,7 @@ extern "C" {
 
 #include <sys/types.h>
 
+#include "vec.h"
 #include "pool_hdr.h"
 #include "librpmem.h"
 
@@ -57,6 +58,21 @@ extern "C" {
 
 #define POOLSET_REPLICA_SIG "REPLICA"
 #define POOLSET_REPLICA_SIG_LEN 7	/* does NOT include '\0' */
+
+#define POOLSET_OPTION_SIG "OPTION"
+#define POOLSET_OPTION_SIG_LEN 6	/* does NOT include '\0' */
+
+/* pool set option flags */
+enum pool_set_option_flag {
+	OPTION_UNKNOWN = 0x0,
+	OPTION_SINGLEHDR = 0x1,	/* pool headers only in the first part */
+	OPTION_NOHDRS = 0x2,	/* no pool headers, remote replicas only */
+};
+
+struct pool_set_option {
+	const char *name;
+	enum pool_set_option_flag flag;
+};
 
 #define POOL_LOCAL 0
 #define POOL_REMOTE 1
@@ -85,11 +101,19 @@ struct pool_set_part {
 	void *remote_hdr;	/* allocated header for remote replica */
 	void *hdr;		/* base address of header */
 	size_t hdrsize;		/* size of the header mapping */
+	int hdr_map_sync;	/* header mapped with MAP_SYNC */
 	void *addr;		/* base address of the mapping */
 	size_t size;		/* size of the mapping - page aligned */
+	int map_sync;		/* part has been mapped with MAP_SYNC flag */
 	int rdonly;		/* is set based on compat features, affects */
 				/* the whole poolset */
 	uuid_t uuid;
+};
+
+struct pool_set_directory {
+	const char *path;
+	size_t resvsize; /* size of the address space reservation */
+
 };
 
 struct remote_replica {
@@ -101,10 +125,15 @@ struct remote_replica {
 
 struct pool_replica {
 	unsigned nparts;
+	unsigned nallocated;
+	unsigned nhdrs;		/* should be 0, 1 or nparts */
 	size_t repsize;		/* total size of all the parts (mappings) */
+	size_t resvsize;	/* min size of the address space reservation */
 	int is_pmem;		/* true if all the parts are in PMEM */
+	void *mapaddr;		/* base address (libpmemcto only) */
 	struct remote_replica *remote;	/* not NULL if the replica */
 					/* is a remote one */
+	VEC(, struct pool_set_directory) directory;
 	struct pool_set_part part[];
 };
 
@@ -115,6 +144,15 @@ struct pool_set {
 	int zeroed;		/* true if all the parts are new files */
 	size_t poolsize;	/* the smallest replica size */
 	int remote;		/* true if contains a remote replica */
+	unsigned options;	/* enabled pool set options */
+
+	int directory_based;
+	size_t resvsize;
+
+	unsigned next_id;
+	unsigned next_directory_id;
+
+	int ignore_sds;		/* don't use shutdown state */
 	struct pool_replica *replica[];
 };
 
@@ -127,11 +165,16 @@ struct part_file {
 };
 
 struct pool_attr {
-	const unsigned char *poolset_uuid;	/* pool uuid */
-	const unsigned char *first_part_uuid;	/* first part uuid */
-	const unsigned char *prev_repl_uuid;	/* prev replica uuid */
-	const unsigned char *next_repl_uuid;	/* next replica uuid */
-	const unsigned char *user_flags;	/* user flags */
+	char signature[POOL_HDR_SIG_LEN];	/* pool signature */
+	uint32_t major;			/* format major version number */
+	uint32_t compat_features;	/* mask: compatible "may" features */
+	uint32_t incompat_features;	/* mask: "must support" features */
+	uint32_t ro_compat_features;	/* mask: force RO if unsupported */
+	unsigned char poolset_uuid[POOL_HDR_UUID_LEN];		/* pool uuid */
+	unsigned char first_part_uuid[POOL_HDR_UUID_LEN]; /* first part uuid */
+	unsigned char prev_repl_uuid[POOL_HDR_UUID_LEN]; /* prev replica uuid */
+	unsigned char next_repl_uuid[POOL_HDR_UUID_LEN]; /* next replica uuid */
+	unsigned char arch_flags[POOL_HDR_ARCH_LEN];		/* arch flags */
 };
 
 /* get index of the (r)th replica */
@@ -141,12 +184,19 @@ struct pool_attr {
 /* get index of the (r - 1)th replica */
 #define REPPidx(set, r) (((set)->nreplicas + (r) - 1) % (set)->nreplicas)
 
-/* get intex of the (r)th part */
+/* get index of the (r)th part */
 #define PARTidx(rep, p) (((rep)->nparts + (p)) % (rep)->nparts)
-/* get intex of the (r + 1)th part */
+/* get index of the (r + 1)th part */
 #define PARTNidx(rep, p) (((rep)->nparts + (p) + 1) % (rep)->nparts)
-/* get intex of the (r - 1)th part */
+/* get index of the (r - 1)th part */
 #define PARTPidx(rep, p) (((rep)->nparts + (p) - 1) % (rep)->nparts)
+
+/* get index of the (r)th part */
+#define HDRidx(rep, p) (((rep)->nhdrs + (p)) % (rep)->nhdrs)
+/* get index of the (r + 1)th part */
+#define HDRNidx(rep, p) (((rep)->nhdrs + (p) + 1) % (rep)->nhdrs)
+/* get index of the (r - 1)th part */
+#define HDRPidx(rep, p) (((rep)->nhdrs + (p) - 1) % (rep)->nhdrs)
 
 /* get (r)th replica */
 #define REP(set, r)\
@@ -166,11 +216,11 @@ struct pool_attr {
 	((rep)->part[PARTPidx(rep, p)])
 
 #define HDR(rep, p)\
-	((struct pool_hdr *)(PART(rep, p).hdr))
+	((struct pool_hdr *)(((rep)->part[HDRidx(rep, p)]).hdr))
 #define HDRN(rep, p)\
-	((struct pool_hdr *)(PARTN(rep, p).hdr))
+	((struct pool_hdr *)(((rep)->part[HDRNidx(rep, p)]).hdr))
 #define HDRP(rep, p)\
-	((struct pool_hdr *)(PARTP(rep, p).hdr))
+	((struct pool_hdr *)(((rep)->part[HDRPidx(rep, p)]).hdr))
 
 extern int Prefault_at_open;
 extern int Prefault_at_create;
@@ -178,36 +228,41 @@ extern int Prefault_at_create;
 int util_poolset_parse(struct pool_set **setp, const char *path, int fd);
 int util_poolset_read(struct pool_set **setp, const char *path);
 int util_poolset_create_set(struct pool_set **setp, const char *path,
-	size_t poolsize, size_t minsize);
+	size_t poolsize, size_t minsize, int ignore_sds);
 int util_poolset_open(struct pool_set *set);
 void util_poolset_close(struct pool_set *set, enum del_parts_mode del);
 void util_poolset_free(struct pool_set *set);
 int util_poolset_chmod(struct pool_set *set, mode_t mode);
 void util_poolset_fdclose(struct pool_set *set);
+void util_poolset_fdclose_always(struct pool_set *set);
 int util_is_poolset_file(const char *path);
 int util_poolset_foreach_part(const char *path,
 	int (*cb)(struct part_file *pf, void *arg), void *arg);
 size_t util_poolset_size(const char *path);
 
+int util_replica_deep_common(const void *addr, size_t len,
+	struct pool_set *set, unsigned replica_id, int flush);
+int util_replica_deep_persist(const void *addr, size_t len,
+	struct pool_set *set, unsigned replica_id);
+int util_replica_deep_drain(const void *addr, size_t len,
+	struct pool_set *set, unsigned replica_id);
+
 int util_pool_create(struct pool_set **setp, const char *path, size_t poolsize,
-	size_t minsize, const char *sig,
-	uint32_t major, uint32_t compat, uint32_t incompat, uint32_t ro_compat,
+	size_t minsize, size_t minpartsize, const struct pool_attr *attr,
 	unsigned *nlanes, int can_have_rep);
 int util_pool_create_uuids(struct pool_set **setp, const char *path,
-	size_t poolsize, size_t minsize, const char *sig,
-	uint32_t major, uint32_t compat, uint32_t incompat, uint32_t ro_compat,
-	unsigned *nlanes, int can_have_rep,
-	int remote, struct pool_attr *poolattr);
+	size_t poolsize, size_t minsize, size_t minpartsize,
+	const struct pool_attr *attr, unsigned *nlanes, int can_have_rep,
+	int remote);
 
 int util_part_open(struct pool_set_part *part, size_t minsize, int create);
 void util_part_fdclose(struct pool_set_part *part);
 int util_replica_open(struct pool_set *set, unsigned repidx, int flags);
-int util_replica_set_attr(struct pool_replica *rep, const char *sig,
-	uint32_t major, uint32_t compat, uint32_t incompat, uint32_t ro_compat,
-	const unsigned char *poolset_uuid, const unsigned char *uuid,
-	const unsigned char *next_repl_uuid,
-	const unsigned char *prev_repl_uuid,
-	const unsigned char *arch_flags);
+int util_replica_set_attr(struct pool_replica *rep,
+		const struct rpmem_pool_attr *rattr);
+void util_pool_hdr2attr(struct pool_attr *attr, struct pool_hdr *hdr);
+void util_pool_attr2hdr(struct pool_hdr *hdr,
+		const struct pool_attr *attr);
 int util_replica_close(struct pool_set *set, unsigned repidx);
 int util_map_part(struct pool_set_part *part, void *addr, size_t size,
 	size_t offset, int flags, int rdonly);
@@ -215,23 +270,19 @@ int util_unmap_part(struct pool_set_part *part);
 int util_unmap_parts(struct pool_replica *rep, unsigned start_index,
 	unsigned end_index);
 int util_header_create(struct pool_set *set, unsigned repidx, unsigned partidx,
-	const char *sig, uint32_t major, uint32_t compat, uint32_t incompat,
-	uint32_t ro_compat, const unsigned char *prev_repl_uuid,
-	const unsigned char *next_repl_uuid, const unsigned char *arch_flags);
+	const struct pool_attr *attr, int overwrite);
 
 int util_map_hdr(struct pool_set_part *part, int flags, int rdonly);
 int util_unmap_hdr(struct pool_set_part *part);
 
 int util_pool_open_nocheck(struct pool_set *set, int cow);
 int util_pool_open(struct pool_set **setp, const char *path, int cow,
-	size_t minsize, const char *sig, uint32_t major, uint32_t compat,
-	uint32_t incompat, uint32_t ro_compat, unsigned *nlanes);
+	size_t minpartsize, const struct pool_attr *attr, unsigned *nlanes,
+	int ignore_sds, void *addr);
 int util_pool_open_remote(struct pool_set **setp, const char *path, int cow,
-	size_t minsize, char *sig, uint32_t *major,
-	uint32_t *compat, uint32_t *incompat, uint32_t *ro_compat,
-	unsigned char *poolset_uuid, unsigned char *first_part_uuid,
-	unsigned char *prev_repl_uuid, unsigned char *next_repl_uuid,
-	unsigned char *arch_flags);
+	size_t minpartsize, struct rpmem_pool_attr *rattr);
+
+void *util_pool_extend(struct pool_set *set, size_t *size, size_t minpartsize);
 
 void util_remote_init(void);
 void util_remote_fini(void);
@@ -256,6 +307,8 @@ int util_replica_close_remote(struct pool_replica *rep, unsigned repn,
 
 extern int (*Rpmem_persist)(RPMEMpool *rpp, size_t offset, size_t length,
 								unsigned lane);
+extern int (*Rpmem_deep_persist)(RPMEMpool *rpp, size_t offset, size_t length,
+								unsigned lane);
 extern int (*Rpmem_read)(RPMEMpool *rpp, void *buff, size_t offset,
 				size_t length, unsigned lane);
 extern int (*Rpmem_close)(RPMEMpool *rpp);
@@ -264,7 +317,7 @@ extern int (*Rpmem_remove)(const char *target,
 		const char *pool_set_name, int flags);
 
 extern int (*Rpmem_set_attr)(RPMEMpool *rpp,
-		const struct rpmem_pool_attr *attr);
+		const struct rpmem_pool_attr *rattr);
 
 
 #ifdef __cplusplus

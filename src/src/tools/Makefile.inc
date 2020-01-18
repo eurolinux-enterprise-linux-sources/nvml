@@ -1,4 +1,4 @@
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -39,13 +39,12 @@ INSTALL_TARGET ?= y
 
 INCS += -I.
 INCS += -I$(TOP)/src/include
+INCS += $(OS_INCS)
 CFLAGS += -std=gnu99
 CFLAGS += -Wall
 CFLAGS += -Werror
 CFLAGS += -Wmissing-prototypes
 CFLAGS += -Wpointer-arith
-CFLAGS += -Wunused-macros
-CFLAGS += -Wmissing-field-initializers
 CFLAGS += -Wsign-conversion
 CFLAGS += -Wsign-compare
 ifeq ($(call check_Wconversion), y)
@@ -54,11 +53,16 @@ endif
 CFLAGS += -fno-common
 
 CFLAGS += -DSRCVERSION='"$(SRCVERSION)"'
+
+ifeq ($(call check_compiler, icc), n)
+CFLAGS += -Wunused-macros
+CFLAGS += -Wmissing-field-initializers
 ifeq ($(call check_flag, -Wunreachable-code-return), y)
 CFLAGS += -Wunreachable-code-return
 endif
 ifeq ($(call check_flag, -Wmissing-variable-declarations), y)
 CFLAGS += -Wmissing-variable-declarations
+endif
 endif
 
 ifeq ($(DEBUG),1)
@@ -67,14 +71,32 @@ else
 CFLAGS += -O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 $(EXTRA_CFLAGS_RELEASE)
 endif
 
+ifeq ($(VALGRIND),0)
+CFLAGS += -DVALGRIND_ENABLED=0
+CXXFLAGS += -DVALGRIND_ENABLED=0
+endif
+
+ifneq ($(SANITIZE),)
+CFLAGS += -fsanitize=$(SANITIZE)
+LDFLAGS += -fsanitize=$(SANITIZE)
+endif
+LDFLAGS += $(OS_LIBS)
+
 CFLAGS += $(EXTRA_CFLAGS)
 
-LDFLAGS += -Wl,-z,relro -Wl,--warn-common -Wl,--fatal-warnings $(EXTRA_LDFLAGS) -L$(TOP)/src/nondebug
+LDFLAGS += -Wl,-z,relro -Wl,--warn-common -Wl,--fatal-warnings $(EXTRA_LDFLAGS)
+ifeq ($(DEBUG),1)
+LDFLAGS += -L$(TOP)/src/debug
+else
+LDFLAGS += -L$(TOP)/src/nondebug
+endif
 TARGET_DIR=$(DESTDIR)$(bindir)
 BASH_COMP_FILES ?=
 BASH_COMP_DESTDIR = $(DESTDIR)$(bashcompdir)
 
+ifneq ($(DEBUG),1)
 TARGET_STATIC_NONDEBUG=$(TARGET).static-nondebug
+endif
 TARGET_STATIC_DEBUG=$(TARGET).static-debug
 
 LIBSDIR=$(TOP)/src
@@ -90,8 +112,9 @@ endif
 PMEMLOG_PRIV_OBJ=$(LIBSDIR_PRIV)/libpmemlog/libpmemlog_unscoped.o
 PMEMOBJ_PRIV_OBJ=$(LIBSDIR_PRIV)/libpmemobj/libpmemobj_unscoped.o
 PMEMBLK_PRIV_OBJ=$(LIBSDIR_PRIV)/libpmemblk/libpmemblk_unscoped.o
+PMEMCTO_PRIV_OBJ=$(LIBSDIR_PRIV)/libpmemcto/libpmemcto_unscoped.o
 
-LIBS += -pthread
+LIBS += $(LIBUUID)
 
 # XXX: required by clock_gettime(), if glibc version < 2.17
 # The os_clock_gettime() function is now in OS abstraction layer,
@@ -109,32 +132,42 @@ DYNAMIC_LIBS += $(LIBSDIR_DEBUG)/libpmemcommon.a
 STATIC_DEBUG_LIBS += $(LIBSDIR_DEBUG)/libpmemcommon.a
 STATIC_NONDEBUG_LIBS += $(LIBSDIR_NONDEBUG)/libpmemcommon.a
 CFLAGS += -I$(TOP)/src/common
-LIBS += -ldl
+LIBS += $(LIBNDCTL)
 endif
 
 ifeq ($(LIBPMEMPOOL), y)
+LIBPMEM=y
 DYNAMIC_LIBS += -lpmempool
 STATIC_DEBUG_LIBS += $(LIBSDIR_DEBUG)/libpmempool.a
 STATIC_NONDEBUG_LIBS += $(LIBSDIR_NONDEBUG)/libpmempool.a
 endif
 
 ifeq ($(LIBPMEMBLK), y)
+LIBPMEM=y
 DYNAMIC_LIBS += -lpmemblk
 STATIC_DEBUG_LIBS += $(LIBSDIR_DEBUG)/libpmemblk.a
 STATIC_NONDEBUG_LIBS += $(LIBSDIR_NONDEBUG)/libpmemblk.a
 endif
 
 ifeq ($(LIBPMEMLOG), y)
+LIBPMEM=y
 DYNAMIC_LIBS += -lpmemlog
 STATIC_DEBUG_LIBS += $(LIBSDIR_DEBUG)/libpmemlog.a
 STATIC_NONDEBUG_LIBS += $(LIBSDIR_NONDEBUG)/libpmemlog.a
 endif
 
 ifeq ($(LIBPMEMOBJ), y)
-LIBS += -ldl
+LIBPMEM=y
 DYNAMIC_LIBS += -lpmemobj
 STATIC_DEBUG_LIBS += $(LIBSDIR_DEBUG)/libpmemobj.a
 STATIC_NONDEBUG_LIBS += $(LIBSDIR_NONDEBUG)/libpmemobj.a
+endif
+
+ifeq ($(LIBPMEMCTO), y)
+LIBPMEM=y
+DYNAMIC_LIBS += -lpmemcto
+STATIC_DEBUG_LIBS += $(LIBSDIR_DEBUG)/libpmemcto.a
+STATIC_NONDEBUG_LIBS += $(LIBSDIR_NONDEBUG)/libpmemcto.a
 endif
 
 ifeq ($(LIBPMEM),y)
@@ -149,6 +182,18 @@ STATIC_DEBUG_LIBS += $(LIBSDIR_DEBUG)/libvmem.a
 STATIC_NONDEBUG_LIBS += $(LIBSDIR_NONDEBUG)/libvmem.a
 endif
 
+
+# If any of these libraries is required, we need to link libpthread
+ifneq ($(LIBPMEMCOMMON)$(LIBPMEM)$(LIBPMEMPOOL)$(LIBPMEMBLK)$(LIBPMEMLOG)$(LIBPMEMOBJ)$(LIBPMEMCTO)$(LIBVMEM),)
+LIBS += -pthread
+endif
+
+# If any of these libraries is required, we need to link libdl
+ifneq ($(LIBPMEMCOMMON)$(LIBPMEMPOOL)$(LIBPMEMOBJ),)
+LIBS += $(LIBDL)
+endif
+
+
 ifeq ($(TOOLS_COMMON), y)
 vpath %.c $(TOP)/src/tools/pmempool
 
@@ -158,8 +203,9 @@ CFLAGS += -I$(TOP)/src/common
 CFLAGS += -I$(TOP)/src/libpmemlog
 CFLAGS += -I$(TOP)/src/libpmemblk
 CFLAGS += -I$(TOP)/src/libpmemobj
+CFLAGS += -I$(TOP)/src/libpmemcto
 CFLAGS += -I$(TOP)/src/tools/pmempool
-common.o: CFLAGS += -D__USE_UNIX98
+CFLAGS += $(UNIX98_CFLAGS)
 
 endif
 
@@ -173,6 +219,10 @@ endif
 
 ifneq ($(LIBPMEMBLK_PRIV),)
 OBJS += pmemblk_priv.o
+endif
+
+ifneq ($(LIBPMEMCTO_PRIV),)
+OBJS += pmemcto_priv.o
 endif
 
 ifneq ($(HEADERS),)
@@ -264,6 +314,12 @@ $(PMEMBLK_PRIV_OBJ):
 
 pmemblk_priv.o: $(PMEMBLK_PRIV_OBJ)
 	$(OBJCOPY) --localize-hidden $(addprefix -G, $(LIBPMEMBLK_PRIV)) $< $@
+
+$(PMEMCTO_PRIV_OBJ):
+	$(MAKE) -C $(LIBSDIR) libpmemcto
+
+pmemcto_priv.o: $(PMEMCTO_PRIV_OBJ)
+	$(OBJCOPY) --localize-hidden $(addprefix -G, $(LIBPMEMCTO_PRIV)) $< $@
 
 objdir=.
 

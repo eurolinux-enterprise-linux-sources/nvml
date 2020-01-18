@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -47,7 +47,7 @@
 #ifdef _WIN32
 #include <pmemcompat.h>
 
-#ifndef NVML_UTF8_API
+#ifndef PMDK_UTF8_API
 #define pmemobj_check_version pmemobj_check_versionW
 #define pmemobj_errormsg pmemobj_errormsgW
 #else
@@ -67,6 +67,18 @@ extern "C" {
 typedef struct pmemobjpool PMEMobjpool;
 
 #define PMEMOBJ_MAX_ALLOC_SIZE ((size_t)0x3FFDFFFC0)
+
+/*
+ * allocation functions flags
+ */
+#define POBJ_FLAG_ZERO		(((uint64_t)1) << 0)
+#define POBJ_FLAG_NO_FLUSH	(((uint64_t)1) << 1)
+
+#define POBJ_CLASS_ID(id)	(((uint64_t)(id)) << 48)
+
+#define POBJ_XALLOC_CLASS_MASK	((((uint64_t)1 << 16) - 1) << 48)
+#define POBJ_XALLOC_ZERO	POBJ_FLAG_ZERO
+#define POBJ_XALLOC_NO_FLUSH	POBJ_FLAG_NO_FLUSH
 
 /*
  * Persistent memory object
@@ -137,8 +149,6 @@ void *pmemobj_direct(PMEMoid oid);
 
 /*
  * Returns the OID of the object pointed to by addr.
- *
- * EXPERIMENTAL
  */
 PMEMoid pmemobj_oid(const void *addr);
 
@@ -201,7 +211,7 @@ void pmemobj_drain(PMEMobjpool *pop);
  * used at compile-time by passing these defines to pmemobj_check_version().
  */
 #define PMEMOBJ_MAJOR_VERSION 2
-#define PMEMOBJ_MINOR_VERSION 2
+#define PMEMOBJ_MINOR_VERSION 3
 
 #ifndef _WIN32
 const char *pmemobj_check_version(unsigned major_required,

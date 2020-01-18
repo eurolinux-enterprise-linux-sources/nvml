@@ -1,5 +1,5 @@
 #
-# Copyright 2015-2017, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -38,8 +38,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "ex_libpmemobj/TEST12"
-$Env:UNITTEST_NUM = "12"
 
 # standard unit test setup
 . ..\unittest\unittest.PS1
@@ -50,7 +48,7 @@ require_no_unicode
 
 setup
 
-expect_normal_exit $Env:EXE_DIR\obj_pmemlog_simple c $DIR\testfile1 `
+expect_normal_exit $Env:EXE_DIR\ex_pmemobj_obj_pmemlog_simple c $DIR\testfile1 `
 	n t a:Hello a:World! n t w r n t v:Hello:World!:bar:foo n t w r `
 	> out$Env:UNITTEST_NUM.log 2>&1
 

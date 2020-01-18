@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,6 +36,7 @@
  * usage: util_poolset cmd minlen hdrsize [mockopts] setfile ...
  */
 
+#include <stdbool.h>
 #include "unittest.h"
 #include "pmemcommon.h"
 #include "set.h"
@@ -48,9 +49,14 @@
 #define MAJOR_VERSION 1
 #define MINOR_VERSION 0
 #define SIG "PMEMXXX"
+#define MIN_PART ((size_t)(1024 * 1024 * 2)) /* 2 MiB */
+
+#define TEST_FORMAT_INCOMPAT_CHECK POOL_FEAT_ALL
+
+size_t Extend_size = MIN_PART * 2;
 
 const char *Open_path = "";
-off_t Fallocate_len = -1;
+os_off_t Fallocate_len = -1;
 size_t Is_pmem_len = 0;
 
 /*
@@ -79,8 +85,9 @@ poolset_info(const char *fname, struct pool_set *set, int o)
 		struct pool_replica *rep = set->replica[r];
 		size_t repsize = 0;
 
-		UT_OUT("  replica[%d]: nparts %d repsize %zu is_pmem %d",
-			r, rep->nparts, rep->repsize, rep->is_pmem);
+		UT_OUT("  replica[%d]: nparts %d nhdrs %d repsize %zu "
+				"is_pmem %d",
+			r, rep->nparts, rep->nhdrs, rep->repsize, rep->is_pmem);
 
 		for (unsigned i = 0; i < rep->nparts; i++) {
 			struct pool_set_part *part = &rep->part[i];
@@ -89,14 +96,14 @@ poolset_info(const char *fname, struct pool_set *set, int o)
 			size_t partsize =
 				(part->filesize & ~(Ut_mmap_align - 1));
 			repsize += partsize;
-			if (i > 0)
+			if (i > 0 && (set->options & OPTION_SINGLEHDR) == 0)
 				UT_ASSERTeq(part->size,
-					partsize - Ut_mmap_align);
+					partsize - Ut_mmap_align); /* XXX */
 		}
 
-		repsize -= (rep->nparts - 1) * Ut_mmap_align;
+		repsize -= (rep->nhdrs - 1) * Ut_mmap_align;
 		UT_ASSERTeq(rep->repsize, repsize);
-		UT_ASSERTeq(rep->part[0].size, repsize);
+		UT_ASSERT(rep->resvsize >= repsize);
 
 		if (rep->repsize < poolsize)
 			poolsize = rep->repsize;
@@ -149,9 +156,9 @@ main(int argc, char *argv[])
 	common_init(LOG_PREFIX, LOG_LEVEL_VAR, LOG_FILE_VAR,
 			MAJOR_VERSION, MINOR_VERSION);
 
-	if (argc < 4)
-		UT_FATAL("usage: %s cmd minlen [mockopts] setfile ...",
-			argv[0]);
+	if (argc < 3)
+		UT_FATAL("usage: %s cmd minsize [mockopts] "
+			"setfile ...", argv[0]);
 
 	char *fname;
 	struct pool_set *set;
@@ -162,11 +169,15 @@ main(int argc, char *argv[])
 	for (int arg = 3; arg < argc; arg++) {
 		arg += mock_options(argv[arg]);
 		fname = argv[arg];
+		struct pool_attr attr;
+		memset(&attr, 0, sizeof(attr));
+		memcpy(attr.signature, SIG, sizeof(SIG));
+		attr.major = 1;
 
 		switch (argv[1][0]) {
 		case 'c':
 			ret = util_pool_create(&set, fname, 0, minsize,
-				SIG, 1, 0, 0, 0, NULL, REPLICAS_ENABLED);
+				MIN_PART, &attr, NULL, REPLICAS_ENABLED);
 			if (ret == -1)
 				UT_OUT("!%s: util_pool_create", fname);
 			else {
@@ -182,14 +193,29 @@ main(int argc, char *argv[])
 			}
 			break;
 		case 'o':
+			attr.incompat_features = TEST_FORMAT_INCOMPAT_CHECK;
 			ret = util_pool_open(&set, fname, 0 /* rdonly */,
-				minsize, SIG, 1, 0, 0, 0, NULL);
+				MIN_PART, &attr, NULL, false, NULL);
 			if (ret == -1)
 				UT_OUT("!%s: util_pool_open", fname);
 			else {
 				poolset_info(fname, set, 1);
 				util_poolset_close(set, DO_NOT_DELETE_PARTS);
 			}
+			break;
+		case 'e':
+			attr.incompat_features = TEST_FORMAT_INCOMPAT_CHECK;
+			ret = util_pool_open(&set, fname, 0 /* rdonly */,
+				MIN_PART, &attr, NULL, false, NULL);
+			UT_ASSERTeq(ret, 0);
+			size_t esize = Extend_size;
+			void *nptr = util_pool_extend(set, &esize, MIN_PART);
+			if (nptr == NULL)
+				UT_OUT("!%s: util_pool_extend", fname);
+			else {
+				poolset_info(fname, set, 1);
+			}
+			util_poolset_close(set, DO_NOT_DELETE_PARTS);
 			break;
 		}
 	}

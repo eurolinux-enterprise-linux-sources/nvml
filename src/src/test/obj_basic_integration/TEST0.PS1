@@ -1,5 +1,5 @@
 #
-# Copyright 2015-2017, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -37,18 +37,12 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "obj_basic_integration/TEST0"
-$Env:UNITTEST_NUM = "0"
 
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
 
 require_test_type medium
-
-# XXX: however we don't have valgrind in Windows yet
-#configure_valgrind memcheck force-disable
-
 require_fs_type any
 
 setup

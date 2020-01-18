@@ -1,6 +1,6 @@
 /*
  * Copyright 2016, FUJITSU TECHNOLOGY SOLUTIONS GMBH
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -48,6 +48,9 @@
  * ===========================================================================
  */
 
+#ifdef __FreeBSD__
+#define _WITH_GETLINE
+#endif
 #include <stdio.h>
 #include <fcntl.h>
 #include <libgen.h>
@@ -58,12 +61,14 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <assert.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include "arttree_structures.h"
 
 #include <stdarg.h>
 
 #define APPNAME "examine_arttree"
-#define SRCVERSION "0.1"
+#define SRCVERSION "0.2"
 
 size_t art_node_sizes[art_node_types] = {
 	sizeof(art_node4),
@@ -146,7 +151,7 @@ void outv_err_vargs(const char *fmt, va_list ap);
 
 static struct command commands[] = {
 	{
-		.name = "art_structures",
+		.name = "structures",
 		.brief = "print information about ART structures",
 		.func = arttree_structures_func,
 		.help = arttree_structures_help,
@@ -154,7 +159,7 @@ static struct command commands[] = {
 	{
 		.name = "info",
 		.brief = "print information and statistics"
-		    "about a art tree pool",
+		    " about an ART tree pool",
 		.func = arttree_info_func,
 		.help = arttree_info_help,
 	},
@@ -166,13 +171,13 @@ static struct command commands[] = {
 	},
 	{
 		.name = "search",
-		.brief = "search for a key in the ART tree",
+		.brief = "search for a key in an ART tree",
 		.func = arttree_search_func,
 		.help = arttree_search_help,
 	},
 	{
 		.name = "set_root",
-		.brief = "define offset of root of art tree",
+		.brief = "define offset of root of an ART tree",
 		.func = set_root_func,
 		.help = set_root_help,
 	},
@@ -184,7 +189,7 @@ static struct command commands[] = {
 	},
 	{
 		.name = "quit",
-		.brief = "quit arttree structure examiner",
+		.brief = "quit ART tree structure examiner",
 		.func = quit_func,
 		.help = quit_help,
 	},
@@ -500,23 +505,39 @@ ctx_init(struct pmem_context *ctx, char *filename)
 	if (ctx == NULL)
 		errors++;
 
-	if (!errors) {
-		ctx->filename = strdup(filename);
-		assert(ctx->filename != NULL);
-		ctx->fd = -1;
-		ctx->art_tree_root_offset = 0;
+	if (errors)
+		return errors;
 
-		if (access(ctx->filename, F_OK) == 0) {
-			ctx->fd = open(ctx->filename, O_RDONLY);
-		} else {
-			errors++;
-		}
+	ctx->filename = strdup(filename);
+	assert(ctx->filename != NULL);
+	ctx->fd = -1;
+	ctx->addr = NULL;
+	ctx->art_tree_root_offset = 0;
 
-		/* get system pagesize */
-		ctx->sys_pagesize = sysconf(_SC_PAGESIZE);
-	}
+	if (access(ctx->filename, F_OK) != 0)
+		return 1;
 
-	return errors;
+	if ((ctx->fd = open(ctx->filename, O_RDONLY)) == -1)
+		return 1;
+
+	struct stat stbuf;
+	if (fstat(ctx->fd, &stbuf) < 0)
+		return 1;
+	ctx->psize = stbuf.st_size;
+
+	if ((ctx->addr = mmap(NULL, ctx->psize, PROT_READ,
+			MAP_SHARED, ctx->fd, 0)) == MAP_FAILED)
+		return 1;
+
+	return 0;
+}
+
+static void
+ctx_fini(struct pmem_context *ctx)
+{
+	munmap(ctx->addr, ctx->psize);
+	close(ctx->fd);
+	free(ctx->filename);
 }
 
 int
@@ -591,6 +612,8 @@ main(int ac, char *av[])
 			free(line);
 		}
 	}
+
+	ctx_fini(&ctx);
 
 	return ret;
 }

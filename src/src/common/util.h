@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  * Copyright (c) 2016, Microsoft Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -35,8 +35,8 @@
  * util.h -- internal definitions for util module
  */
 
-#ifndef NVML_UTIL_H
-#define NVML_UTIL_H 1
+#ifndef PMDK_UTIL_H
+#define PMDK_UTIL_H 1
 
 #ifdef __cplusplus
 extern "C" {
@@ -48,7 +48,7 @@ extern "C" {
 #include <ctype.h>
 
 #ifdef _MSC_VER
-#include <intrin.h> /* popcnt */
+#include <intrin.h> /* popcnt, bitscan */
 #endif
 
 #include <sys/param.h>
@@ -62,8 +62,8 @@ extern unsigned long long Mmap_align;
 #define IS_PAGE_ALIGNED(size) (((size) & (Pagesize - 1)) == 0)
 #define PAGE_ALIGN_UP(addr) ((void *)PAGE_ALIGNED_UP_SIZE((uintptr_t)(addr)))
 
-#define MMAP_ALIGN_UP(size) (((size) + Mmap_align - 1) & ~(Mmap_align - 1))
-#define MMAP_ALIGN_DOWN(size) ((size) & ~(Mmap_align - 1))
+#define ALIGN_UP(size, align) (((size) + (align) - 1) & ~((align) - 1))
+#define ALIGN_DOWN(size, align) ((size) & ~((align) - 1))
 
 #define ADDR_SUM(vp, lp) ((void *)((char *)(vp) + lp))
 
@@ -86,9 +86,11 @@ extern void *Zalloc(size_t sz);
 
 void util_init(void);
 int util_is_zeroed(const void *addr, size_t len);
-int util_checksum(void *addr, size_t len, uint64_t *csump, int insert);
+int util_checksum(void *addr, size_t len, uint64_t *csump,
+		int insert, size_t skip_off);
 int util_parse_size(const char *str, size_t *sizep);
 char *util_fgets(char *buffer, int max, FILE *stream);
+char *util_getexecname(char *path, size_t pathlen);
 char *util_part_realpath(const char *path);
 int util_compare_file_inodes(const char *path1, const char *path2);
 void *util_aligned_malloc(size_t alignment, size_t size);
@@ -120,6 +122,12 @@ void util_set_alloc_funcs(
 #define ARRAY_SIZE(x)	(sizeof(x) / sizeof((x)[0]))
 #endif
 
+#ifdef _MSC_VER
+#define force_inline inline __forceinline
+#else
+#define force_inline __attribute__((always_inline)) inline
+#endif
+
 /*
  * util_setbit -- setbit macro substitution which properly deals with types
  */
@@ -145,17 +153,198 @@ util_clrbit(uint8_t *b, uint32_t i)
 #define util_flag_isclr(a, f) (((a) & (f)) == 0)
 
 /*
- * util_compare_and_swap -- perform an atomic compare and swap
+ * util_is_pow2 -- returns !0 when there's only 1 bit set in v, 0 otherwise
  */
+static force_inline int
+util_is_pow2(uint64_t v)
+{
+	return v && !(v & (v - 1));
+}
+
+/*
+ * util_bool_compare_and_swap -- perform an atomic compare and swap
+ * util_fetch_and_* -- perform an operation atomically, return old value
+ * util_synchronize -- issue a full memory barrier
+ * util_popcount -- count number of set bits
+ * util_lssb_index -- return index of least significant set bit,
+ *			undefined on zero
+ * util_mssb_index -- return index of most significant set bit
+ *			undefined on zero
+ *
+ * XXX assertions needed on (value != 0) in both versions of bitscans
+ *
+ */
+
 #ifndef _MSC_VER
+/*
+ * ISO C11 -- 7.17.1.4
+ * memory_order - an enumerated type whose enumerators identify memory ordering
+ * constraints.
+ */
+typedef enum {
+	memory_order_relaxed = __ATOMIC_RELAXED,
+	memory_order_consume = __ATOMIC_CONSUME,
+	memory_order_acquire = __ATOMIC_ACQUIRE,
+	memory_order_release = __ATOMIC_RELEASE,
+	memory_order_acq_rel = __ATOMIC_ACQ_REL,
+	memory_order_seq_cst = __ATOMIC_SEQ_CST
+} memory_order;
+
+/*
+ * ISO C11 -- 7.17.7.2 The atomic_load generic functions
+ * Integer width specific versions as supplement for:
+ *
+ *
+ * #include <stdatomic.h>
+ * C atomic_load(volatile A *object);
+ * C atomic_load_explicit(volatile A *object, memory_order order);
+ *
+ * The atomic_load interface doesn't return the loaded value, but instead
+ * copies it to a specified address -- see comments at the MSVC version.
+ *
+ * Also, instead of generic functions, two versions are available:
+ * for 32 bit fundamental integers, and for 64 bit ones.
+ */
+#define util_atomic_load_explicit32 __atomic_load
+#define util_atomic_load_explicit64 __atomic_load
+
+/*
+ * ISO C11 -- 7.17.7.1 The atomic_store generic functions
+ * Integer width specific versions as supplement for:
+ *
+ * #include <stdatomic.h>
+ * void atomic_store(volatile A *object, C desired);
+ * void atomic_store_explicit(volatile A *object, C desired,
+ *                            memory_order order);
+ */
+#define util_atomic_store_explicit32 __atomic_store_n
+#define util_atomic_store_explicit64 __atomic_store_n
+
+/*
+ * https://gcc.gnu.org/onlinedocs/gcc/_005f_005fsync-Builtins.html
+ * https://gcc.gnu.org/onlinedocs/gcc/Other-Builtins.html
+ * https://clang.llvm.org/docs/LanguageExtensions.html#builtin-functions
+ */
 #define util_bool_compare_and_swap32 __sync_bool_compare_and_swap
 #define util_bool_compare_and_swap64 __sync_bool_compare_and_swap
-#define util_fetch_and_add(ptr, value) __sync_fetch_and_add((ptr), value)
-#define util_fetch_and_sub(ptr, value) __sync_fetch_and_sub((ptr), value)
-#define util_popcount(value) __builtin_popcount(value)
+#define util_fetch_and_add32 __sync_fetch_and_add
+#define util_fetch_and_add64 __sync_fetch_and_add
+#define util_fetch_and_sub32 __sync_fetch_and_sub
+#define util_fetch_and_sub64 __sync_fetch_and_sub
+#define util_fetch_and_and32 __sync_fetch_and_and
+#define util_fetch_and_and64 __sync_fetch_and_and
+#define util_fetch_and_or32 __sync_fetch_and_or
+#define util_fetch_and_or64 __sync_fetch_and_or
+#define util_synchronize __sync_synchronize
+#define util_popcount(value) ((unsigned char)__builtin_popcount(value))
+#define util_popcount64(value) ((unsigned char)__builtin_popcountll(value))
+#define util_lssb_index(value) ((unsigned char)__builtin_ctz(value))
+#define util_lssb_index64(value) ((unsigned char)__builtin_ctzll(value))
+#define util_mssb_index(value) ((unsigned char)(31 - __builtin_clz(value)))
+#define util_mssb_index64(value) ((unsigned char)(63 - __builtin_clzll(value)))
+
 #else
+
+/* ISO C11 -- 7.17.1.4 */
+typedef enum {
+	memory_order_relaxed,
+	memory_order_consume,
+	memory_order_acquire,
+	memory_order_release,
+	memory_order_acq_rel,
+	memory_order_seq_cst
+} memory_order;
+
+/*
+ * ISO C11 -- 7.17.7.2 The atomic_load generic functions
+ * Integer width specific versions as supplement for:
+ *
+ *
+ * #include <stdatomic.h>
+ * C atomic_load(volatile A *object);
+ * C atomic_load_explicit(volatile A *object, memory_order order);
+ *
+ * The atomic_load interface doesn't return the loaded value, but instead
+ * copies it to a specified address.
+ * The MSVC specific implementation needs to trigger a barrier (at least
+ * compiler barrier) after the load from the volatile value. The actual load
+ * from the volatile value itself is expected to be atomic.
+ *
+ * The actual isnterface here:
+ * #include <util.h>
+ * void util_atomic_load32(volatile A *object, A *destination);
+ * void util_atomic_load64(volatile A *object, A *destination);
+ * void util_atomic_load_explicit32(volatile A *object, A *destination,
+ *                                  memory_order order);
+ * void util_atomic_load_explicit64(volatile A *object, A *destination,
+ *                                  memory_order order);
+ */
+
+#ifndef _M_X64
+#error MSVC ports of util_atomic_ only work on X86_64
+#endif
+
+#if _MSC_VER > 1911
+#error util_atomic_ utility functions not tested with this version of VC++
+#error These utility functions are not future proof, as they are not
+#error based on publicly available documentation.
+#endif
+
+#define util_atomic_load_explicit(object, dest, order)\
+	do {\
+		COMPILE_ERROR_ON(order != memory_order_seq_cst &&\
+				order != memory_order_consume &&\
+				order != memory_order_acquire &&\
+				order != memory_order_relaxed);\
+		*dest = *object;\
+		if (order == memory_order_seq_cst ||\
+		    order == memory_order_consume ||\
+		    order == memory_order_acquire)\
+		_ReadWriteBarrier();\
+	} while (0)
+
+
+#define util_atomic_load_explicit32 util_atomic_load_explicit
+#define util_atomic_load_explicit64 util_atomic_load_explicit
+
+/* ISO C11 -- 7.17.7.1 The atomic_store generic functions */
+
+#define util_atomic_store_explicit64(object, desired, order)\
+	do {\
+		COMPILE_ERROR_ON(order != memory_order_seq_cst &&\
+				order != memory_order_release &&\
+				order != memory_order_relaxed);\
+		if (order == memory_order_seq_cst) {\
+			_InterlockedExchange64(\
+				    (volatile long long *)object, desired);\
+		} else {\
+			if (order == memory_order_release)\
+				_ReadWriteBarrier();\
+			*object = desired;\
+		}\
+	} while (0)
+
+#define util_atomic_store_explicit32(object, desired, order)\
+	do {\
+		COMPILE_ERROR_ON(order != memory_order_seq_cst &&\
+				order != memory_order_release &&\
+				order != memory_order_relaxed);\
+		if (order == memory_order_seq_cst) {\
+			_InterlockedExchange(\
+				    (volatile long *)object, desired);\
+		} else {\
+			if (order == memory_order_release)\
+				_ReadWriteBarrier();\
+			*object = desired;\
+		}\
+	} while (0)
+
+/*
+ * https://msdn.microsoft.com/en-us/library/hh977022.aspx
+ */
+
 static __inline int
-__sync_bool_compare_and_swap32(volatile LONG *ptr,
+bool_compare_and_swap32_VC(volatile LONG *ptr,
 		LONG oldval, LONG newval)
 {
 	LONG old = InterlockedCompareExchange(ptr, newval, oldval);
@@ -163,7 +352,7 @@ __sync_bool_compare_and_swap32(volatile LONG *ptr,
 }
 
 static __inline int
-__sync_bool_compare_and_swap64(volatile LONG64 *ptr,
+bool_compare_and_swap64_VC(volatile LONG64 *ptr,
 		LONG64 oldval, LONG64 newval)
 {
 	LONG64 old = InterlockedCompareExchange64(ptr, newval, oldval);
@@ -171,25 +360,79 @@ __sync_bool_compare_and_swap64(volatile LONG64 *ptr,
 }
 
 #define util_bool_compare_and_swap32(p, o, n)\
-	__sync_bool_compare_and_swap32((LONG *)(p), (LONG)(o), (LONG)(n))
+	bool_compare_and_swap32_VC((LONG *)(p), (LONG)(o), (LONG)(n))
 #define util_bool_compare_and_swap64(p, o, n)\
-	__sync_bool_compare_and_swap64((LONG64 *)(p), (LONG64)(o), (LONG64)(n))
+	bool_compare_and_swap64_VC((LONG64 *)(p), (LONG64)(o), (LONG64)(n))
+#define util_fetch_and_add32(ptr, value)\
+    InterlockedExchangeAdd((LONG *)(ptr), value)
+#define util_fetch_and_add64(ptr, value)\
+    InterlockedExchangeAdd64((LONG64 *)(ptr), value)
+#define util_fetch_and_sub32(ptr, value)\
+    InterlockedExchangeSubtract((LONG *)(ptr), value)
+#define util_fetch_and_sub64(ptr, value)\
+    InterlockedExchangeAdd64((LONG64 *)(ptr), -((LONG64)(value)))
+#define util_fetch_and_and32(ptr, value)\
+    InterlockedAnd((LONG *)(ptr), value)
+#define util_fetch_and_and64(ptr, value)\
+    InterlockedAnd64((LONG64 *)(ptr), value)
+#define util_fetch_and_or32(ptr, value)\
+    InterlockedOr((LONG *)(ptr), value)
+#define util_fetch_and_or64(ptr, value)\
+    InterlockedOr64((LONG64 *)(ptr), value)
 
-static __inline LONGLONG
-util_sync_fetch_and_add64(volatile LONGLONG *ptr, LONGLONG value)
+static __inline void
+util_synchronize(void)
 {
-	LONGLONG ret = InterlockedAdd64(ptr, value);
-	return ret - value;
+	MemoryBarrier();
 }
 
-#define util_fetch_and_add(ptr, value)\
-	util_sync_fetch_and_add64((LONGLONG *)(ptr), (LONGLONG)(value))
+#define util_popcount(value) (unsigned char)__popcnt(value)
+#define util_popcount64(value) (unsigned char)__popcnt64(value)
 
-#define util_fetch_and_sub(ptr, value)\
-	util_sync_fetch_and_add64((LONGLONG *)(ptr), (LONGLONG)((-1) * value))
+static __inline unsigned char
+util_lssb_index(int value)
+{
+	unsigned long ret;
+	_BitScanForward(&ret, value);
+	return (unsigned char)ret;
+}
 
-#define util_popcount(value) __popcnt(value)
+static __inline unsigned char
+util_lssb_index64(long long value)
+{
+	unsigned long ret;
+	_BitScanForward64(&ret, value);
+	return (unsigned char)ret;
+}
+
+static __inline unsigned char
+util_mssb_index(int value)
+{
+	unsigned long ret;
+	_BitScanReverse(&ret, value);
+	return (unsigned char)ret;
+}
+
+static __inline unsigned char
+util_mssb_index64(long long value)
+{
+	unsigned long ret;
+	_BitScanReverse64(&ret, value);
+	return (unsigned char)ret;
+}
+
 #endif
+
+/* ISO C11 -- 7.17.7 Operations on atomic types */
+#define util_atomic_load32(object, dest)\
+	util_atomic_load_explicit32(object, dest, memory_order_seqcst)
+#define util_atomic_load64(object, dest)\
+	util_atomic_load_explicit64(object, dest, memory_order_seqcst)
+
+#define util_atomic_store32(object, desired)\
+	util_atomic_store_explicit32(object, desired, memory_order_seqcst)
+#define util_atomic_store64(object, desired)\
+	util_atomic_store_explicit64(object, desired, memory_order_seqcst)
 
 /*
  * util_get_printable_ascii -- convert non-printable ascii to dot '.'

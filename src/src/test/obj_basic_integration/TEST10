@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2016-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -31,15 +31,14 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
-export UNITTEST_NAME=obj_basic_integration/TEST10
-export UNITTEST_NUM=10
 
 # standard unit test setup
 . ../unittest/unittest.sh
 
 require_test_type medium
-require_command strace
+require_command $STRACE
 require_dax_devices 1
+require_no_asan
 
 # covered by TEST5
 configure_valgrind memcheck force-disable
@@ -48,7 +47,7 @@ setup
 
 dax_device_zero
 
-expect_normal_exit strace -emsync -ostrace$UNITTEST_NUM.log \
+expect_normal_exit $STRACE -emsync -ostrace$UNITTEST_NUM.log \
 	./obj_basic_integration$EXESUFFIX $DEVICE_DAX_PATH
 
 check

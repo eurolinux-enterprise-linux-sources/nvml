@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,12 +38,14 @@
 #include <sys/types.h>
 
 #include "libpmemobj.h"
+#include "libpmemcto.h"
 
 #include "queue.h"
 #include "set.h"
 #include "log.h"
 #include "blk.h"
 #include "btt_layout.h"
+#include "cto.h"
 
 enum pool_type {
 	POOL_TYPE_UNKNOWN	= (1 << 0),
@@ -51,9 +53,10 @@ enum pool_type {
 	POOL_TYPE_BLK		= (1 << 2),
 	POOL_TYPE_OBJ		= (1 << 3),
 	POOL_TYPE_BTT		= (1 << 4),
+	POOL_TYPE_CTO		= (1 << 5),
 
 	POOL_TYPE_ANY		= POOL_TYPE_UNKNOWN | POOL_TYPE_LOG |
-		POOL_TYPE_BLK | POOL_TYPE_OBJ | POOL_TYPE_BTT,
+		POOL_TYPE_BLK | POOL_TYPE_OBJ | POOL_TYPE_BTT | POOL_TYPE_CTO,
 };
 
 struct pool_params {
@@ -64,6 +67,7 @@ struct pool_params {
 	int is_poolset;
 	int is_part;
 	int is_dev_dax;
+	int is_pmem;
 	union {
 		struct {
 			uint64_t bsize;
@@ -71,6 +75,9 @@ struct pool_params {
 		struct {
 			char layout[PMEMOBJ_MAX_LAYOUT];
 		} obj;
+		struct {
+			char layout[PMEMCTO_MAX_LAYOUT];
+		} cto;
 	};
 };
 
@@ -105,6 +112,7 @@ struct pool_data {
 		struct pool_hdr pool;
 		struct pmemlog log;
 		struct pmemblk blk;
+		struct pmemcto cto;
 	} hdr;
 	enum {
 		UUID_NOP = 0,
@@ -139,6 +147,7 @@ void pool_set_file_unmap_headers(struct pool_set_file *file);
 void pool_hdr_default(enum pool_type type, struct pool_hdr *hdrp);
 enum pool_type pool_hdr_get_type(const struct pool_hdr *hdrp);
 enum pool_type pool_set_type(struct pool_set *set);
+const char *pool_get_pool_type_str(enum pool_type type);
 
 int pool_btt_info_valid(struct btt_info *infop);
 
@@ -148,3 +157,4 @@ int pool_blk_bsize_valid(uint32_t bsize, uint64_t fsize);
 uint64_t pool_next_arena_offset(struct pool_data *pool, uint64_t header_offset);
 uint64_t pool_get_first_valid_btt(struct pool_data *pool,
 	struct btt_info *infop, uint64_t offset, bool *zeroed);
+size_t pool_get_min_size(enum pool_type);

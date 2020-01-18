@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -42,7 +42,6 @@
 #include <stdint.h>
 #include <ctype.h>
 #include <err.h>
-#include <elf.h>
 #include <endian.h>
 #include <inttypes.h>
 #include "common.h"
@@ -516,7 +515,7 @@ outv_hexdump(int vlevel, const void *addr, size_t len, size_t offset, int sep)
  * out_get_checksum -- return checksum string with result
  */
 const char *
-out_get_checksum(void *addr, size_t len, uint64_t *csump)
+out_get_checksum(void *addr, size_t len, uint64_t *csump, size_t skip_off)
 {
 	static char str_buff[STR_MAX] = {0, };
 	int ret = 0;
@@ -539,7 +538,7 @@ out_get_checksum(void *addr, size_t len, uint64_t *csump)
 	uint64_t csum = *csump;
 
 	/* validate checksum and get correct one */
-	int valid = util_validate_checksum(buf, len, ncsump);
+	int valid = util_validate_checksum(buf, len, ncsump, skip_off);
 
 	if (valid)
 		ret = snprintf(str_buff, STR_MAX, "0x%" PRIx64" [OK]",
@@ -602,6 +601,8 @@ out_get_pool_type_str(pmem_pool_type_t type)
 		return "obj";
 	case PMEM_POOL_TYPE_BTT:
 		return "btt";
+	case PMEM_POOL_TYPE_CTO:
+		return "cto";
 	default:
 		return "unknown";
 	}
@@ -620,6 +621,8 @@ out_get_pool_signature(pmem_pool_type_t type)
 		return BLK_HDR_SIG;
 	case PMEM_POOL_TYPE_OBJ:
 		return OBJ_HDR_SIG;
+	case PMEM_POOL_TYPE_CTO:
+		return CTO_HDR_SIG;
 	default:
 		return NULL;
 	}
@@ -759,36 +762,31 @@ out_get_pmemoid_str(PMEMoid oid, uint64_t uuid_lo)
 }
 
 /*
- * out_get_ei_class_str -- get ELF's ei_class value string
+ * out_get_arch_machine_class_str -- get a string representation of the machine
+ * class
  */
 const char *
-out_get_ei_class_str(uint8_t ei_class)
+out_get_arch_machine_class_str(uint8_t machine_class)
 {
 
-	switch (ei_class) {
-	case ELFCLASSNONE:
-		return "none";
-	case ELFCLASS32:
-		return "ELF32";
-	case ELFCLASS64:
-		return "ELF64";
+	switch (machine_class) {
+	case PMDK_MACHINE_CLASS_64:
+		return "64";
 	default:
 		return "unknown";
 	}
 }
 
 /*
- * out_get_ei_data_str -- get ELF's ei_data value string
+ * out_get_arch_data_str -- get a string representation of the data endianness
  */
 const char *
-out_get_ei_data_str(uint8_t ei_data)
+out_get_arch_data_str(uint8_t data)
 {
-	switch (ei_data) {
-	case ELFDATANONE:
-		return "none";
-	case ELFDATA2LSB:
+	switch (data) {
+	case PMDK_DATA_LE:
 		return "2's complement, little endian";
-	case ELFDATA2MSB:
+	case PMDK_DATA_BE:
 		return "2's complement, big endian";
 	default:
 		return "unknown";
@@ -796,27 +794,23 @@ out_get_ei_data_str(uint8_t ei_data)
 }
 
 /*
- * out_get_e_machine_str -- get ELF's e_machine value string
+ * out_get_arch_machine_str -- get a string representation of the machine type
  */
 const char *
-out_get_e_machine_str(uint16_t e_machine)
+out_get_arch_machine_str(uint16_t machine)
 {
 	static char str_buff[STR_MAX] = {0, };
-	switch (e_machine) {
-	case EM_NONE:
-		return "none";
-	case EM_X86_64:
+	switch (machine) {
+	case PMDK_MACHINE_X86_64:
 		return "AMD X86-64";
-	default:
-		if (e_machine >= EM_NUM) {
-			return "unknown";
-		} else {
-			int ret = snprintf(str_buff, STR_MAX, "%u", e_machine);
-			if (ret < 0 || ret >= STR_MAX)
-				return "";
-			return str_buff;
-		}
+	case PMDK_MACHINE_AARCH64:
+		return "Aarch64";
 	}
+
+	int ret = snprintf(str_buff, STR_MAX, "unknown %u", machine);
+	if (ret < 0 || ret >= STR_MAX)
+		return "unknown";
+	return str_buff;
 }
 
 /*
@@ -837,5 +831,60 @@ out_get_alignment_desc_str(uint64_t ad, uint64_t valid_ad)
 	if (ret < 0 || ret >= STR_MAX)
 		return "";
 
+	return str_buff;
+}
+
+/*
+ * out_get_incompat_features_str -- (internal) get a string with names of
+ *                                  incompatibility flags
+ */
+const char *
+out_get_incompat_features_str(uint32_t incompat)
+{
+	static char str_buff[STR_MAX] = {0};
+	int ret = 0;
+
+	if (incompat == 0) {
+		/* print the value only */
+		return "0x0";
+	} else {
+		/* print the value and the left square bracket */
+		ret = snprintf(str_buff, STR_MAX, "0x%x [", incompat);
+		if (ret < 0 || ret >= STR_MAX) {
+			ERR("!snprintf for incompat features");
+			return "<error>";
+		}
+
+		/* print the name of SINGLEHDR option */
+		int count = 0;
+		int curr = ret;
+		if (incompat & POOL_FEAT_SINGLEHDR) {
+			ret = snprintf(str_buff + curr,
+				(size_t)(STR_MAX - curr), "%s", "SINGLEHDR");
+			if (ret < 0 || curr + ret >= STR_MAX)
+				return "";
+			curr += ret;
+			++count;
+			/* take off the flag */
+			incompat &= (uint32_t)(~(POOL_FEAT_SINGLEHDR));
+		}
+
+		/* handle other flags here */
+
+		/* check if any unknown flags are set */
+		if (incompat > 0) {
+			ret = snprintf(str_buff + curr,
+				(size_t)(STR_MAX - curr), "%s%s",
+				count ? ", " : "", "?UNKNOWN_FLAG?");
+			if (ret < 0 || curr + ret >= STR_MAX)
+				return "";
+			curr += ret;
+		}
+
+		/* print the right square bracket */
+		ret = snprintf(str_buff + curr, (size_t)(STR_MAX - curr), "]");
+		if (ret < 0 || curr + ret >= STR_MAX)
+			return "";
+	}
 	return str_buff;
 }

@@ -42,6 +42,12 @@
 #include "util.h"
 #include "out.h"
 #include "bucket.h"
+#include "cuckoo.h"
+
+#define RUN_CLASS_KEY_PACK(map_idx_s, header_type_s, size_idx_s)\
+((uint64_t)(map_idx_s) << 32 |\
+(uint64_t)(header_type_s) << 16 |\
+(uint64_t)(size_idx_s))
 
 /*
  * Value used to mark a reserved spot in the bucket array.
@@ -139,9 +145,10 @@ struct alloc_class_collection {
 	uint8_t *class_map_by_alloc_size;
 
 	/* maps allocation classes to run unit sizes */
-	uint8_t *class_map_by_unit_size;
+	struct cuckoo *class_map_by_unit_size;
 
 	int fail_on_missing_class;
+	int autogenerate_on_missing_class;
 };
 
 /*
@@ -151,7 +158,7 @@ struct alloc_class_collection {
  * This function must be thread-safe because allocation classes can be created
  * at runtime.
  */
-static int
+int
 alloc_class_find_first_free_slot(struct alloc_class_collection *ac,
 	uint8_t *slot)
 {
@@ -164,6 +171,27 @@ alloc_class_find_first_free_slot(struct alloc_class_collection *ac,
 	}
 
 	return -1;
+}
+
+/*
+ * alloc_class_reserve -- reserve the specified class id
+ */
+int
+alloc_class_reserve(struct alloc_class_collection *ac, uint8_t id)
+{
+	return util_bool_compare_and_swap64(&ac->aclasses[id],
+			NULL, ACLASS_RESERVED) ? 0 : -1;
+}
+
+/*
+ * alloc_class_reservation_clear -- removes the reservation on class id
+ */
+static void
+alloc_class_reservation_clear(struct alloc_class_collection *ac, int id)
+{
+	int ret = util_bool_compare_and_swap64(&ac->aclasses[id],
+		ACLASS_RESERVED, NULL);
+	ASSERT(ret);
 }
 
 /*
@@ -237,21 +265,41 @@ alloc_class_generate_run_proto(struct alloc_class_run_proto *dest,
 /*
  * alloc_class_register -- registers an allocation classes in the collection
  */
-static struct alloc_class *
+struct alloc_class *
 alloc_class_register(struct alloc_class_collection *ac,
-	struct alloc_class *aclass)
+	struct alloc_class *c)
 {
-	struct alloc_class *c = Malloc(sizeof(*c));
-	if (c == NULL)
-		return NULL;
+	struct alloc_class *nc = Malloc(sizeof(*nc));
+	if (nc == NULL)
+		goto error_class_alloc;
 
-	*c = *aclass;
-	ac->class_map_by_unit_size[SIZE_TO_CLASS_MAP_INDEX(c->unit_size,
-		ac->granularity)] = c->id;
+	*nc = *c;
 
-	ac->aclasses[c->id] = c;
+	if (c->type == CLASS_RUN) {
+		size_t map_idx = SIZE_TO_CLASS_MAP_INDEX(nc->unit_size,
+			ac->granularity);
+		ASSERT(map_idx <= UINT32_MAX);
+		uint32_t map_idx_s = (uint32_t)map_idx;
+		ASSERT(nc->run.size_idx <= UINT16_MAX);
+		uint16_t size_idx_s = (uint16_t)nc->run.size_idx;
+		uint16_t header_type_s = (uint16_t)nc->header_type;
+		uint64_t k = RUN_CLASS_KEY_PACK(map_idx_s,
+			header_type_s, size_idx_s);
+		if (cuckoo_insert(ac->class_map_by_unit_size, k, nc) != 0) {
+			ERR("unable to register allocation class");
+			goto error_map_insert;
+		}
+	}
 
-	return c;
+	ac->aclasses[nc->id] = nc;
+
+	return nc;
+
+error_map_insert:
+	Free(nc);
+error_class_alloc:
+	alloc_class_reservation_clear(ac, c->id);
+	return NULL;
 }
 
 /*
@@ -296,7 +344,7 @@ alloc_class_from_params(struct alloc_class_collection *ac,
 /*
  * alloc_class_delete -- (internal) deletes an allocation class
  */
-static void
+void
 alloc_class_delete(struct alloc_class_collection *ac,
 	struct alloc_class *c)
 {
@@ -385,15 +433,17 @@ alloc_class_find_min_frag(struct alloc_class_collection *ac, size_t n)
 	for (int i = MAX_ALLOCATION_CLASSES - 1; i >= 0; --i) {
 		struct alloc_class *c = ac->aclasses[i];
 
-		if (c == NULL)
+		/* can't use alloc classes /w no headers by default */
+		if (c == NULL || c->header_type == HEADER_NONE)
 			continue;
 
 		size_t real_size = n + header_type_to_size[c->header_type];
 
 		size_t units = CALC_SIZE_IDX(c->unit_size, real_size);
+
 		/* can't exceed the maximum allowed run unit max */
 		if (units > RUN_UNIT_MAX_ALLOC)
-			break;
+			continue;
 
 		float frag = (float)(c->unit_size * units) / (float)real_size;
 		if (frag == 1.f)
@@ -416,7 +466,7 @@ alloc_class_find_min_frag(struct alloc_class_collection *ac, size_t n)
 struct alloc_class_collection *
 alloc_class_collection_new()
 {
-	struct alloc_class_collection *ac = Malloc(sizeof(*ac));
+	struct alloc_class_collection *ac = Zalloc(sizeof(*ac));
 	if (ac == NULL)
 		return NULL;
 
@@ -425,22 +475,25 @@ alloc_class_collection_new()
 	ac->granularity = ALLOC_BLOCK_SIZE;
 	ac->last_run_max_size = MAX_RUN_SIZE;
 	ac->fail_on_missing_class = 0;
+	ac->autogenerate_on_missing_class = 1;
 
 	size_t maps_size = (MAX_RUN_SIZE / ac->granularity) + 1;
 
-	ac->class_map_by_alloc_size = Malloc(maps_size);
-	ac->class_map_by_unit_size = Malloc(maps_size);
+	if ((ac->class_map_by_alloc_size = Malloc(maps_size)) == NULL)
+		goto error;
+	if ((ac->class_map_by_unit_size = cuckoo_new()) == NULL)
+		goto error;
+
 	memset(ac->class_map_by_alloc_size, 0xFF, maps_size);
-	memset(ac->class_map_by_unit_size, 0xFF, maps_size);
 
 	if (alloc_class_from_params(ac, CLASS_HUGE, CHUNKSIZE, 0, 0, 1) == NULL)
-		goto error_alloc_class_create;
+		goto error;
 
 	struct alloc_class *predefined_class =
 		alloc_class_from_params(ac, CLASS_RUN, MIN_RUN_SIZE,
 			RUN_UNIT_MAX, RUN_UNIT_MAX_ALLOC, 1);
 	if (predefined_class == NULL)
-		goto error_alloc_class_create;
+		goto error;
 
 	for (size_t i = 0; i < FIRST_GENERATED_CLASS_SIZE / ac->granularity;
 		++i) {
@@ -457,7 +510,7 @@ alloc_class_collection_new()
 		size_t n = categories[c - 1].size + ALLOC_BLOCK_SIZE_GEN;
 		do {
 			if (alloc_class_find_or_create(ac, n) == NULL)
-				goto error_alloc_class_create;
+				goto error;
 
 			float stepf = (float)n * categories[c].step;
 			size_t stepi = (size_t)stepf;
@@ -493,18 +546,6 @@ alloc_class_collection_new()
 	ac->last_run_max_size = MAX_RUN_SIZE > theoretical_run_max_size ?
 		theoretical_run_max_size : MAX_RUN_SIZE;
 
-	/*
-	 * Now that the alloc classes are created, the bucket with the minimal
-	 * internal fragmentation for that size is chosen.
-	 */
-	for (size_t i = FIRST_GENERATED_CLASS_SIZE / ac->granularity;
-		i <= ac->last_run_max_size / ac->granularity; ++i) {
-		struct alloc_class *c = alloc_class_find_min_frag(ac,
-				i * ac->granularity);
-
-		ac->class_map_by_alloc_size[i] = c->id;
-	}
-
 #ifdef DEBUG
 	/*
 	 * Verify that each bucket's unit size points back to the bucket by the
@@ -514,19 +555,17 @@ alloc_class_collection_new()
 	for (size_t i = 0; i < MAX_ALLOCATION_CLASSES; ++i) {
 		struct alloc_class *c = ac->aclasses[i];
 
-		if (c != NULL) {
+		if (c != NULL && c->type == CLASS_RUN) {
 			ASSERTeq(i, c->id);
-			uint8_t class_id = ac->class_map_by_unit_size[
-				SIZE_TO_CLASS_MAP_INDEX(c->unit_size,
-					ac->granularity)];
-			ASSERTeq(class_id, c->id);
+			ASSERTeq(alloc_class_by_run(ac, c->unit_size,
+				c->header_type, c->run.size_idx), c);
 		}
 	}
 #endif
 
 	return ac;
 
-error_alloc_class_create:
+error:
 	alloc_class_collection_delete(ac);
 
 	return NULL;
@@ -545,26 +584,56 @@ alloc_class_collection_delete(struct alloc_class_collection *ac)
 			alloc_class_delete(ac, c);
 		}
 	}
+
+	cuckoo_delete(ac->class_map_by_unit_size);
 	Free(ac->class_map_by_alloc_size);
-	Free(ac->class_map_by_unit_size);
 	Free(ac);
 }
 
 /*
- * alloc_class_by_map -- (internal) returns the allocation class found for
- *	given size in the provided map
+ * alloc_class_assign_by_size -- (internal) chooses the allocation class that
+ *	best approximates the provided size
  */
 static struct alloc_class *
-alloc_class_by_map(struct alloc_class_collection *ac,
-	uint8_t *map, size_t size)
+alloc_class_assign_by_size(struct alloc_class_collection *ac,
+	size_t size)
+{
+	size_t class_map_index = SIZE_TO_CLASS_MAP_INDEX(size,
+		ac->granularity);
+
+	struct alloc_class *c = alloc_class_find_min_frag(ac,
+		class_map_index * ac->granularity);
+	ASSERTne(c, NULL);
+
+	/*
+	 * We don't lock this array because locking this section here and then
+	 * bailing out if someone else was faster would be still slower than
+	 * just calculating the class and failing to assign the variable.
+	 * We are using a compare and swap so that helgrind/drd don't complain.
+	 */
+	util_bool_compare_and_swap64(
+		&ac->class_map_by_alloc_size[class_map_index],
+		MAX_ALLOCATION_CLASSES, c->id);
+
+	return c;
+}
+
+/*
+ * alloc_class_by_alloc_size -- returns allocation class that is assigned
+ *	to handle an allocation of the provided size
+ */
+struct alloc_class *
+alloc_class_by_alloc_size(struct alloc_class_collection *ac, size_t size)
 {
 	if (size < ac->last_run_max_size) {
-		uint8_t class_id = map[
+		uint8_t class_id = ac->class_map_by_alloc_size[
 			SIZE_TO_CLASS_MAP_INDEX(size, ac->granularity)];
 
 		if (class_id == MAX_ALLOCATION_CLASSES) {
 			if (ac->fail_on_missing_class)
 				return NULL;
+			else if (ac->autogenerate_on_missing_class)
+				return alloc_class_assign_by_size(ac, size);
 			else
 				return ac->aclasses[DEFAULT_ALLOC_CLASS_ID];
 		}
@@ -576,23 +645,22 @@ alloc_class_by_map(struct alloc_class_collection *ac,
 }
 
 /*
- * alloc_class_by_alloc_size -- returns allocation class that is assigned
- *	to handle an allocation of the provided size
- */
-struct alloc_class *
-alloc_class_by_alloc_size(struct alloc_class_collection *ac, size_t size)
-{
-	return alloc_class_by_map(ac, ac->class_map_by_alloc_size, size);
-}
-
-/*
- * alloc_class_by_unit_size -- returns the allocation class that has the given
+ * alloc_class_by_run -- returns the allocation class that has the given
  *	unit size
  */
 struct alloc_class *
-alloc_class_by_unit_size(struct alloc_class_collection *ac, size_t size)
+alloc_class_by_run(struct alloc_class_collection *ac,
+	size_t unit_size, enum header_type header_type, uint32_t size_idx)
 {
-	return alloc_class_by_map(ac, ac->class_map_by_unit_size, size);
+	size_t map_idx = SIZE_TO_CLASS_MAP_INDEX(unit_size, ac->granularity);
+	ASSERT(map_idx <= UINT32_MAX);
+	uint32_t map_idx_s = (uint32_t)map_idx;
+	ASSERT(size_idx <= UINT16_MAX);
+	uint16_t size_idx_s = (uint16_t)size_idx;
+	uint16_t header_type_s = (uint16_t)header_type;
+
+	return cuckoo_get(ac->class_map_by_unit_size,
+		RUN_CLASS_KEY_PACK(map_idx_s, header_type_s, size_idx_s));
 }
 
 /*
@@ -602,4 +670,25 @@ struct alloc_class *
 alloc_class_by_id(struct alloc_class_collection *ac, uint8_t id)
 {
 	return ac->aclasses[id];
+}
+
+/*
+ * alloc_class_calc_size_idx -- calculates how many units does the size require
+ */
+ssize_t
+alloc_class_calc_size_idx(struct alloc_class *c, size_t size)
+{
+	uint32_t size_idx = CALC_SIZE_IDX(c->unit_size,
+		size + header_type_to_size[c->header_type]);
+
+	if (c->type == CLASS_RUN) {
+		if (c->header_type == HEADER_NONE && size_idx != 1)
+			return -1;
+		else if (size_idx > RUN_UNIT_MAX)
+			return -1;
+		else if (size_idx > c->run.bitmap_nallocs)
+			return -1;
+	}
+
+	return size_idx;
 }

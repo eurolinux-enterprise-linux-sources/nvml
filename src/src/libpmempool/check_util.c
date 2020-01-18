@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -343,10 +343,12 @@ status_push(PMEMpoolcheck *ppc, struct check_status *st, uint32_t question)
  * character and use it to create error message. Character just before separator
  * must be a MSG_PLACE_OF_SEPARATION character. Return non 0 value if error
  * status would be created.
+ *
+ * The arg is an additional argument for specified type of status.
  */
 int
 check_status_create(PMEMpoolcheck *ppc, enum pmempool_check_msg_type type,
-	uint32_t question, const char *fmt, ...)
+	uint32_t arg, const char *fmt, ...)
 {
 	if (CHECK_IS_NOT(ppc, VERBOSE) && type == PMEMPOOL_CHECK_MSG_TYPE_INFO)
 		return 0;
@@ -360,10 +362,9 @@ check_status_create(PMEMpoolcheck *ppc, enum pmempool_check_msg_type type,
 	va_end(ap);
 
 	/* append possible strerror at the end of the message */
-	if (type != PMEMPOOL_CHECK_MSG_TYPE_QUESTION && errno &&
-			p > 0) {
+	if (type != PMEMPOOL_CHECK_MSG_TYPE_QUESTION && arg && p > 0) {
 		char buff[UTIL_MAX_ERR_MSG];
-		util_strerror(errno, buff, UTIL_MAX_ERR_MSG);
+		util_strerror((int)arg, buff, UTIL_MAX_ERR_MSG);
 		int ret = snprintf(st->msg + p, MAX_MSG_STR_SIZE - (size_t)p,
 			": %s", buff);
 		if (ret < 0 || ret >= (int)(MAX_MSG_STR_SIZE - (size_t)p)) {
@@ -375,7 +376,7 @@ check_status_create(PMEMpoolcheck *ppc, enum pmempool_check_msg_type type,
 
 	st->status.type = type;
 
-	return status_push(ppc, st, question);
+	return status_push(ppc, st, arg);
 }
 
 /*
@@ -590,7 +591,7 @@ check_status_get_util(struct check_status *status)
  * check_answer_loop -- loop through all available answers and process them
  */
 int
-check_answer_loop(PMEMpoolcheck *ppc, location *data, void *ctx,
+check_answer_loop(PMEMpoolcheck *ppc, location *data, void *ctx, int fail_on_no,
 	int (*callback)(PMEMpoolcheck *, location *, uint32_t, void *ctx))
 {
 	struct check_status *answer;
@@ -598,10 +599,17 @@ check_answer_loop(PMEMpoolcheck *ppc, location *data, void *ctx,
 	while ((answer = pop_answer(ppc->data)) != NULL) {
 		/* if answer is "no" we cannot fix an issue */
 		if (answer->answer != PMEMPOOL_CHECK_ANSWER_YES) {
-			CHECK_ERR(ppc,
-				"cannot complete repair, reverting changes");
-			ppc->result = CHECK_RESULT_NOT_CONSISTENT;
-			goto error;
+			if (fail_on_no ||
+				answer->answer != PMEMPOOL_CHECK_ANSWER_NO) {
+				CHECK_ERR(ppc,
+					"cannot complete repair, reverting changes");
+				ppc->result = CHECK_RESULT_NOT_CONSISTENT;
+				goto error;
+			}
+
+			ppc->result = CHECK_RESULT_REPAIRED;
+			check_status_release(ppc, answer);
+			continue;
 		}
 
 		/* perform fix */
@@ -682,26 +690,6 @@ check_get_uuid_str(uuid_t uuid)
 		return "";
 	}
 	return uuid_str;
-}
-
-/*
- * check_get_pool_type_str -- return human-readable pool type string
- */
-const char *
-check_get_pool_type_str(enum pool_type type)
-{
-	switch (type) {
-	case POOL_TYPE_BTT:
-		return "btt";
-	case POOL_TYPE_LOG:
-		return "pmemlog";
-	case POOL_TYPE_BLK:
-		return "pmemblk";
-	case POOL_TYPE_OBJ:
-		return "pmemobj";
-	default:
-		return "unknown";
-	}
 }
 
 /*

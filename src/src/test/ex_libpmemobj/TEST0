@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -34,15 +34,14 @@
 #
 # src/test/ex_libpmemobj/TEST0 -- unit test for libpmemobj examples
 #
-export UNITTEST_NAME=ex_libpmemobj/TEST0
-export UNITTEST_NUM=0
 
 # standard unit test setup
 . ../unittest/unittest.sh
 
 require_test_type medium
-
 require_build_type debug nondebug
+# Valgrind interprets msync as a read and hence reports a race
+require_fs_type pmem
 
 setup
 

@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -34,8 +34,6 @@
 #
 # src/test/util_map_proc/TEST4 -- unit test for util_map /proc parsing
 #
-export UNITTEST_NAME=util_map_proc/TEST4
-export UNITTEST_NUM=4
 
 # standard unit test setup
 . ../unittest/unittest.sh
@@ -43,6 +41,7 @@ export UNITTEST_NUM=4
 require_test_type medium
 
 require_fs_type none
+require_procfs
 configure_valgrind memcheck force-disable
 
 setup
@@ -50,7 +49,8 @@ setup
 export PMEM_MMAP_HINT=2E000000000
 
 # there should be an unused region for each length
-expect_normal_exit ./util_map_proc$EXESUFFIX maps_all\
+mapfile="maps_all_"$(uname -s | tr "[:upper:]" "[:lower:]")
+expect_normal_exit ./util_map_proc$EXESUFFIX $mapfile\
      0x0000100000\
      0x0001000000\
      0x0040000000\

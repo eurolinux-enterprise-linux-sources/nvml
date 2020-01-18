@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,7 +46,7 @@
 
 #define LAYOUT "cpp"
 
-namespace nvobj = nvml::obj;
+namespace nvobj = pmem::obj;
 
 namespace
 {
@@ -63,8 +63,8 @@ prepare_array(nvobj::pool_base &pop)
 	int ret;
 
 	nvobj::persistent_ptr<T> parr_vsize;
-	ret = pmemobj_alloc(pop.get_handle(), parr_vsize.raw_ptr(),
-			    sizeof(T) * TEST_ARR_SIZE, 0, nullptr, nullptr);
+	ret = pmemobj_zalloc(pop.get_handle(), parr_vsize.raw_ptr(),
+			     sizeof(T) * TEST_ARR_SIZE, 0);
 
 	UT_ASSERTeq(ret, 0);
 
@@ -222,7 +222,7 @@ main(int argc, char *argv[])
 	try {
 		pop = nvobj::pool_base::create(path, LAYOUT, PMEMOBJ_MIN_POOL,
 					       S_IWUSR | S_IRUSR);
-	} catch (nvml::pool_error &pe) {
+	} catch (pmem::pool_error &pe) {
 		UT_FATAL("!pool::create: %s %s", pe.what(), path);
 	}
 

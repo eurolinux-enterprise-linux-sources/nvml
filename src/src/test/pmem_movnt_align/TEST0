@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -34,8 +34,6 @@
 #
 # src/test/pmem_movnt_align/TEST0 -- unit test for pmem_memcpy_persist
 #
-export UNITTEST_NAME=pmem_movnt_align/TEST0
-export UNITTEST_NUM=0
 
 # standard unit test setup
 . ../unittest/unittest.sh
@@ -49,10 +47,38 @@ setup
 
 export PMEM_LOG_LEVEL=15
 
-expect_normal_exit ./pmem_movnt_align$EXESUFFIX C
+function test() {
+	expect_normal_exit ./pmem_movnt_align$EXESUFFIX $1
+}
 
-grep "pmem_flush" pmem$UNITTEST_NUM.log | sed 's/.*len //' > grep$UNITTEST_NUM.log
+function test_all() {
+	unset PMEM_MOVNT_THRESHOLD
+	test C
+	test F
+	test B
+	test S
 
-check
+	export PMEM_MOVNT_THRESHOLD=0
+	test C
+	test F
+	test B
+	test S
+
+	export PMEM_MOVNT_THRESHOLD=99999
+	test C
+	test F
+	test B
+	test S
+}
+
+test_all
+
+export PMEM_AVX512F=1
+
+test_all
+
+export PMEM_AVX=1
+
+test_all
 
 pass

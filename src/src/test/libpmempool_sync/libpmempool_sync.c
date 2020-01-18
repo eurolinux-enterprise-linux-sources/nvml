@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,8 +49,11 @@ main(int argc, char *argv[])
 		UT_FATAL("usage: %s poolset_file flags", argv[0]);
 
 	int ret = pmempool_sync(argv[1], (unsigned)strtoul(argv[2], NULL, 0));
-	UT_OUT("result: %d, errno: %d", ret, errno);
-	UT_ASSERTeq(ret, 0);
+	if (ret)
+		UT_OUT("result: %d, errno: %d", ret, errno);
+	else
+		UT_OUT("result: %d", ret);
+
 
 	DONE(NULL);
 }

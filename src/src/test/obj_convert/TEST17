@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2015-2017, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -34,8 +34,6 @@
 #
 # src/test/obj_convert/TEST17 -- unit test for pool conversion
 #
-export UNITTEST_NAME=obj_convert/TEST17
-export UNITTEST_NUM=17
 
 # standard unit test setup
 . ../unittest/unittest.sh
@@ -50,9 +48,7 @@ require_build_type debug
 
 require_fs_type pmem
 
-# Triggers a bug in valgrind 3.10, we should update our valgrind tooling
-# to a newer version and remove this.
-configure_valgrind memcheck force-disable
+require_valgrind 3.12
 
 setup
 
@@ -61,7 +57,7 @@ setup
 # set this to enable runtime creation of pools based on the old version of
 # the library. If not set the pools to convert and verify are extracted from
 # a prebuilt archive.
-#PATH_TO_1_0_DBG=/path/to/nvml_1.0/debug
+#PATH_TO_1_0_DBG=/path/to/pmdk_1.0/debug
 
 run_scenarios 7
 

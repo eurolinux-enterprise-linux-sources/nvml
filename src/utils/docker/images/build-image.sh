@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2016-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -32,12 +32,14 @@
 
 #
 # build-image.sh <OS-VER> - prepares a Docker image with <OS>-based
-#                           environment for building NVML project, according
+#                           environment for building PMDK project, according
 #                           to the Dockerfile.<OS-VER> file located
 #                           in the same directory.
 #
 # The script can be run locally.
 #
+
+set -e
 
 function usage {
 	echo "Usage:"
@@ -60,8 +62,8 @@ if [[ ! -f "Dockerfile.$1" ]]; then
 	exit 1
 fi
 
-# Build a Docker image tagged with pmem/nvml:OS-VER
-tag=pmem/nvml:$1
+# Build a Docker image tagged with pmem/pmdk:OS-VER
+tag=pmem/pmdk:$1
 docker build -t $tag \
 	--build-arg http_proxy=$http_proxy \
 	--build-arg https_proxy=$https_proxy \

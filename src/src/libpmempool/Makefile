@@ -1,4 +1,4 @@
-# Copyright 2016-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -39,33 +39,25 @@ LIBRARY_VERSION = 0.0
 INCS += -I$(TOP)/src/libpmemlog
 INCS += -I$(TOP)/src/libpmemblk
 INCS += -I$(TOP)/src/libpmemobj
+INCS += -I$(TOP)/src/libpmemcto
 INCS += -I$(TOP)/src/rpmem_common
 INCS += -I$(TOP)/src/librpmem
 
 vpath %.c ../librpmem
 
-SOURCE =\
-	$(COMMON)/file.c\
-	$(COMMON)/file_linux.c\
-	$(COMMON)/mmap.c\
-	$(COMMON)/mmap_linux.c\
-	$(COMMON)/pool_hdr.c\
-	$(COMMON)/pool_hdr_linux.c\
-	$(COMMON)/os_linux.c\
-	$(COMMON)/os_thread_linux.c\
-	$(COMMON)/out.c\
-	$(COMMON)/set.c\
-	$(COMMON)/util.c\
-	$(COMMON)/uuid.c\
-	$(COMMON)/uuid_linux.c\
-	$(COMMON)/util_linux.c\
+include ../common/pmemcommon.inc
+
+SOURCE +=\
 	libpmempool.c\
 	check.c\
 	check_backup.c\
 	check_btt_info.c\
 	check_btt_map_flog.c\
-	check_log_blk.c\
+	check_log.c\
+	check_blk.c\
+	check_cto.c\
 	check_pool_hdr.c\
+	check_sds.c\
 	check_util.c\
 	check_write.c\
 	pool.c\
@@ -82,18 +74,12 @@ LIBPMEMBLK_PRIV_FUNCS=btt_info_set btt_arena_datasize btt_flog_size\
 	btt_map_size btt_flog_get_valid map_entry_is_initial btt_info_convert2h\
 	btt_info_convert2le btt_flog_convert2h btt_flog_convert2le
 
-LIBPMEMLOG_PRIV_FUNCS=log_convert2h log_convert2le
-
 include ../Makefile.inc
 
-LIBS += -lpmem -ldl
+LIBS += -pthread -lpmem $(LIBDL) $(LIBNDCTL)
 CFLAGS += -DUSE_LIBDL
 CFLAGS += -DUSE_RPMEM
 
 pmemblk_priv_funcs.o: $(PMEMBLK_PRIV_OBJ)
 	$(OBJCOPY) --localize-hidden $(addprefix -G, $(LIBPMEMBLK_PRIV_FUNCS)) \
-	$< $@
-
-pmemlog_priv_funcs.o: $(PMEMLOG_PRIV_OBJ)
-	$(OBJCOPY) --localize-hidden $(addprefix -G, $(LIBPMEMLOG_PRIV_FUNCS)) \
 	$< $@

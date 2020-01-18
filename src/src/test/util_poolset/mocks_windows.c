@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,7 +39,7 @@
 #include "unittest.h"
 
 extern const char *Open_path;
-extern off_t Fallocate_len;
+extern os_off_t Fallocate_len;
 extern size_t Is_pmem_len;
 
 /*
@@ -68,7 +68,7 @@ FUNC_MOCK_END
 /*
  * posix_fallocate -- posix_fallocate mock
  */
-FUNC_MOCK(os_posix_fallocate, int, int fd, off_t offset, off_t len)
+FUNC_MOCK(os_posix_fallocate, int, int fd, os_off_t offset, os_off_t len)
 FUNC_MOCK_RUN_DEFAULT {
 	if (Fallocate_len == len) {
 		UT_OUT("mocked fallocate: %ju", len);
@@ -102,21 +102,9 @@ FUNC_MOCK_END
  *
  * Called automatically by the run-time loader.
  */
-ATTR_CONSTRUCTOR
+CONSTRUCTOR(libpmem_init)
 void
 libpmem_init(void)
 {
 	pmem_init();
-}
-
-/*
- * libpmem_fini -- libpmem cleanup routine
- *
- * Called automatically when the process terminates.
- */
-ATTR_DESTRUCTOR
-void
-libpmem_fini(void)
-{
-	/* nothing to do */
 }

@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -39,14 +39,12 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "util_file_create/TEST2"
-$Env:UNITTEST_NUM = "2"
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
 
 require_fs_type any
-require_test_type long
+require_test_type medium
 
 setup
 

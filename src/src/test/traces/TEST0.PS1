@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 # Copyright (c) 2016, Microsoft Corporation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -39,8 +39,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "traces/TEST0"
-$Env:UNITTEST_NUM = "0"
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
@@ -54,8 +52,8 @@ setup
 
 rm -Force .\custom_file.log-*
 
-$Env:TRACE_LOG_LEVEL = "4"
-$Env:TRACE_LOG_FILE = ".\custom_file.log-"
+$Env:UT_LOG_LEVEL = "4"
+$Env:UT_LOG_FILE = ".\custom_file.log-"
 expect_normal_exit $Env:EXE_DIR\traces$Env:EXESUFFIX
 
 # check results

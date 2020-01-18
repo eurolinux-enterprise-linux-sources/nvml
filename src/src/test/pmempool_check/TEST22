@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2017, Intel Corporation
+# Copyright 2017-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -34,8 +34,6 @@
 # pmempool_check/TEST22 -- test for checking pools with device dax under
 #			valgrind
 #
-export UNITTEST_NAME=pmempool_check/TEST22
-export UNITTEST_NUM=22
 
 . ../unittest/unittest.sh
 
@@ -45,7 +43,7 @@ require_dax_devices 1
 require_fs_type any
 
 configure_valgrind memcheck force-enable $PMEMPOOL$EXESUFFIX
-require_valgrind_dev_version 3.11
+require_valgrind 3.11
 
 setup
 

@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -32,11 +32,9 @@
 #
 
 #
-# src/test/pmem_movnt_align/TEST1 -- unit test for pmem_memmove_persist
-# in forward direction
+# src/test/pmem_movnt_align/TEST1 -- unit test for pmem_memcpy_persist
+# with valgrind pmemcheck tool
 #
-export UNITTEST_NAME=pmem_movnt_align/TEST1
-export UNITTEST_NUM=1
 
 # standard unit test setup
 . ../unittest/unittest.sh
@@ -44,16 +42,45 @@ export UNITTEST_NUM=1
 require_test_type medium
 
 require_fs_type pmem non-pmem
-require_build_type debug static-debug
-
+require_build_type debug nondebug
+configure_valgrind pmemcheck force-enable
+export VALGRIND_OPTS="--mult-stores=yes"
 setup
 
 export PMEM_LOG_LEVEL=15
 
-expect_normal_exit ./pmem_movnt_align$EXESUFFIX F
+function test() {
+	expect_normal_exit ./pmem_movnt_align$EXESUFFIX $1
+}
 
-grep "pmem_flush" pmem$UNITTEST_NUM.log | sed 's/.*len //' > grep$UNITTEST_NUM.log
+function test_all() {
+	unset PMEM_MOVNT_THRESHOLD
+	test C
+	test F
+	test B
+	test S
 
-check
+	export PMEM_MOVNT_THRESHOLD=0
+	test C
+	test F
+	test B
+	test S
+
+	export PMEM_MOVNT_THRESHOLD=99999
+	test C
+	test F
+	test B
+	test S
+}
+
+test_all
+
+export PMEM_AVX512F=1
+
+test_all
+
+export PMEM_AVX=1
+
+test_all
 
 pass

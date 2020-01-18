@@ -1,5 +1,5 @@
 #
-# Copyright 2015-2017, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -38,8 +38,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "obj_lane/TEST1"
-$Env:UNITTEST_NUM = "1"
 
 
 # standard unit test setup
@@ -49,7 +47,8 @@ $Env:UNITTEST_NUM = "1"
 require_test_type medium
 
 setup
-expect_normal_exit $Env:EXE_DIR\obj_lane$Env:EXESUFFIX m
+
+expect_normal_exit $Env:EXE_DIR\obj_lane$Env:EXESUFFIX m 2>$null
 
 check
 

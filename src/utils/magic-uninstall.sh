@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -32,15 +32,17 @@
 #
 # magic-uninstall.sh -- Script for uninstalling magic script
 #
-HDR_LOCAL=$(grep "File: nvml" /etc/magic)
-HDR_PKG=$(grep "File: nvml" /usr/share/nvml/nvml.magic)
+set -e
+
+HDR_LOCAL=$(grep "File: pmdk" /etc/magic)
+HDR_PKG=$(grep "File: pmdk" /usr/share/pmdk/pmdk.magic)
 
 if [[ $HDR_LOCAL == $HDR_PKG ]]
 then
-	echo "Removing NVML magic from /etc/magic"
-	HDR_LINE=$(grep -n "File: nvml" /etc/magic | cut -f1 -d:)
-	HDR_PKG_LINE=$(grep -n "File: nvml" /usr/share/nvml/nvml.magic | cut -f1 -d:)
-	HDR_LINES=$(cat /usr/share/nvml/nvml.magic | wc -l)
+	echo "Removing PMDK magic from /etc/magic"
+	HDR_LINE=$(grep -n "File: pmdk" /etc/magic | cut -f1 -d:)
+	HDR_PKG_LINE=$(grep -n "File: pmdk" /usr/share/pmdk/pmdk.magic | cut -f1 -d:)
+	HDR_LINES=$(cat /usr/share/pmdk/pmdk.magic | wc -l)
 	HDR_FIRST=$(($HDR_LINE - $HDR_PKG_LINE + 1))
 	HDR_LAST=$(($HDR_FIRST + $HDR_LINES))
 	sed -i "${HDR_FIRST},${HDR_LAST}d" /etc/magic

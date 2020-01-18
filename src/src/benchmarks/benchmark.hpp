@@ -61,15 +61,16 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-
 #include <util.h>
 
 #include "benchmark_time.hpp"
+#include "os.h"
 
 #ifndef ARRAY_SIZE
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 #endif
 #define RRAND(max, min) (rand() % ((max) - (min)) + (min))
+#define RRAND_R(seed, max, min) (os_rand_r(seed) % ((max) - (min)) + (min))
 
 struct benchmark;
 
@@ -88,6 +89,8 @@ struct benchmark_args {
 	unsigned n_threads;      /* number of working threads */
 	size_t n_ops_per_thread; /* number of operations per thread */
 	bool thread_affinity;    /* set worker threads CPU affinity mask */
+	ssize_t main_affinity;   /* main thread affinity */
+	char *affinity_list;     /* set CPU affinity order */
 	size_t dsize;		 /* data size */
 	unsigned seed;		 /* PRNG seed */
 	unsigned repeats;	/* number of repeats of one scenario */

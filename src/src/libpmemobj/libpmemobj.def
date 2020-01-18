@@ -67,6 +67,8 @@ EXPORTS
 	pmemobj_cond_signal
 	pmemobj_cond_timedwait
 	pmemobj_cond_wait
+	pmemobj_ctl_execU;
+	pmemobj_ctl_execW;
 	pmemobj_ctl_getU;
 	pmemobj_ctl_getW;
 	pmemobj_ctl_setU;
@@ -74,6 +76,7 @@ EXPORTS
 	pmemobj_pool_by_oid
 	pmemobj_pool_by_ptr
 	pmemobj_alloc
+	pmemobj_xalloc
 	pmemobj_zalloc
 	pmemobj_realloc
 	pmemobj_zrealloc
@@ -118,5 +121,11 @@ EXPORTS
 	pmemobj_drain
 	pmemobj_direct
 	pmemobj_oid
+	pmemobj_reserve
+	pmemobj_xreserve
+	pmemobj_set_value
+	pmemobj_publish
+	pmemobj_tx_publish
+	pmemobj_cancel
 	_pobj_debug_notice
 	DllMain

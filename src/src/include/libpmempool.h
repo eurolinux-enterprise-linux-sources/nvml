@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -42,7 +42,7 @@
 #ifdef _WIN32
 #include <pmemcompat.h>
 
-#ifndef NVML_UTF8_API
+#ifndef PMDK_UTF8_API
 #define pmempool_check_status pmempool_check_statusW
 #define pmempool_check_args pmempool_check_argsW
 
@@ -96,6 +96,7 @@ enum pmempool_pool_type {
 	PMEMPOOL_POOL_TYPE_BLK,
 	PMEMPOOL_POOL_TYPE_OBJ,
 	PMEMPOOL_POOL_TYPE_BTT,
+	PMEMPOOL_POOL_TYPE_CTO,
 };
 
 /*
@@ -166,7 +167,7 @@ enum pmempool_check_result pmempool_check_end(PMEMpoolcheck *ppc);
  * used at compile-time by passing these defines to pmempool_check_version().
  */
 #define PMEMPOOL_MAJOR_VERSION 1
-#define PMEMPOOL_MINOR_VERSION 2
+#define PMEMPOOL_MINOR_VERSION 3
 
 /*
  * check status

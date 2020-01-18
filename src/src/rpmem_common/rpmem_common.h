@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,9 +44,12 @@
 #define RPMEM_DEF_SSH	"ssh"
 #define RPMEM_PROV_SOCKET_ENV	"RPMEM_ENABLE_SOCKETS"
 #define RPMEM_PROV_VERBS_ENV	"RPMEM_ENABLE_VERBS"
+#define RPMEM_MAX_NLANES_ENV	"RPMEM_MAX_NLANES"
 #define RPMEM_ACCEPT_TIMEOUT 30000
 #define RPMEM_CONNECT_TIMEOUT 30000
+#define RPMEM_MONITOR_TIMEOUT 1000
 
+#include <stdint.h>
 #include <sys/socket.h>
 #include <netdb.h>
 
@@ -125,6 +128,8 @@ struct rpmem_resp_attr {
 #define RPMEM_MAX_USER		(32 + 1)   /* see useradd(8) + 1 for '\0' */
 #define RPMEM_MAX_NODE		(255 + 1)  /* see gethostname(2) + 1 for '\0' */
 #define RPMEM_MAX_SERVICE	(NI_MAXSERV + 1)  /* + 1 for '\0' */
+#define RPMEM_HDR_SIZE		4096
+#define RPMEM_CLOSE_FLAGS_REMOVE 0x1
 
 struct rpmem_target_info {
 	char user[RPMEM_MAX_USER];
@@ -132,6 +137,9 @@ struct rpmem_target_info {
 	char service[RPMEM_MAX_SERVICE];
 	unsigned flags;
 };
+
+extern unsigned Rpmem_max_nlanes;
+extern int Rpmem_fork_unsafe;
 
 int rpmem_b64_write(int sockfd, const void *buf, size_t len, int flags);
 int rpmem_b64_read(int sockfd, void *buf, size_t len, int flags);

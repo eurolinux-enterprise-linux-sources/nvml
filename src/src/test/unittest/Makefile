@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -42,17 +42,16 @@ vpath %.h $(TOP)/src/common
 
 TARGET = libut.a
 OBJS = ut.o ut_alloc.o ut_file.o ut_pthread.o ut_signal.o ut_backtrace.o\
-	os_linux.o os_thread_linux.o
+	os_posix.o os_thread_posix.o
 CFLAGS = -I$(TOP)/src/include
 CFLAGS += -I$(TOP)/src/common
+CFLAGS += $(OS_INCS)
 CFLAGS += -std=gnu99
 CFLAGS += -ggdb
 CFLAGS += -Wall
 CFLAGS += -Werror
 CFLAGS += -Wmissing-prototypes
 CFLAGS += -Wpointer-arith
-CFLAGS += -Wunused-macros
-CFLAGS += -Wmissing-field-initializers
 CFLAGS += -Wsign-conversion
 CFLAGS += -Wsign-compare
 ifeq ($(call check_Wconversion), y)
@@ -60,11 +59,16 @@ CFLAGS += -Wconversion
 endif
 CFLAGS += -pthread
 CFLAGS += -fno-common
+
+ifeq ($(call check_compiler, icc), n)
+CFLAGS += -Wunused-macros
+CFLAGS += -Wmissing-field-initializers
 ifeq ($(call check_flag, -Wunreachable-code-return), y)
 CFLAGS += -Wunreachable-code-return
 endif
 ifeq ($(call check_flag, -Wmissing-variable-declarations), y)
 CFLAGS += -Wmissing-variable-declarations
+endif
 endif
 
 ifeq ($(USE_LIBUNWIND),1)
@@ -85,6 +89,8 @@ LIBS += $(GCOV_LIBS)
 endif
 
 CFLAGS += $(EXTRA_CFLAGS)
+
+LIBS += $(LIBUTIL)
 
 all test: $(TARGET)
 

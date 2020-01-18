@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 # Copyright (c) 2016, Microsoft Corporation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -37,8 +37,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "blk_rw_mt/TEST1"
-$Env:UNITTEST_NUM = "1"
 
 
 # standard unit test setup
@@ -46,8 +44,8 @@ $Env:UNITTEST_NUM = "1"
 
 require_test_type medium
 
-# doesn't make sense to run in local directory
-require_fs_type pmem non-pmem
+# windows msyncs are too slow to run this test on non-pmem
+require_fs_type pmem
 
 setup
 

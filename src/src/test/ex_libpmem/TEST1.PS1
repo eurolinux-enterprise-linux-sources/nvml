@@ -1,5 +1,5 @@
 #
-# Copyright 2015-2017, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -38,8 +38,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "ex_libpmem/TEST1"
-$Env:UNITTEST_NUM = "1"
 
 # standard unit test setup
 
@@ -53,7 +51,7 @@ setup
 
 create_nonzeroed_file 2 0 $DIR\testfile1
 
-expect_normal_exit $Env:EXE_DIR\full_copy $DIR\testfile1 $DIR\testfile2 `
+expect_normal_exit $Env:EXE_DIR\ex_pmem_full_copy $DIR\testfile1 $DIR\testfile2 `
 	> out$Env:UNITTEST_NUM.log 2>&1
 
 cmp $DIR\testfile1 $DIR\testfile2 > cmp$Env:UNITTEST_NUM.log 2>&1

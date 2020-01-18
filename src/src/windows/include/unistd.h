@@ -47,20 +47,25 @@
 #define X_OK 00 /* execute permission doesn't exist on Windows */
 #define F_OK 00
 
+/*
+ * sysconf -- get configuration information at run time
+ */
 static __inline long
 sysconf(int p)
 {
 	SYSTEM_INFO si;
-	GetSystemInfo(&si);
+	int ret = 0;
 
 	switch (p) {
 	case _SC_PAGESIZE:
+		GetSystemInfo(&si);
 		return si.dwPageSize;
-		break;
 
 	case _SC_NPROCESSORS_ONLN:
-		return si.dwNumberOfProcessors;
-		break;
+		for (int i = 0; i < GetActiveProcessorGroupCount(); i++) {
+			ret += GetActiveProcessorCount(i);
+		}
+		return ret;
 
 	default:
 		return 0;
@@ -71,10 +76,10 @@ sysconf(int p)
 #define getpid _getpid
 
 /*
- * pread - windows port of pread function
+ * pread -- read from a file descriptor at given offset
  */
 static ssize_t
-pread(int fd, void *buf, size_t count, off_t offset)
+pread(int fd, void *buf, size_t count, os_off_t offset)
 {
 	__int64 position = _lseeki64(fd, 0, SEEK_CUR);
 	_lseeki64(fd, offset, SEEK_SET);
@@ -84,10 +89,10 @@ pread(int fd, void *buf, size_t count, off_t offset)
 }
 
 /*
- * pwrite - windows port of pwrite function
+ * pwrite -- write to a file descriptor at given offset
  */
 static ssize_t
-pwrite(int fd, const void *buf, size_t count, off_t offset)
+pwrite(int fd, const void *buf, size_t count, os_off_t offset)
 {
 	__int64 position = _lseeki64(fd, 0, SEEK_CUR);
 	_lseeki64(fd, offset, SEEK_SET);
@@ -99,7 +104,7 @@ pwrite(int fd, const void *buf, size_t count, off_t offset)
 #define S_ISBLK(x) 0 /* BLK devices not exist on Windows */
 
 /*
- * basename - windows implementation of basename function
+ * basename -- parse pathname and return filename component
  */
 static char *
 basename(char *path)
@@ -114,15 +119,17 @@ basename(char *path)
 }
 
 /*
- * dirname - windows implementation of dirname function
+ * dirname -- parse pathname and return directory component
  */
 static char *
 dirname(char *path)
 {
-	size_t len = strlen(path);
+	if (path == NULL)
+		return ".";
 
+	size_t len = strlen(path);
 	if (len == 0)
-		return NULL;
+		return ".";
 
 	char *end = path + len;
 
@@ -154,7 +161,5 @@ dirname(char *path)
 
 	return path;
 }
-
-int ftruncate(int fd, off_t length);
 
 #endif /* UNISTD_H */

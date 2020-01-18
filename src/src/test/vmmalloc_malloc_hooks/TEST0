@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -35,8 +35,6 @@
 # src/test/vmmalloc_malloc_hooks/TEST0 -- unit test for
 # libvmmalloc malloc hooks
 #
-export UNITTEST_NAME=vmmalloc_malloc_hooks/TEST0
-export UNITTEST_NUM=0
 
 # standard unit test setup
 . ../unittest/unittest.sh
@@ -45,18 +43,20 @@ require_test_type medium
 
 require_fs_type any
 # there's no point in testing statically linked builds
-require_build_type debug
+require_build_type debug nondebug
 require_no_asan
+require_no_freebsd
+
+# user-defined hooks won't be called if valgrind is enabled
+configure_valgrind helgrind force-disable
+configure_valgrind drd force-disable
+configure_valgrind memcheck force-disable
 
 setup
 
-export VMMALLOC_LOG_LEVEL=4
-export TEST_LD_PRELOAD=libvmmalloc.so
-
+# do not pre-load libvmmalloc.so
+# user-defined hooks should be called
 expect_normal_exit ./vmmalloc_malloc_hooks$EXESUFFIX
-
-egrep 'size\ 4321' \
-    vmmalloc$UNITTEST_NUM.log > grep$UNITTEST_NUM.log
 
 check
 

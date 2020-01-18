@@ -1,5 +1,6 @@
-#!/bin/bash -e
-# Copyright 2016, Intel Corporation
+#!/usr/bin/env bash
+#
+# Copyright 2016-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -31,10 +32,14 @@
 #
 # utils/style_check.sh -- common style checking script
 #
+set -e
+
 ARGS=("$@")
 CSTYLE_ARGS=()
 CLANG_ARGS=()
 CHECK_TYPE=$1
+
+[ -z "$clang_format_bin" ] && clang_format_bin=clang-format
 
 #
 # print script usage
@@ -44,15 +49,15 @@ function usage() {
 }
 
 #
-# require clang-format version 3.8+
+# require clang-format version 3.8
 #
 function check_clang_version() {
 	set +e
 	which ${clang_format_bin} &> /dev/null && ${clang_format_bin} --version |\
-	grep "version 3.[8-9]\|version [4-9].[0-9]*\|version 3.[1-9][0-9]"i\
+	grep "version 3\.8"\
 	&> /dev/null
 	if [ $? -ne 0 ]; then
-		echo "SKIP: requires clang-format version 3.8+"
+		echo "SKIP: requires clang-format version 3.8"
 		exit 0
 	fi
 	set -e

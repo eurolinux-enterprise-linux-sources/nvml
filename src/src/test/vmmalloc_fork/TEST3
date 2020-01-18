@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -34,8 +34,6 @@
 #
 # src/test/vmmalloc_fork/TEST3 -- unit test for libvmmalloc fork() support
 #
-export UNITTEST_NAME=vmmalloc_fork/TEST3
-export UNITTEST_NUM=3
 
 # standard unit test setup
 . ../unittest/unittest.sh
@@ -46,6 +44,11 @@ require_fs_type any
 # there's no point in testing statically linked builds
 require_build_type debug nondebug
 require_no_asan
+
+# This test uses pthread mutexes across fork, and recreates them in the child
+# process.
+configure_valgrind helgrind force-disable
+configure_valgrind drd force-disable
 
 setup
 

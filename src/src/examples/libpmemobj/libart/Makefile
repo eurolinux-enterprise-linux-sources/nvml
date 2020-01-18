@@ -1,6 +1,6 @@
 #
 # Copyright 2016, FUJITSU TECHNOLOGY SOLUTIONS GMBH
-# Copyright 2016-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -47,12 +47,19 @@
 # ===========================================================================
 #
 
-PROGS = arttree arttree_structures
-LIBRARIES = art
+include ../../../common.inc
 
-include ../../Makefile.inc
+ARCH := $(call get_arch)
+
+ifeq ($(ARCH), x86_64)
+# libart uses x86 intrinsics
+PROGS = arttree examine_arttree
+LIBRARIES = art
+endif
 
 LIBS = -lpmemobj
+
+include ../../Makefile.inc
 
 $(PROGS): | $(DYNAMIC_LIBRARIES)
 $(PROGS): LDFLAGS += -Wl,-rpath=. -L. -lart
@@ -60,4 +67,4 @@ $(PROGS): LDFLAGS += -Wl,-rpath=. -L. -lart
 libart.o: art.o
 
 arttree: arttree.o
-arttree_structures: arttree_structures.o arttree_examine.o arttree_search.o
+examine_arttree: arttree_structures.o arttree_examine.o arttree_search.o

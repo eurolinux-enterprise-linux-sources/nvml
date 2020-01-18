@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,6 +44,7 @@
 #include <time.h>
 #include <stdint.h>
 #include <endian.h>
+#include <stdbool.h>
 
 #include "libpmem.h"
 #include "libpmemblk.h"
@@ -57,6 +58,25 @@
 #include "sys_util.h"
 #include "util_pmem.h"
 #include "valgrind_internal.h"
+
+static const struct pool_attr Blk_create_attr = {
+		BLK_HDR_SIG,
+		BLK_FORMAT_MAJOR,
+		BLK_FORMAT_COMPAT_DEFAULT,
+		BLK_FORMAT_INCOMPAT_DEFAULT,
+		BLK_FORMAT_RO_COMPAT_DEFAULT,
+		{0}, {0}, {0}, {0}, {0}
+};
+
+static const struct pool_attr Blk_open_attr = {
+		BLK_HDR_SIG,
+		BLK_FORMAT_MAJOR,
+		BLK_FORMAT_COMPAT_CHECK,
+		BLK_FORMAT_INCOMPAT_CHECK,
+		BLK_FORMAT_RO_COMPAT_CHECK,
+		{0}, {0}, {0}, {0}, {0}
+};
+
 /*
  * lane_enter -- (internal) acquire a unique lane number
  */
@@ -65,7 +85,7 @@ lane_enter(PMEMblkpool *pbp, unsigned *lane)
 {
 	unsigned mylane;
 
-	mylane = __sync_fetch_and_add(&pbp->next_lane, 1) % pbp->nlane;
+	mylane = util_fetch_and_add32(&pbp->next_lane, 1) % pbp->nlane;
 
 	/* lane selected, grab the per-lane lock */
 	util_mutex_lock(&pbp->locks[mylane]);
@@ -416,9 +436,7 @@ pmemblk_createU(const char *path, size_t bsize, size_t poolsize, mode_t mode)
 	struct pool_set *set;
 
 	if (util_pool_create(&set, path, poolsize, PMEMBLK_MIN_POOL,
-			BLK_HDR_SIG, BLK_FORMAT_MAJOR,
-			BLK_FORMAT_COMPAT, BLK_FORMAT_INCOMPAT,
-			BLK_FORMAT_RO_COMPAT, NULL,
+			PMEMBLK_MIN_PART, &Blk_create_attr, NULL,
 			REPLICAS_DISABLED) != 0) {
 		LOG(2, "cannot create pool or pool set");
 		return NULL;
@@ -511,10 +529,8 @@ blk_open_common(const char *path, size_t bsize, int cow)
 
 	struct pool_set *set;
 
-	if (util_pool_open(&set, path, cow, PMEMBLK_MIN_POOL,
-			BLK_HDR_SIG, BLK_FORMAT_MAJOR,
-			BLK_FORMAT_COMPAT, BLK_FORMAT_INCOMPAT,
-			BLK_FORMAT_RO_COMPAT, NULL) != 0) {
+	if (util_pool_open(&set, path, cow, PMEMBLK_MIN_PART, &Blk_open_attr,
+			NULL, false, NULL) != 0) {
 		LOG(2, "cannot open pool or pool set");
 		return NULL;
 	}
@@ -822,13 +838,4 @@ pmemblk_checkW(const wchar_t *path, size_t bsize)
 	util_free_UTF8(upath);
 	return ret;
 }
-#endif
-
-
-#ifdef _MSC_VER
-/*
- * libpmemblk constructor/destructor functions
- */
-MSVC_CONSTR(libpmemblk_init)
-MSVC_DESTR(libpmemblk_fini)
 #endif

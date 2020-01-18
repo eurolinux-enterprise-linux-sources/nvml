@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,6 +43,8 @@
 #include "log.h"
 #include "blk.h"
 #include "libpmemobj.h"
+#include "libpmemcto.h"
+#include "cto.h"
 #include "lane.h"
 #include "redo.h"
 #include "memops.h"
@@ -69,7 +71,8 @@
 #define OPT_BLK (1 << (PMEM_POOL_TYPE_BLK + OPT_SHIFT))
 #define OPT_OBJ (1 << (PMEM_POOL_TYPE_OBJ + OPT_SHIFT))
 #define OPT_BTT (1 << (PMEM_POOL_TYPE_BTT + OPT_SHIFT))
-#define OPT_ALL (OPT_LOG | OPT_BLK | OPT_OBJ | OPT_BTT)
+#define OPT_CTO (1 << (PMEM_POOL_TYPE_CTO + OPT_SHIFT))
+#define OPT_ALL (OPT_LOG | OPT_BLK | OPT_OBJ | OPT_BTT | OPT_CTO)
 
 #define OPT_REQ_SHIFT	8
 #define OPT_REQ_MASK	((1 << OPT_REQ_SHIFT) - 1)
@@ -123,7 +126,8 @@ typedef enum {
 	PMEM_POOL_TYPE_BLK	= 0x02,
 	PMEM_POOL_TYPE_OBJ	= 0x04,
 	PMEM_POOL_TYPE_BTT	= 0x08,
-	PMEM_POOL_TYPE_ALL	= 0x0f,
+	PMEM_POOL_TYPE_CTO	= 0x10,
+	PMEM_POOL_TYPE_ALL	= 0x1f,
 	PMEM_POOL_TYPE_UNKNOWN	= 0x80,
 } pmem_pool_type_t;
 
@@ -155,6 +159,9 @@ struct pmem_pool_params {
 		struct {
 			char layout[PMEMOBJ_MAX_LAYOUT];
 		} obj;
+		struct {
+			char layout[PMEMCTO_MAX_LAYOUT];
+		} cto;
 	};
 };
 
@@ -207,7 +214,8 @@ void util_options_free(struct options *opts);
 int util_options_verify(const struct options *opts, pmem_pool_type_t type);
 int util_options_getopt(int argc, char *argv[], const char *optstr,
 		const struct options *opts);
-int util_validate_checksum(void *addr, size_t len, uint64_t *csum);
+int util_validate_checksum(void *addr, size_t len, uint64_t *csum,
+		uint64_t skip_off);
 pmem_pool_type_t util_get_pool_type_second_page(const void *pool_base_addr);
 int util_parse_mode(const char *str, mode_t *mode);
 int util_parse_ranges(const char *str, struct ranges *rangesp,
@@ -226,12 +234,6 @@ char ask_yN(char op, const char *fmt, ...) FORMAT_PRINTF(2, 3);
 unsigned util_heap_max_zone(size_t size);
 int util_heap_get_bitmap_params(uint64_t block_size, uint64_t *nallocsp,
 		uint64_t *nvalsp, uint64_t *last_valp);
-
-static inline uint32_t
-util_count_ones(uint64_t val)
-{
-	return (uint32_t)__builtin_popcountll(val);
-}
 
 static const struct range ENTIRE_UINT64 = {
 	{ NULL, NULL },	/* range */

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,10 +38,27 @@
  */
 
 #include "memblock.h"
+#include "vec.h"
 
 struct recycler;
+VEC(empty_runs, struct memory_block);
 
-struct recycler *recycler_new(struct palloc_heap *layout);
+struct recycler *recycler_new(struct palloc_heap *layout,
+	size_t nallocs);
 void recycler_delete(struct recycler *r);
-int recycler_put(struct recycler *r, const struct memory_block *m);
+uint64_t recycler_calc_score(struct palloc_heap *heap,
+	const struct memory_block *m, uint64_t *out_free_space);
+
+int recycler_put(struct recycler *r, const struct memory_block *m,
+	uint64_t score);
+
 int recycler_get(struct recycler *r, struct memory_block *m);
+
+void
+recycler_pending_put(struct recycler *r,
+	struct memory_block_reserved *m);
+
+struct empty_runs recycler_recalc(struct recycler *r, int force);
+
+void recycler_inc_unaccounted(struct recycler *r,
+	const struct memory_block *m);

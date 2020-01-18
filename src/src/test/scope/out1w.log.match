@@ -1,4 +1,4 @@
-scope\TEST1:
+scope/TEST1w:
 $(*)\libpmem.dll:
 DllMain
 mmap
@@ -7,10 +7,14 @@ msync
 munmap
 pmem_check_versionU
 pmem_check_versionW
+pmem_deep_drain
+pmem_deep_flush
+pmem_deep_persist
 pmem_drain
 pmem_errormsgU
 pmem_errormsgW
 pmem_flush
+pmem_has_auto_flush
 pmem_has_hw_drain
 pmem_is_pmem
 pmem_map_fileU

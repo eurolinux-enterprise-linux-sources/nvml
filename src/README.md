@@ -1,42 +1,47 @@
-nvml: Non-Volatile Memory Library
-=================================
+pmdk: Persistent Memory Development Kit
+=======================================
 
-[![Build Status](https://travis-ci.org/pmem/nvml.svg?branch=master)](https://travis-ci.org/pmem/nvml)
-[![Build status](https://ci.appveyor.com/api/projects/status/sehrom4f1neihucf/branch/master?svg=true&pr=false)](https://ci.appveyor.com/project/pmem/nvml/branch/master)
-[![Coverity Scan Build Status](https://img.shields.io/coverity/scan/3015.svg)](https://scan.coverity.com/projects/pmem-nvml)
-[![NVML release version](https://img.shields.io/github/release/pmem/nvml.svg)](https://github.com/pmem/nvml/releases/latest)
-[![Coverage Status](https://codecov.io/github/pmem/nvml/coverage.svg?branch=master)](https://codecov.io/gh/pmem/nvml/branch/master)
+[![Build Status](https://travis-ci.org/pmem/pmdk.svg?branch=master)](https://travis-ci.org/pmem/pmdk)
+[![Build status](https://ci.appveyor.com/api/projects/status/u2l1db7ucl5ktq10/branch/master?svg=true&pr=false)](https://ci.appveyor.com/project/pmem/pmdk/branch/master)
+[![Coverity Scan Build Status](https://img.shields.io/coverity/scan/3015.svg)](https://scan.coverity.com/projects/pmem-pmdk)
+[![PMDK release version](https://img.shields.io/github/release/pmem/pmdk.svg)](https://github.com/pmem/pmdk/releases/latest)
+[![Coverage Status](https://codecov.io/github/pmem/pmdk/coverage.svg?branch=master)](https://codecov.io/gh/pmem/pmdk/branch/master)
 
-This is the top-level README.md of the NVM Library.
+This is the top-level README.md of the Persistent Memory Development Kit.
 For more information, see http://pmem.io.
 
 ### The Libraries ###
 
-Please see the file [LICENSE](https://github.com/pmem/nvml/blob/master/LICENSE)
+Please see the file [LICENSE](https://github.com/pmem/pmdk/blob/master/LICENSE)
 for information on how this library is licensed.
 
 This tree contains a collection of libraries for using Non-Volatile Memory
-(NVM).  There are currently eight libraries:
+(NVM).  There are currently nine libraries:
 
 * **libpmem** -- basic pmem operations like flushing
 * **libpmemblk**, **libpmemlog**, **libpmemobj** -- pmem transactions
-* **libvmem**, **libvmmalloc** -- volatile use of pmem
+* **libvmem**, **libvmmalloc**<sup>1</sup> -- volatile use of pmem
 * **libpmempool** -- persistent memory pool management
-* **librpmem** -- remote access to persistent memory (EXPERIMENTAL)
+* **librpmem**<sup>1</sup> -- remote access to persistent memory (EXPERIMENTAL)
+* **libpmemcto** -- close-to-open persistence (EXPERIMENTAL)
 
-and one command-line utility:
+and two command-line utilities:
 
 * **pmempool** -- standalone tool for off-line pool management
+* **daxio** -- perform I/O on Device-DAX devices or zero a Device-DAX device
 
 These libraries and utilities are described in more detail on the
 [pmem web site](http://pmem.io).  There you'll find man pages, examples,
 and tutorials.
 
-**Currently, these libraries only work on 64-bit Linux and Windows.**
+**Currently, these libraries only work on 64-bit Linux, Windows**<sup>2</sup>
+**and 64-bit FreeBSD 11+**<sup>3</sup>.
 
->**NOTE: NVML for Windows is feature complete, but not yet considered production quality.**
+><sup>1</sup> Not supported on Windows.
 >
->The Windows port does not include _libvmmalloc_ and _librpmem_ libraries.
+><sup>2</sup> PMDK for Windows is feature complete, but not yet considered production quality.
+>
+><sup>3</sup> DAX and **libfabric** are not yet supported in FreeBSD, so at this time PMDK is available as a technical preview release for development purposes.
 
 ### Pre-Built Packages ###
 
@@ -50,7 +55,7 @@ Builds are tagged something like `0.2+b1`, which means
 are the simpler *major.minor* tags like `0.2`.  To find
 pre-build packages, check the Downloads associated with
 the stable releases on the
-[github release page](https://github.com/pmem/nvml/releases).
+[github release page](https://github.com/pmem/pmdk/releases).
 
 ### Building The Source ###
 
@@ -61,12 +66,13 @@ The source tree is organized as follows:
 * **src/include** -- public header files for all the libraries
 * **src/benchmarks** -- benchmarks used by development team
 * **src/examples** -- brief example programs using these libraries
+* **src/freebsd** -- FreeBSD-specific header files
 * **src/test** -- unit tests used by development team
-* **src/tools** -- various tools developed for NVML
+* **src/tools** -- various tools developed for PMDK
 * **src/windows** -- Windows-specific source and header files
 * **utils** -- utilities used during build & test
 * **CONTRIBUTING.md** -- instructions for people wishing to contribute
-* **CODING_STYLE.md** -- coding standard and conventions for NVML
+* **CODING_STYLE.md** -- coding standard and conventions for PMDK
 
 To build this library on Linux, you may need to install the following
 required packages on the build system:
@@ -74,35 +80,57 @@ required packages on the build system:
 * **autoconf**
 * **pkg-config**
 
+The following packages are required only by selected PMDK components
+or features.  If not present, those components or features may not be
+available:
 
-On Windows, to build NVML and run the tests you need:
+* **libfabric** (v1.4.2 or later) -- required by **librpmem**
+* **ndctl** and **daxctl** (v59.2 or later) -- required by **daxio** and RAS features
+
+
+On Windows, to build PMDK and run the tests you need:
 * **MS Visual Studio 2015**
 * [Windows SDK 10.0.14393](https://developer.microsoft.com/en-us/windows/downloads/windows-10-sdk) (or later)
 * **perl** (i.e. [ActivePerl](http://www.activestate.com/activeperl/downloads))
+* **PowerShell 5**
 
+
+To build and test this library on FreeBSD, you may need to install the following
+required packages on the build system:
+
+* **autoconf**
+* **bash**
+* **binutils**
+* **coreutils**
+* **e2fsprogs-libuuid**
+* **gmake**
+* **libunwind**
+* **ncurses**<sup>4</sup>
+* **pkgconf**
 
 Some tests and example applications require additional packages, but they
 do not interrupt building if they are missing. An appropriate message is
 displayed instead. For details please read the **DEPENDENCIES** section
-in appropriate README file.
+in the appropriate README file.
 
 
-See our [Dockerfiles](https://github.com/pmem/nvml/blob/master/utils/docker/images/)
-to get an idea what packages are required to build on the _Travis-CI_
-system.
+See our [Dockerfiles](https://github.com/pmem/pmdk/blob/master/utils/docker/images/)
+to get an idea what packages are required to build the entire PMDK,
+with all the tests and examples on the _Travis-CI_ system.
 
+><sup>4</sup> The pkg version of ncurses is required for proper operation; the base version included in FreeBSD is not sufficient.
 
-#### Building NVML on Linux ####
+#### Building PMDK on Linux or FreeBSD ####
 
 To build the latest development version, just clone this tree and build
 the master branch:
 ```
-	$ git clone https://github.com/pmem/nvml
-	$ cd nvml
+	$ git clone https://github.com/pmem/pmdk
+	$ cd pmdk
 ```
 
-Once the build system is setup, the NVM Library is built using
-this command at the top level:
+Once the build system is setup, the Persistent Memory Development Kit is built
+using the `make`<sup>5</sup> command at the top level:
 ```
 	$ make
 ```
@@ -115,7 +143,7 @@ compiler, you have to provide the `CC` and `CXX` variables. For example:
 
 These variables are independent and setting `CC=clang` does not set `CXX=clang++`.
 
-Once the make completes (*), all the libraries are built and the examples
+Once the make completes,<sup>6</sup> all the libraries are built and the examples
 under `src/examples` are built as well.  You can play with the library
 within the build tree, or install it locally on your machine.  Installing
 the library is more convenient since it installs man pages and libraries
@@ -144,9 +172,9 @@ generate the documentation separately, run:
 ```
 	$ make doc
 ```
-**DEPENDENCIES:** pandoc
+**DEPENDENCIES:** doxygen, graphviz, pandoc<sup>7</sup>
 
-To install a complete copy of the source tree to $(DESTDIR)/nvml:
+To install a complete copy of the source tree to $(DESTDIR)/pmdk:
 ```
 	$ make source DESTDIR=some_path
 ```
@@ -173,17 +201,33 @@ If you want to build packages without running tests, run:
 ```
 **DEPENDENCIES:** devscripts
 
-(*) By default all code is built with -Werror flag which fails the whole build
-when compiler emits any warning. It's very useful during development, but can be
-annoying in deployment. If you want to disable -Werror, you can use EXTRA_CFLAGS
-variable:
+If you want to invoke make with the same variables multiple times, you can
+create user.mk file in the top level directory and put all variables there.
+For example:
+```
+	$ cat user.mk
+	EXTRA_CFLAGS_RELEASE = -ggdb -fno-omit-frame-pointer
+	PATH += :$HOME/valgrind/bin
+```
+This feature is intended to be used only by developers and it may not work for
+all variables. Please do not file bug reports about it. Just fix it and make
+a PR.
+
+><sup>5</sup> For FreeBSD, use `gmake` rather than `make`.
+>
+><sup>6</sup> By default all code is built with the -Werror flag, which fails
+the whole build when the compiler emits any warning. This is very useful during
+development, but can be annoying in deployment. If you want to disable -Werror,
+use the EXTRA_CFLAGS variable:
 ```
 	$ make EXTRA_CFLAGS="-Wno-error"
 ```
-or
+>or
 ```
 	$ make EXTRA_CFLAGS="-Wno-error=$(type-of-warning)"
 ```
+>
+><sup>7</sup>Pandoc is provided by the **hs-pandoc** package on FreeBSD.
 
 #### Testing the Libraries ####
 
@@ -210,18 +254,22 @@ This will set the timeout to 1 minute.
 Please refer to the **src/test/README** for more details on how to
 run different types of tests.
 
-To compile this library with enabled support for the PM-aware version
-of [Valgrind](https://github.com/pmem/valgrind), supply the compiler
-with the **USE_VG_PMEMCHECK** flag, for example:
+The libraries support standard Valgrind drd, helgrind and memcheck, as well as
+a PM-aware version of [Valgrind](https://github.com/pmem/valgrind)<sup>8</sup>.
+By default support for all tools is enabled. If you wish to disable it,
+supply the compiler with  **VG_\<TOOL\>_ENABLED** flag set to 0, for example:
 ```
-	$ make EXTRA_CFLAGS=-DUSE_VG_PMEMCHECK
+	$ make EXTRA_CFLAGS=-DVG_MEMCHECK_ENABLED=0
 ```
-For Valgrind memcheck support, supply **USE_VG_MEMCHECK** flag.
-**USE_VALGRIND** flag enables both.
 
-To test the libraries with AddressSanitizer and UndefinedBehaviorSanitizer, run:
+**VALGRIND_ENABLED** flag, when set to 0, disables all Valgrind tools
+(drd, helgrind, memcheck and pmemcheck).<sup>8</sup>
+
+The **SANITIZE** flag allows the libraries to be tested with various
+sanitizers. For example, to test the libraries with AddressSanitizer
+and UndefinedBehaviorSanitizer, run:
 ```
-	$ make EXTRA_CFLAGS="-fsanitize=address,undefined" EXTRA_LDFLAGS="-fsanitize=address,undefined" clobber all test check
+	$ make SANITIZE=address,undefined clobber check
 ```
 
 If you wish to run C++ standard library containers tests, you need to set the
@@ -241,13 +289,17 @@ For example, when using a custom version of libc++(version 3.9) installed to /us
 	$ CC=clang CXX=clang++ make USE_LLVM_LIBCPP=1 LIBCPP_INCDIR=/usr/local/libcxx/include/c++/v1 LIBCPP_LIBDIR=/usr/local/libcxx/lib check
 ```
 
-#### Building NVML on Windows ####
+><sup>8</sup> PM-aware Valgrind is not yet available for FreeBSD.
+>
+><sup>9</sup> The address sanitizer is not supported for libvmmalloc on FreeBSD and will be ignored.
 
-Clone the NVML tree and open the solution:
+#### Building PMDK on Windows ####
+
+Clone the PMDK tree and open the solution:
 ```
-	> git clone https://github.com/pmem/nvml
-	> cd nvml/src
-	> devenv NVML.sln
+	> git clone https://github.com/pmem/pmdk
+	> cd pmdk/src
+	> devenv PMDK.sln
 ```
 
 Select the desired configuration (Debug or Release) and build the solution
@@ -262,7 +314,7 @@ in the example file (src/test/testconfig.ps1.example).
 
 To run the unit tests, open the PowerShell console and type:
 ```
-	> cd nvml/src/test
+	> cd pmdk/src/test
 	> RUNTESTS.ps1
 ```
 
@@ -315,6 +367,15 @@ If you want to build/install experimental packages run:
 	$ make EXPERIMENTAL=y [install,rpm,dpkg]
 ```
 
+### Experimental support for 64-bit ARM ###
+
+There is an initial support for 64-bit ARM processors provided,
+currently only for aarch64.  All the PMDK libraries except **librpmem**
+can be built for 64-bit ARM.  The examples, tools and benchmarks
+are not ported yet and may not get built on ARM cores.
+**NOTE:**
+The support for ARM processors is highly experimental. The libraries
+are only validated to "early access" quality with Cortex-A53 processor.
 
 ### Contacts ###
 

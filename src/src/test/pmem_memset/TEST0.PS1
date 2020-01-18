@@ -1,5 +1,5 @@
 #
-# Copyright 2016-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -42,8 +42,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "pmem_memset/TEST0"
-$Env:UNITTEST_NUM = "0"
 
 
 # standard unit test setup
@@ -55,10 +53,29 @@ require_fs_type pmem non-pmem
 
 setup
 
-truncate -s 4M $DIR\testfile1
+function test {
+	remove_files $DIR\testfile1
+	create_holey_file 4M $DIR\testfile1
+	expect_normal_exit $Env:EXE_DIR\pmem_memset$Env:EXESUFFIX $DIR\testfile1 $args
+}
 
-expect_normal_exit $Env:EXE_DIR\pmem_memset$Env:EXESUFFIX $DIR\testfile1 0 8
+function test_all {
+	test 0 8
+	test 13 4096
+}
 
-check
+test_all
+
+$Env:PMEM_AVX512F = 1
+
+test_all
+
+$Env:PMEM_AVX = 1
+
+test_all
+
+$Env:PMEM_NO_MOVNT = 1
+
+test_all
 
 pass

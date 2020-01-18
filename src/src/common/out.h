@@ -34,8 +34,8 @@
  * out.h -- definitions for "out" module
  */
 
-#ifndef NVML_OUT_H
-#define NVML_OUT_H 1
+#ifndef PMDK_OUT_H
+#define PMDK_OUT_H 1
 
 #include <stdarg.h>
 #include <stddef.h>
@@ -51,6 +51,14 @@
 #define OUT_FATAL_DISCARD_NORETURN __attribute__((noreturn))
 #else
 #define OUT_FATAL_DISCARD_NORETURN
+#endif
+
+#ifndef EVALUATE_DBG_EXPRESSIONS
+#if defined(DEBUG) || defined(__clang_analyzer__) || defined(__COVERITY__)
+#define EVALUATE_DBG_EXPRESSIONS 1
+#else
+#define EVALUATE_DBG_EXPRESSIONS 0
+#endif
 #endif
 
 #ifdef DEBUG
@@ -110,38 +118,49 @@ out_fatal_abort(const char *file, int line, const char *func,
 #endif
 
 /* produce debug/trace output */
-#define LOG(level, ...)\
-	OUT_LOG(__FILE__, __LINE__, __func__, level, __VA_ARGS__)
+#define LOG(level, ...) do { \
+	if (!EVALUATE_DBG_EXPRESSIONS) break;\
+	OUT_LOG(__FILE__, __LINE__, __func__, level, __VA_ARGS__);\
+} while (0)
 
 /* produce debug/trace output without prefix and new line */
-#define LOG_NONL(level, ...)\
-	OUT_NONL(level, __VA_ARGS__)
+#define LOG_NONL(level, ...) do { \
+	if (!EVALUATE_DBG_EXPRESSIONS) break; \
+	OUT_NONL(level, __VA_ARGS__); \
+} while (0)
 
 /* produce output and exit */
 #define FATAL(...)\
 	OUT_FATAL_ABORT(__FILE__, __LINE__, __func__, __VA_ARGS__)
 
 /* assert a condition is true at runtime */
-#define ASSERT_rt(cnd)\
-	((void)((cnd) || (OUT_FATAL(__FILE__, __LINE__, __func__,\
-	"assertion failure: %s", #cnd), 0)))
+#define ASSERT_rt(cnd) do { \
+	if (!EVALUATE_DBG_EXPRESSIONS || (cnd)) break; \
+	OUT_FATAL(__FILE__, __LINE__, __func__, "assertion failure: %s", #cnd);\
+} while (0)
 
 /* assertion with extra info printed if assertion fails at runtime */
-#define ASSERTinfo_rt(cnd, info)\
-	((void)((cnd) || (OUT_FATAL(__FILE__, __LINE__, __func__,\
-	"assertion failure: %s (%s = %s)", #cnd, #info, info), 0)))
+#define ASSERTinfo_rt(cnd, info) do { \
+	if (!EVALUATE_DBG_EXPRESSIONS || (cnd)) break; \
+	OUT_FATAL(__FILE__, __LINE__, __func__, \
+		"assertion failure: %s (%s = %s)", #cnd, #info, info);\
+} while (0)
 
 /* assert two integer values are equal at runtime */
-#define ASSERTeq_rt(lhs, rhs)\
-	((void)(((lhs) == (rhs)) || (OUT_FATAL(__FILE__, __LINE__, __func__,\
+#define ASSERTeq_rt(lhs, rhs) do { \
+	if (!EVALUATE_DBG_EXPRESSIONS || ((lhs) == (rhs))) break; \
+	OUT_FATAL(__FILE__, __LINE__, __func__,\
 	"assertion failure: %s (0x%llx) == %s (0x%llx)", #lhs,\
-	(unsigned long long)(lhs), #rhs, (unsigned long long)(rhs)), 0)))
+	(unsigned long long)(lhs), #rhs, (unsigned long long)(rhs)); \
+} while (0)
 
 /* assert two integer values are not equal at runtime */
-#define ASSERTne_rt(lhs, rhs)\
-	((void)(((lhs) != (rhs)) || (OUT_FATAL(__FILE__, __LINE__, __func__,\
+#define ASSERTne_rt(lhs, rhs) do { \
+	if (!EVALUATE_DBG_EXPRESSIONS || ((lhs) != (rhs))) break; \
+	OUT_FATAL(__FILE__, __LINE__, __func__,\
 	"assertion failure: %s (0x%llx) != %s (0x%llx)", #lhs,\
-	(unsigned long long)(lhs), #rhs, (unsigned long long)(rhs)), 0)))
+	(unsigned long long)(lhs), #rhs, (unsigned long long)(rhs)); \
+} while (0)
 
 /* assert a condition is true */
 #define ASSERT(cnd)\
@@ -203,7 +222,7 @@ void out_set_vsnprintf_func(int (*vsnprintf_func)(char *str, size_t size,
 	const char *format, va_list ap));
 
 #ifdef _WIN32
-#ifndef NVML_UTF8_API
+#ifndef PMDK_UTF8_API
 #define out_get_errormsg out_get_errormsgW
 #else
 #define out_get_errormsg out_get_errormsgU

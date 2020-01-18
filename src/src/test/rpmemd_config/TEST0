@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2016-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -33,8 +33,6 @@
 #
 # rpmemd_config/TEST0 -- test for rpmemd default config and cl arguments
 #
-export UNITTEST_NAME=rpmemd_config/TEST0
-export UNITTEST_NUM=0
 
 . ../unittest/unittest.sh
 
@@ -77,13 +75,13 @@ cat $LOG >> $LOG_TEMP
 expect_normal_exit $RPMEMD --config $EMPTY_CONFIG 1>> $OUT 2>&1
 cat $LOG >> $LOG_TEMP
 
-expect_abnormal_exit $RPMEMD -c $INVALID_CONFIG 1>> $OUT 2>&1
+expect_normal_exit $RPMEMD -c $INVALID_CONFIG 1>> $OUT 2>&1
 cat $LOG >> $LOG_TEMP
 
-expect_abnormal_exit $RPMEMD --config $INVALID_CONFIG 1>> $OUT 2>&1
+expect_normal_exit $RPMEMD --config $INVALID_CONFIG 1>> $OUT 2>&1
 cat $LOG >> $LOG_TEMP
 
-grep -v rpmemd_config $LOG_TEMP > $LOG
+$GREP -v rpmemd_config $LOG_TEMP > $LOG
 
 check
 

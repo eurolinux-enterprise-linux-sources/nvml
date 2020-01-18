@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,11 +43,12 @@
 #include <errno.h>
 #include <time.h>
 #include <stdint.h>
-#include <endian.h>
+#include <stdbool.h>
 
 #include "libpmem.h"
 #include "libpmemlog.h"
 
+#include "os.h"
 #include "set.h"
 #include "out.h"
 #include "log.h"
@@ -55,6 +56,24 @@
 #include "sys_util.h"
 #include "util_pmem.h"
 #include "valgrind_internal.h"
+
+static const struct pool_attr Log_create_attr = {
+		LOG_HDR_SIG,
+		LOG_FORMAT_MAJOR,
+		LOG_FORMAT_COMPAT_DEFAULT,
+		LOG_FORMAT_INCOMPAT_DEFAULT,
+		LOG_FORMAT_RO_COMPAT_DEFAULT,
+		{0}, {0}, {0}, {0}, {0}
+};
+
+static const struct pool_attr Log_open_attr = {
+		LOG_HDR_SIG,
+		LOG_FORMAT_MAJOR,
+		LOG_FORMAT_COMPAT_CHECK,
+		LOG_FORMAT_INCOMPAT_CHECK,
+		LOG_FORMAT_RO_COMPAT_CHECK,
+		{0}, {0}, {0}, {0}, {0}
+};
 
 /*
  * log_descr_create -- (internal) create log memory pool descriptor
@@ -175,9 +194,7 @@ pmemlog_createU(const char *path, size_t poolsize, mode_t mode)
 	struct pool_set *set;
 
 	if (util_pool_create(&set, path, poolsize, PMEMLOG_MIN_POOL,
-			LOG_HDR_SIG, LOG_FORMAT_MAJOR,
-			LOG_FORMAT_COMPAT, LOG_FORMAT_INCOMPAT,
-			LOG_FORMAT_RO_COMPAT, NULL,
+			PMEMLOG_MIN_PART, &Log_create_attr, NULL,
 			REPLICAS_DISABLED) != 0) {
 		LOG(2, "cannot create pool or pool set");
 		return NULL;
@@ -266,10 +283,8 @@ log_open_common(const char *path, int cow)
 
 	struct pool_set *set;
 
-	if (util_pool_open(&set, path, cow, PMEMLOG_MIN_POOL,
-			LOG_HDR_SIG, LOG_FORMAT_MAJOR,
-			LOG_FORMAT_COMPAT, LOG_FORMAT_INCOMPAT,
-			LOG_FORMAT_RO_COMPAT, NULL) != 0) {
+	if (util_pool_open(&set, path, cow, PMEMLOG_MIN_PART, &Log_open_attr,
+			NULL, false, NULL) != 0) {
 		LOG(2, "cannot open pool or pool set");
 		return NULL;
 	}
@@ -517,10 +532,14 @@ pmemlog_appendv(PMEMlogpool *plp, const struct iovec *iov, int iovcnt)
 {
 	LOG(3, "plp %p iovec %p iovcnt %d", plp, iov, iovcnt);
 
-	int ret = 0; // success
+	int ret = 0;
 	int i;
 
-	ASSERT(iovcnt > 0);
+	if (iovcnt < 0) {
+		errno = EINVAL;
+		ERR("iovcnt is less than zero: %d", iovcnt);
+		return -1;
+	}
 
 	if (plp->rdonly) {
 		ERR("can't append to read-only log");
@@ -603,7 +622,7 @@ pmemlog_tell(PMEMlogpool *plp)
 
 	if ((errno = os_rwlock_rdlock(plp->rwlockp))) {
 		ERR("!os_rwlock_rdlock");
-		return (off_t)-1;
+		return (os_off_t)-1;
 	}
 
 	ASSERT(le64toh(plp->write_offset) >= le64toh(plp->start_offset));
@@ -787,34 +806,4 @@ pmemlog_checkW(const wchar_t *path)
 	util_free_UTF8(upath);
 	return ret;
 }
-#endif
-
-/*
- * log_convert2h -- convert pmemlog structure to host byte order
- */
-void
-log_convert2h(struct pmemlog *plp)
-{
-	plp->start_offset = le64toh(plp->start_offset);
-	plp->end_offset = le64toh(plp->end_offset);
-	plp->write_offset = le64toh(plp->write_offset);
-}
-
-/*
- * log_convert2le -- convert pmemlog structure to LE byte order
- */
-void
-log_convert2le(struct pmemlog *plp)
-{
-	plp->start_offset = htole64(plp->start_offset);
-	plp->end_offset = htole64(plp->end_offset);
-	plp->write_offset = htole64(plp->write_offset);
-}
-
-#ifdef _MSC_VER
-/*
- * libpmemlog constructor/destructor functions
- */
-MSVC_CONSTR(libpmemlog_init)
-MSVC_DESTR(libpmemlog_fini)
 #endif

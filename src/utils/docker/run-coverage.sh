@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
 # Copyright 2017, Intel Corporation
 #
@@ -35,7 +35,9 @@
 #                   test
 #
 
-# Get and prepare NVML source
+set -e
+
+# Get and prepare PMDK source
 ./prepare-for-build.sh
 
 # Build librpmem even if libfabric is not compiled with ibverbs

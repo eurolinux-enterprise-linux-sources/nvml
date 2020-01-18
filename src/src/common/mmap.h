@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,8 +34,8 @@
  * mmap.h -- internal definitions for mmap module
  */
 
-#ifndef NVML_MMAP_H
-#define NVML_MMAP_H 1
+#ifndef PMDK_MMAP_H
+#define PMDK_MMAP_H 1
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -45,17 +45,38 @@ extern "C" {
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include "out.h"
 #include "queue.h"
+#include "os.h"
 
 extern int Mmap_no_random;
 extern void *Mmap_hint;
+extern char *Mmap_mapfile;
 
-void *util_map(int fd, size_t len, int flags, int rdonly, size_t req_align);
+void *util_map_sync(void *addr, size_t len, int proto, int flags, int fd,
+	os_off_t offset, int *map_sync);
+void *util_map(int fd, size_t len, int flags, int rdonly,
+		size_t req_align, int *map_sync);
 int util_unmap(void *addr, size_t len);
 
 void *util_map_tmpfile(const char *dir, size_t size, size_t req_align);
+
+#ifdef __FreeBSD__
+#define MAP_NORESERVE 0
+#define OS_MAPFILE "/proc/curproc/map"
+#else
+#define OS_MAPFILE "/proc/self/maps"
+#endif
+
+#ifndef MAP_SYNC
+#define MAP_SYNC 0x80000
+#endif
+
+#ifndef MAP_SHARED_VALIDATE
+#define MAP_SHARED_VALIDATE 0x03
+#endif
 
 /*
  * macros for micromanaging range protections for the debug version
@@ -76,6 +97,32 @@ void *util_map_tmpfile(const char *dir, size_t size, size_t req_align);
 #define RANGE_RW(addr, len, is_dev_dax) RANGE(addr, len, is_dev_dax, rw)
 #define RANGE_NONE(addr, len, is_dev_dax) RANGE(addr, len, is_dev_dax, none)
 
+/* pmem mapping type */
+enum pmem_map_type {
+	PMEM_DEV_DAX,	/* device dax */
+	PMEM_MAP_SYNC,	/* mapping with MAP_SYNC flag on dax fs */
+
+	MAX_PMEM_TYPE
+};
+
+/*
+ * this structure tracks the file mappings outstanding per file handle
+ */
+struct map_tracker {
+	SORTEDQ_ENTRY(map_tracker) entry;
+	uintptr_t base_addr;
+	uintptr_t end_addr;
+	int region_id;
+	enum pmem_map_type type;
+#ifdef _WIN32
+	/* Windows-specific data */
+	HANDLE FileHandle;
+	HANDLE FileMappingHandle;
+	DWORD Access;
+	os_off_t Offset;
+	size_t FileLen;
+#endif
+};
 
 void util_mmap_init(void);
 void util_mmap_fini(void);
@@ -109,8 +156,10 @@ util_map_hint_align(size_t len, size_t req_align)
 	return align;
 }
 
-int util_range_register(const void *addr, size_t len);
+int util_range_register(const void *addr, size_t len, const char *path,
+		enum pmem_map_type type);
 int util_range_unregister(const void *addr, size_t len);
+struct map_tracker *util_range_find(uintptr_t addr, size_t len);
 int util_range_is_pmem(const void *addr, size_t len);
 
 #ifdef __cplusplus

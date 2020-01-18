@@ -4,9 +4,6 @@
     <Filter Include="Source Files">
       <UniqueIdentifier>{ca2d95f3-ee39-44f6-a723-68585f03435b}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files">
-      <UniqueIdentifier>{7ccd48b1-76ab-41ab-beca-b8e931497e1d}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Test Scripts">
       <UniqueIdentifier>{74b00710-9909-4ab2-a7b6-70e836e8ccc5}</UniqueIdentifier>
     </Filter>
@@ -18,7 +15,7 @@
     <ClCompile Include="..\..\libpmemobj\bucket.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\libpmemobj\ctree.c">
+    <ClCompile Include="..\..\libpmemobj\ravl.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\libpmemobj\cuckoo.c">
@@ -66,7 +63,7 @@
     <ClCompile Include="..\..\libpmemobj\recycler.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\libpmemobj\container_ctree.c">
+    <ClCompile Include="..\..\libpmemobj\container_ravl.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\libpmemobj\container_seglists.c">
@@ -85,6 +82,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\libpmemobj\ringbuf.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\libpmemobj\stats.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

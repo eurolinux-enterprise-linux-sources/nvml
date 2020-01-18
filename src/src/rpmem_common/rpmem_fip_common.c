@@ -161,7 +161,7 @@ rpmem_fip_read_eq(struct fid_eq *eq, struct fi_eq_cm_entry *entry,
 	sret = fi_eq_sread(eq, event, entry, sizeof(*entry), timeout, 0);
 	VALGRIND_DO_MAKE_MEM_DEFINED(&sret, sizeof(sret));
 
-	if (timeout != -1 && sret == -FI_ETIMEDOUT) {
+	if (timeout != -1 && (sret == -FI_ETIMEDOUT || sret == -FI_EAGAIN)) {
 		errno = ETIMEDOUT;
 		return 1;
 	}
@@ -178,7 +178,8 @@ rpmem_fip_read_eq(struct fid_eq *eq, struct fi_eq_cm_entry *entry,
 			RPMEMC_LOG(ERR, "error reading from event queue: "
 				"cannot read error from event queue: %s",
 				fi_strerror((int)sret));
-		} else {
+		} else if (sret > 0) {
+			RPMEMC_ASSERT(sret == sizeof(err));
 			errno = -err.prov_errno;
 			RPMEMC_LOG(ERR, "error reading from event queue: %s",
 					fi_eq_strerror(eq, err.prov_errno,
@@ -246,9 +247,10 @@ rpmem_fip_lane_attrs[MAX_RPMEM_FIP_NODE][MAX_RPMEM_PM] = {
 		.n_per_cq = 3,
 	},
 	[RPMEM_FIP_NODE_CLIENT][RPMEM_PM_APM] = {
-		.n_per_sq = 2, /* WRITE + READ */
-		.n_per_rq = 0, /* unused */
-		.n_per_cq = 2,
+		/* WRITE + READ for persist, WRITE + SEND for deep persist */
+		.n_per_sq = 2, /* WRITE + SEND */
+		.n_per_rq = 1, /* RECV */
+		.n_per_cq = 3,
 	},
 	[RPMEM_FIP_NODE_SERVER][RPMEM_PM_GPSPM] = {
 		.n_per_sq = 1, /* SEND */
@@ -256,9 +258,9 @@ rpmem_fip_lane_attrs[MAX_RPMEM_FIP_NODE][MAX_RPMEM_PM] = {
 		.n_per_cq = 3,
 	},
 	[RPMEM_FIP_NODE_SERVER][RPMEM_PM_APM] = {
-		.n_per_sq = 0, /* unused */
-		.n_per_rq = 0, /* unused */
-		.n_per_cq = 1,
+		.n_per_sq = 1, /* SEND */
+		.n_per_rq = 1, /* RECV */
+		.n_per_cq = 3,
 	},
 };
 
@@ -310,8 +312,9 @@ rpmem_fip_rx_size(enum rpmem_persist_method pm, enum rpmem_fip_node node)
 size_t
 rpmem_fip_max_nlanes(struct fi_info *fi)
 {
-	return min(fi->domain_attr->max_ep_tx_ctx,
-			fi->domain_attr->max_ep_rx_ctx);
+	return min(min(fi->domain_attr->tx_ctx_cnt,
+			fi->domain_attr->rx_ctx_cnt),
+			fi->domain_attr->cq_cnt);
 }
 
 /*

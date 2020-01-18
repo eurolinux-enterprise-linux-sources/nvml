@@ -1,5 +1,5 @@
 #
-# Copyright 2015-2017, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -38,8 +38,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "ex_libpmemobj/TEST9"
-$Env:UNITTEST_NUM = "9"
 
 # standard unit test setup
 . ..\unittest\unittest.PS1
@@ -52,10 +50,10 @@ setup
 
 @"
 Hello!
-"@| &$Env:EXE_DIR\tx_type_writer $DIR\testfile1 > out$Env:UNITTEST_NUM.log 2>&1
+"@| &$Env:EXE_DIR\ex_pmemobj_tx_type_writer $DIR\testfile1 > out$Env:UNITTEST_NUM.log 2>&1
 check_exit_code
 
-expect_normal_exit $Env:EXE_DIR\tx_type_reader $DIR\testfile1 >> out$Env:UNITTEST_NUM.log 2>&1
+expect_normal_exit $Env:EXE_DIR\ex_pmemobj_tx_type_reader $DIR\testfile1 >> out$Env:UNITTEST_NUM.log 2>&1
 
 check
 

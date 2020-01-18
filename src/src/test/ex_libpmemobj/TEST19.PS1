@@ -1,5 +1,5 @@
 #
-# Copyright 2015-2017, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -38,8 +38,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "ex_libpmemobj/TEST19"
-$Env:UNITTEST_NUM = "19"
 
 # standard unit test setup
 . ..\unittest\unittest.PS1
@@ -59,7 +57,8 @@ c 4321
 r 4321
 c 4321
 q
-"@ | &$Env:EXE_DIR\mapcli skiplist $DIR\testfile1 555 > out$Env:UNITTEST_NUM.log 2>&1
+"@ | &$Env:EXE_DIR\ex_pmemobj_mapcli skiplist $DIR\testfile1 555 > out$Env:UNITTEST_NUM.log 2>&1
+
 check_exit_code
 
 check

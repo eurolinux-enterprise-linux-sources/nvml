@@ -31,7 +31,7 @@
 
 #
 # Dockerfile - a 'recipe' for Docker to build an image of fedora-based
-#              environment for building the NVML project.
+#              environment for building the PMDK project.
 #
 
 # Pull base image
@@ -42,23 +42,29 @@ MAINTAINER wojciech.uss@intel.com
 RUN dnf install -y git gcc clang openssh-server autoconf automake make \
 	wget tar lbzip2 passwd sudo pkgconfig findutils man libunwind-devel \
 	file rpm-build rpm-build-libs which fuse fuse-devel ncurses-devel \
-	libuv-devel glib2-devel libtool pandoc doxygen cmake gdb
+	libuv-devel glib2-devel libtool pandoc doxygen cmake gdb asciidoc \
+	kmod-devel xmlto libudev-devel libuuid-devel json-c-devel bc \
+	rpmdevtools
+
+# Install libndctl
+COPY install-libndctl.sh install-libndctl.sh
+RUN ./install-libndctl.sh fedora
 
 # Install valgrind
 COPY install-valgrind.sh install-valgrind.sh
 RUN ./install-valgrind.sh
- 
+
 # Install libfabric
 COPY install-libfabric.sh install-libfabric.sh
-RUN ./install-libfabric.sh
+RUN ./install-libfabric.sh fedora
 
 # Install libcxx
 COPY install-libcxx.sh install-libcxx.sh
 RUN ./install-libcxx.sh
 
 # Add user
-ENV USER nvmluser
-ENV USERPASS nvmlpass
+ENV USER pmdkuser
+ENV USERPASS pmdkpass
 RUN useradd -m $USER
 RUN echo $USERPASS | passwd $USER --stdin
 RUN gpasswd wheel -a $USER

@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -34,8 +34,6 @@
 #
 # src/test/util_poolset_parse/TEST1 -- unit test for parsing a pool set file
 #
-export UNITTEST_NAME=util_poolset_parse/TEST1
-export UNITTEST_NUM=1
 
 # standard unit test setup
 . ../unittest/unittest.sh
@@ -63,7 +61,7 @@ POOLSETS="$DIR/testset1 $DIR/testset2 $DIR/testset3"
 
 expect_normal_exit ./util_poolset_parse$EXESUFFIX $POOLSETS
 
-grep -e "<[14]>.*\[.*util_poolset_parse\]" ./parser$UNITTEST_NUM.log | \
+$GREP -e "<[14]>.*\[.*util_poolset_parse\]" ./parser$UNITTEST_NUM.log | \
 	sed -e "s/^.*util_poolset_parse][ ]*//g" > grep$UNITTEST_NUM.log
 
 check

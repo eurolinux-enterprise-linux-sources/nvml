@@ -1,5 +1,5 @@
 /*
- * Copyright 2017, Intel Corporation
+ * Copyright 2017-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -55,7 +55,7 @@
 static char *File1 = NULL;	/* file1 name */
 static char *File2 = NULL;	/* file2 name */
 static size_t Length = 0;	/* number of bytes to read */
-static off_t Offset = 0;	/* offset from beginning of file */
+static os_off_t Offset = 0;	/* offset from beginning of file */
 static int Opts = 0;		/* options flag */
 
 /*
@@ -91,7 +91,7 @@ parse_args(int argc, char *argv[])
 {
 	int opt;
 	char *endptr;
-	off_t off;
+	os_off_t off;
 	ssize_t len;
 	while ((opt = getopt_long(argc, argv, "l:o:zh",
 			long_options, NULL)) != -1) {
@@ -228,7 +228,8 @@ do_cmpmap(void)
 
 	/* map the first file */
 	void *addr1;
-	if ((addr1 = util_map(fd1, size1, MAP_SHARED, 1, 0)) == MAP_FAILED) {
+	if ((addr1 = util_map(fd1, size1, MAP_SHARED,
+			1, 0, NULL)) == MAP_FAILED) {
 		fprintf(stderr, "mmap failed, file %s, length %zu, offset 0,"
 				" errno %d\n", File1, size1, errno);
 		ret = EXIT_FAILURE;
@@ -237,7 +238,7 @@ do_cmpmap(void)
 
 	/* map the second file, or do anonymous mapping to get zeroed bytes */
 	void *addr2;
-	if ((addr2 = util_map(fd2, size2, flag, 1, 0)) == MAP_FAILED) {
+	if ((addr2 = util_map(fd2, size2, flag, 1, 0, NULL)) == MAP_FAILED) {
 		fprintf(stderr, "mmap failed, file %s, length %zu, errno %d\n",
 			File2 ? File2 : "(anonymous)", size2, errno);
 		ret = EXIT_FAILURE;
@@ -248,9 +249,9 @@ do_cmpmap(void)
 	if ((ret = memcmp(ADDR_SUM(addr1, Offset), ADDR_SUM(addr2, Offset),
 			Length))) {
 		if (Opts & CMPMAP_ZERO)
-			fprintf(stdout, "%s is not zeroed\n", File1);
+			fprintf(stderr, "%s is not zeroed\n", File1);
 		else
-			fprintf(stdout, "%s %s differ\n", File1, File2);
+			fprintf(stderr, "%s %s differ\n", File1, File2);
 		ret = EXIT_FAILURE;
 	}
 

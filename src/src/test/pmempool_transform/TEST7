@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2016-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -34,8 +34,6 @@
 # pmempool_transform/TEST7 -- test for checking pmempool transform;
 #                             add replica with dax device
 #
-export UNITTEST_NAME=pmempool_transform/TEST7
-export UNITTEST_NUM=7
 
 . ../unittest/unittest.sh
 
@@ -88,7 +86,7 @@ cat $POOLSET_OUT >> $LOG_TEMP
 echo >> $LOG_TEMP
 
 # Clean the dax devices
-expect_normal_exit $DDMAP$EXESUFFIX -o ${DEVICE_DAX_PATH[0]} -l $HDR_LEN
+expect_normal_exit $DDMAP$EXESUFFIX -o ${DEVICE_DAX_PATH[0]} -n $HDR_LEN -b 1
 
 # Create a pool
 expect_normal_exit $PMEMPOOL$EXESUFFIX create --layout=$LAYOUT\

@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2017, Intel Corporation
+# Copyright 2017-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -36,15 +36,12 @@
 # Same as TEST14, but run on a pool set that spans two Device DAX devices
 # with 4K alignment.
 #
-export UNITTEST_NAME=pmempool_check/TEST25
-export UNITTEST_NUM=25
 
 . ../unittest/unittest.sh
 
 require_test_type medium
 require_fs_type any
 
-require_dax_devices 2
 require_dax_device_alignments 4096 4096
 
 # memcheck covered by TEST23, pmemcheck takes too long

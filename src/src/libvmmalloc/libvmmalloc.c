@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -50,10 +50,15 @@
  *
  * 3) Malloc hooks in glibc are overridden to prevent any references to glibc's
  *    malloc(3) functions in case the application uses dlopen with
- *    RTLD_DEEPBIND flag.
+ *    RTLD_DEEPBIND flag. (Not relevant for FreeBSD since FreeBSD supports
+ *    neither malloc hooks nor RTLD_DEEPBIND.)
  *
  * 4) If the process forks, there is no separate log file open for a new
  *    process, even if the configured log file name is terminated with "-".
+ *
+ * 5) Fork options 2 and 3 are currently not supported on FreeBSD because
+ *    locks are dynamically allocated on FreeBSD and hence they would be cloned
+ *    as part of the pool. This may be solvable.
  */
 
 #define _GNU_SOURCE
@@ -69,7 +74,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <pthread.h>
+#ifndef __FreeBSD__
 #include <malloc.h>
+#endif
 
 #include "libvmem.h"
 #include "libvmmalloc.h"
@@ -95,7 +102,7 @@ static int Fd;
 static int Fd_clone;
 static int Private;
 static int Forkopt = 1; /* default behavior - remap as private */
-
+static bool Destructed; /* when set - ignore all calls (do not call jemalloc) */
 
 /*
  * malloc -- allocate a block of size bytes
@@ -105,6 +112,9 @@ __ATTR_ALLOC_SIZE__(1)
 void *
 malloc(size_t size)
 {
+	if (unlikely(Destructed))
+		return NULL;
+
 	if (Vmp == NULL) {
 		ASSERT(size <= HUGE);
 		return je_vmem_malloc(size);
@@ -122,6 +132,9 @@ __ATTR_ALLOC_SIZE__(1, 2)
 void *
 calloc(size_t nmemb, size_t size)
 {
+	if (unlikely(Destructed))
+		return NULL;
+
 	if (Vmp == NULL) {
 		ASSERT((nmemb * size) <= HUGE);
 		return je_vmem_calloc(nmemb, size);
@@ -138,6 +151,9 @@ __ATTR_ALLOC_SIZE__(2)
 void *
 realloc(void *ptr, size_t size)
 {
+	if (unlikely(Destructed))
+		return NULL;
+
 	if (Vmp == NULL) {
 		ASSERT(size <= HUGE);
 		return je_vmem_realloc(ptr, size);
@@ -153,6 +169,9 @@ realloc(void *ptr, size_t size)
 void
 free(void *ptr)
 {
+	if (unlikely(Destructed))
+		return;
+
 	if (Vmp == NULL) {
 		je_vmem_free(ptr);
 		return;
@@ -165,10 +184,15 @@ free(void *ptr)
  * cfree -- free a block previously allocated by calloc
  *
  * the implementation is identical to free()
+ *
+ * XXX Not supported on FreeBSD, but we define it anyway
  */
 void
 cfree(void *ptr)
 {
+	if (unlikely(Destructed))
+		return;
+
 	if (Vmp == NULL) {
 		je_vmem_free(ptr);
 		return;
@@ -177,10 +201,11 @@ cfree(void *ptr)
 	je_vmem_pool_free((pool_t *)((uintptr_t)Vmp + Header_size), ptr);
 }
 
-#ifdef VMMALLOC_OVERRIDE_MEMALIGN
 /*
  * memalign -- allocate a block of size bytes, starting on an address
  * that is a multiple of boundary
+ *
+ * XXX Not supported on FreeBSD, but we define it anyway
  */
 __ATTR_MALLOC__
 __ATTR_ALLOC_ALIGN__(1)
@@ -188,18 +213,19 @@ __ATTR_ALLOC_SIZE__(2)
 void *
 memalign(size_t boundary, size_t size)
 {
+	if (unlikely(Destructed))
+		return NULL;
+
 	if (Vmp == NULL) {
 		ASSERT(size <= HUGE);
-		return je_vmem_memalign(boundary, size);
+		return je_vmem_aligned_alloc(boundary, size);
 	}
 	LOG(4, "boundary %zu  size %zu", boundary, size);
 	return je_vmem_pool_aligned_alloc(
 			(pool_t *)((uintptr_t)Vmp + Header_size),
 			boundary, size);
 }
-#endif
 
-#ifdef VMMALLOC_OVERRIDE_ALIGNED_ALLOC
 /*
  * aligned_alloc -- allocate a block of size bytes, starting on an address
  * that is a multiple of alignment
@@ -212,6 +238,9 @@ __ATTR_ALLOC_SIZE__(2)
 void *
 aligned_alloc(size_t alignment, size_t size)
 {
+	if (unlikely(Destructed))
+		return NULL;
+
 	/* XXX - check if size is a multiple of alignment */
 
 	if (Vmp == NULL) {
@@ -223,7 +252,6 @@ aligned_alloc(size_t alignment, size_t size)
 			(pool_t *)((uintptr_t)Vmp + Header_size),
 			alignment, size);
 }
-#endif
 
 /*
  * posix_memalign -- allocate a block of size bytes, starting on an address
@@ -233,6 +261,9 @@ __ATTR_NONNULL__(1)
 int
 posix_memalign(void **memptr, size_t alignment, size_t size)
 {
+	if (unlikely(Destructed))
+		return ENOMEM;
+
 	int ret = 0;
 	int oerrno = errno;
 	if (Vmp == NULL) {
@@ -249,7 +280,6 @@ posix_memalign(void **memptr, size_t alignment, size_t size)
 	return ret;
 }
 
-#ifdef VMMALLOC_OVERRIDE_VALLOC
 /*
  * valloc -- allocate a block of size bytes, starting on a page boundary
  */
@@ -258,10 +288,13 @@ __ATTR_ALLOC_SIZE__(1)
 void *
 valloc(size_t size)
 {
+	if (unlikely(Destructed))
+		return NULL;
+
 	ASSERTne(Pagesize, 0);
 	if (Vmp == NULL) {
 		ASSERT(size <= HUGE);
-		return je_vmem_valloc(size);
+		return je_vmem_aligned_alloc(Pagesize, size);
 	}
 	LOG(4, "size %zu", size);
 	return je_vmem_pool_aligned_alloc(
@@ -269,22 +302,31 @@ valloc(size_t size)
 			Pagesize, size);
 }
 
+/*
+ * pvalloc -- allocate a block of size bytes, starting on a page boundary
+ *
+ * Requested size is also aligned to page boundary.
+ *
+ * XXX Not supported on FreeBSD, but we define it anyway.
+ */
 __ATTR_MALLOC__
 __ATTR_ALLOC_SIZE__(1)
 void *
 pvalloc(size_t size)
 {
+	if (unlikely(Destructed))
+		return NULL;
+
 	ASSERTne(Pagesize, 0);
 	if (Vmp == NULL) {
 		ASSERT(size <= HUGE);
-		return je_vmem_valloc(roundup(size, Pagesize));
+		return je_vmem_aligned_alloc(Pagesize, roundup(size, Pagesize));
 	}
 	LOG(4, "size %zu", size);
 	return je_vmem_pool_aligned_alloc(
 			(pool_t *)((uintptr_t)Vmp + Header_size),
 			Pagesize, roundup(size, Pagesize));
 }
-#endif
 
 /*
  * malloc_usable_size -- get usable size of allocation
@@ -292,6 +334,9 @@ pvalloc(size_t size)
 size_t
 malloc_usable_size(void *ptr)
 {
+	if (unlikely(Destructed))
+		return 0;
+
 	if (Vmp == NULL) {
 		return je_vmem_malloc_usable_size(ptr);
 	}
@@ -359,18 +404,18 @@ libvmmalloc_create(const char *dir, size_t size)
 	/* silently enforce multiple of page size */
 	size = roundup(size, Pagesize);
 
-	Fd = util_tmpfile(dir, "/vmem.XXXXXX");
+	Fd = util_tmpfile(dir, "/vmem.XXXXXX", O_EXCL);
 	if (Fd == -1)
 		return NULL;
 
-	if ((errno = os_posix_fallocate(Fd, 0, (off_t)size)) != 0) {
+	if ((errno = os_posix_fallocate(Fd, 0, (os_off_t)size)) != 0) {
 		ERR("!posix_fallocate");
 		(void) os_close(Fd);
 		return NULL;
 	}
 
 	void *addr;
-	if ((addr = util_map(Fd, size, MAP_SHARED, 0, 4 << 20)) == NULL) {
+	if ((addr = util_map(Fd, size, MAP_SHARED, 0, 4 << 20, NULL)) == NULL) {
 		(void) os_close(Fd);
 		return NULL;
 	}
@@ -385,7 +430,8 @@ libvmmalloc_create(const char *dir, size_t size)
 
 	/* Prepare pool for jemalloc */
 	if (je_vmem_pool_create((void *)((uintptr_t)addr + Header_size),
-			size - Header_size, 1) == NULL) {
+			size - Header_size, 1 /* zeroed */,
+			1 /* empty */) == NULL) {
 		LOG(1, "vmem pool creation failed");
 		util_unmap(vmp->addr, vmp->size);
 		return NULL;
@@ -410,12 +456,14 @@ static int
 libvmmalloc_clone(void)
 {
 	LOG(3, NULL);
-
-	Fd_clone = util_tmpfile(Dir, "/vmem.XXXXXX");
+	int err;
+	Fd_clone = util_tmpfile(Dir, "/vmem.XXXXXX", O_EXCL);
 	if (Fd_clone == -1)
 		return -1;
 
-	if ((errno = os_posix_fallocate(Fd_clone, 0, (off_t)Vmp->size)) != 0) {
+	err = os_posix_fallocate(Fd_clone, 0, (os_off_t)Vmp->size);
+	if (err != 0) {
+		errno = err;
 		ERR("!posix_fallocate");
 		goto err_close;
 	}
@@ -454,6 +502,32 @@ err_close:
 }
 
 /*
+ * remap_as_private -- (internal) remap the pool as private
+ */
+static void
+remap_as_private(void)
+{
+	LOG(3, "remap the pool file as private");
+
+	void *r = mmap(Vmp->addr, Vmp->size, PROT_READ|PROT_WRITE,
+			MAP_PRIVATE|MAP_FIXED, Fd, 0);
+
+	if (r == MAP_FAILED) {
+		out_log(NULL, 0, NULL, 0,
+			"Error (libvmmalloc): remapping failed\n");
+		abort();
+	}
+
+	if (r != Vmp->addr) {
+		out_log(NULL, 0, NULL, 0,
+			"Error (libvmmalloc): wrong address\n");
+		abort();
+	}
+
+	Private = 1;
+}
+
+/*
  * libvmmalloc_prefork -- (internal) prepare for fork()
  *
  * Clones the entire pool or remaps it with MAP_PRIVATE flag.
@@ -470,9 +544,6 @@ libvmmalloc_prefork(void)
 
 	ASSERTne(Vmp, NULL);
 	ASSERTne(Dir, NULL);
-
-	void *addr = Vmp->addr;
-	size_t size = Vmp->size;
 
 	if (Private) {
 		LOG(3, "already mapped as private - do nothing");
@@ -498,24 +569,7 @@ libvmmalloc_prefork(void)
 		/* cloning failed; fall-thru to remapping */
 
 	case 1:
-		LOG(3, "remap the pool file as private");
-
-		Vmp = mmap(addr, size, PROT_READ|PROT_WRITE,
-				MAP_PRIVATE|MAP_FIXED, Fd, 0);
-
-		if (Vmp == MAP_FAILED) {
-			out_log(NULL, 0, NULL, 0, "Error (libvmmalloc): "
-					"remapping failed\n");
-			abort();
-		}
-
-		if (Vmp != addr) {
-			out_log(NULL, 0, NULL, 0, "Error (libvmmalloc): "
-					"wrong address\n");
-			abort();
-		}
-
-		Private = 1;
+		remap_as_private();
 		break;
 
 	case 0:
@@ -669,6 +723,14 @@ libvmmalloc_init(void)
 					VMMALLOC_FORK_VAR, Forkopt);
 				abort();
 		}
+#ifdef __FreeBSD__
+		if (Forkopt > 1) {
+			out_log(NULL, 0, NULL, 0, "Error (libvmmalloc): "
+					"%s value %d not supported on FreeBSD",
+					VMMALLOC_FORK_VAR, Forkopt);
+				abort();
+		}
+#endif
 		LOG(4, "Fork action %d", Forkopt);
 	}
 
@@ -692,23 +754,24 @@ libvmmalloc_init(void)
  * Called automatically when the process terminates and prints
  * some basic allocator statistics.
  */
-__attribute__((destructor(101)))
+__attribute__((destructor(102)))
 static void
 libvmmalloc_fini(void)
 {
 	LOG(3, NULL);
 
 	char *env_str = os_getenv(VMMALLOC_LOG_STATS_VAR);
-	if ((env_str == NULL) || strcmp(env_str, "1") != 0)
-		return;
+	if ((env_str != NULL) && strcmp(env_str, "1") == 0) {
+		LOG_NONL(0, "\n=========   system heap  ========\n");
+		je_vmem_malloc_stats_print(
+			print_jemalloc_stats, NULL, "gba");
 
-	LOG_NONL(0, "\n=========   system heap  ========\n");
-	je_vmem_malloc_stats_print(
-		print_jemalloc_stats, NULL, "gba");
+		LOG_NONL(0, "\n=========    vmem pool   ========\n");
+		je_vmem_pool_malloc_stats_print(
+			(pool_t *)((uintptr_t)Vmp + Header_size),
+			print_jemalloc_stats, NULL, "gba");
+	}
 
-	LOG_NONL(0, "\n=========    vmem pool   ========\n");
-	je_vmem_pool_malloc_stats_print(
-		(pool_t *)((uintptr_t)Vmp + Header_size),
-		print_jemalloc_stats, NULL, "gba");
 	common_fini();
+	Destructed = true;
 }

@@ -79,12 +79,7 @@ pmemobj_pool_by_ptr(const void *arg)
 static void
 mock_open_pool(PMEMobjpool *pop)
 {
-#ifdef _WIN32
-	__sync_fetch_and_add64(&pop->run_id, 2);
-#else
-	__sync_fetch_and_add(&pop->run_id, 2);
-#endif
-
+	util_fetch_and_add64(&pop->run_id, 2);
 }
 
 /*
@@ -298,23 +293,23 @@ cleanup(char test_type)
 	switch (test_type) {
 		case 'm':
 			os_mutex_destroy(&((PMEMmutex_internal *)
-				&(Test_obj->mutex))->pmemmutex.mutex);
+				&(Test_obj->mutex))->PMEMmutex_lock);
 			break;
 		case 'r':
 			os_rwlock_destroy(&((PMEMrwlock_internal *)
-				&(Test_obj->rwlock))->pmemrwlock.rwlock);
+				&(Test_obj->rwlock))->PMEMrwlock_lock);
 			break;
 		case 'c':
 			os_mutex_destroy(&((PMEMmutex_internal *)
-				&(Test_obj->mutex))->pmemmutex.mutex);
+				&(Test_obj->mutex))->PMEMmutex_lock);
 			os_cond_destroy(&((PMEMcond_internal *)
-				&(Test_obj->cond))->pmemcond.cond);
+				&(Test_obj->cond))->PMEMcond_cond);
 			break;
 		case 't':
 			os_mutex_destroy(&((PMEMmutex_internal *)
-				&(Test_obj->mutex))->pmemmutex.mutex);
+				&(Test_obj->mutex))->PMEMmutex_lock);
 			os_mutex_destroy(&((PMEMmutex_internal *)
-				&(Test_obj->mutex_locked))->pmemmutex.mutex);
+				&(Test_obj->mutex_locked))->PMEMmutex_lock);
 			break;
 		default:
 			FATAL_USAGE();
@@ -402,8 +397,8 @@ main(int argc, char *argv[])
 				(void *)(uintptr_t)i);
 		}
 		for (unsigned i = 0; i < num_threads; i++) {
-			PTHREAD_JOIN(write_threads[i], NULL);
-			PTHREAD_JOIN(check_threads[i], NULL);
+			PTHREAD_JOIN(&write_threads[i], NULL);
+			PTHREAD_JOIN(&check_threads[i], NULL);
 		}
 
 		if (test_type == 't') {

@@ -38,7 +38,7 @@
  * of memory mapping routines - mmap(), munmap(), msync() and mprotect().
  * Those functions should provide the same functionality as their Linux
  * counterparts, at least with respect to the features that are used
- * in NVM libraries.
+ * in PMDK libraries.
  *
  * Known issues and differences between Linux and Windows implementation
  * are described in src/common/mmap_windows.c.
@@ -121,7 +121,8 @@ check_access(char *addr, size_t len, int prot)
  * check_mapping -- check access to memory mapped file
  */
 static void
-check_mapping(int fd, char *addr, size_t len, int prot, int flags, off_t offset)
+check_mapping(int fd, char *addr, size_t len, int prot,
+	int flags, os_off_t offset)
 {
 	volatile int i;
 

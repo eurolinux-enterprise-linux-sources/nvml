@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2016, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -33,8 +33,6 @@
 #
 # rpmemd_config/TEST2 -- test for rpmemd invalid config file
 #
-export UNITTEST_NAME=rpmemd_config/TEST2
-export UNITTEST_NUM=2
 
 . ../unittest/unittest.sh
 
@@ -58,8 +56,8 @@ INVALID_ENUM=Invalid
 
 function check_config {
 	echo -e $1 > $CONFIG
-	expect_abnormal_exit $RPMEMD -c $CONFIG 1>> $OUT_TEMP 2>&1
-	expect_abnormal_exit $RPMEMD --config $CONFIG 1>> $OUT_TEMP 2>&1
+	expect_normal_exit $RPMEMD -c $CONFIG 1>> $OUT_TEMP 2>&1
+	expect_normal_exit $RPMEMD --config $CONFIG 1>> $OUT_TEMP 2>&1
 }
 
 check_config "; invalid comment format"
@@ -70,7 +68,7 @@ check_config "persist-apm=$INVALID_FLAG # invalid persist-apm value"
 check_config "persist-general=$INVALID_FLAG # invalid persist-general value"
 check_config "use-syslog=$INVALID_FLAG # invalid use-syslog value"
 
-grep -v START $OUT_TEMP > $OUT
+$GREP -v START $OUT_TEMP > $OUT
 
 check
 

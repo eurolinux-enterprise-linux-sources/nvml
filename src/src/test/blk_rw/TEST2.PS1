@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 # Copyright (c) 2016, Microsoft Corporation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -39,8 +39,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$ENV:UNITTEST_NAME = "blk_rw/TEST2"
-$ENV:UNITTEST_NUM = "2"
 
 
 
@@ -52,10 +50,6 @@ require_test_type medium
 # doesn't make sense to run in local directory
 require_fs_type pmem non-pmem
 require_unlimited_vm
-
-# this test creates huge file
-# XXX: however we don't have valgrind in Windows yet
-# configure_valgrind memcheck force-disable
 
 setup
 

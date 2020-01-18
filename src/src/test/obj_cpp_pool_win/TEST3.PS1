@@ -1,5 +1,5 @@
 #
-# Copyright 2016-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -29,7 +29,7 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
-# src/test/obj_cpp_pool_win/TEST3 -- unit test for nvml::obj::pool
+# src/test/obj_cpp_pool_win/TEST3 -- unit test for pmem::obj::pool
 #
 #
 # parameter handling
@@ -40,8 +40,6 @@ Param(
     $DIR = ""
     )
 
-$Env:UNITTEST_NAME = "obj_cpp_pool_win/TEST3"
-$Env:UNITTEST_NUM = "3"
 
 
 # standard unit test setup

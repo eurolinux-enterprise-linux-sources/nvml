@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,6 +36,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <endian.h>
 
 #include "util.h"
 #include "os_thread.h"
@@ -48,9 +49,14 @@
 /* attributes of the log memory pool format for the pool header */
 #define LOG_HDR_SIG "PMEMLOG"	/* must be 8 bytes including '\0' */
 #define LOG_FORMAT_MAJOR 1
-#define LOG_FORMAT_COMPAT 0x0000
-#define LOG_FORMAT_INCOMPAT 0x0000
-#define LOG_FORMAT_RO_COMPAT 0x0000
+
+#define LOG_FORMAT_COMPAT_DEFAULT 0x0000
+#define LOG_FORMAT_INCOMPAT_DEFAULT 0x0000
+#define LOG_FORMAT_RO_COMPAT_DEFAULT 0x0000
+
+#define LOG_FORMAT_COMPAT_CHECK 0x0000
+#define LOG_FORMAT_INCOMPAT_CHECK POOL_FEAT_ALL
+#define LOG_FORMAT_RO_COMPAT_CHECK 0x0000
 
 struct pmemlog {
 	struct pool_hdr hdr;	/* memory pool header */
@@ -74,5 +80,24 @@ struct pmemlog {
 /* data area starts at this alignment after the struct pmemlog above */
 #define LOG_FORMAT_DATA_ALIGN ((uintptr_t)4096)
 
-void log_convert2h(struct pmemlog *plp);
-void log_convert2le(struct pmemlog *plp);
+/*
+ * log_convert2h -- convert pmemlog structure to host byte order
+ */
+static inline void
+log_convert2h(struct pmemlog *plp)
+{
+	plp->start_offset = le64toh(plp->start_offset);
+	plp->end_offset = le64toh(plp->end_offset);
+	plp->write_offset = le64toh(plp->write_offset);
+}
+
+/*
+ * log_convert2le -- convert pmemlog structure to LE byte order
+ */
+static inline void
+log_convert2le(struct pmemlog *plp)
+{
+	plp->start_offset = htole64(plp->start_offset);
+	plp->end_offset = htole64(plp->end_offset);
+	plp->write_offset = htole64(plp->write_offset);
+}

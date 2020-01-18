@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -33,8 +33,6 @@
 #
 # pmempool_check/TEST16 -- test for checking and fixing pool files crtime
 #
-export UNITTEST_NAME=pmempool_check/TEST16
-export UNITTEST_NUM=16
 
 . ../unittest/unittest.sh
 
@@ -53,10 +51,10 @@ rm -rf $LOG && touch $LOG
 create_poolset $POOLSET 20M:$POOL_P1:z 20M:$POOL_P2:z
 expect_normal_exit $PMEMPOOL$EXESUFFIX create log $POOLSET
 
-TIME=$(date +"%s")
+TIME=$($DATE +"%s")
 let "FUTURE_TIME=$TIME+60*60"
 let "PAST_TIME=$TIME-60*60"
-PAST_TIME=$(date -d @$PAST_TIME +"%y%m%d%H%M")
+PAST_TIME=$($DATE -d @$PAST_TIME +"%y%m%d%H%M")
 $PMEMSPOIL -v $POOL_P1 pool_hdr.crtime=$FUTURE_TIME >> $LOG
 touch -mt $PAST_TIME $POOL_P1
 

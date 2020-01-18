@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -53,7 +53,21 @@
 	.signature		= "<RPMEM>",\
 	.major			= 1,\
 	.compat_features	= 2,\
-	.incompat_features	= 3,\
+	.incompat_features	= 0,\
+	.ro_compat_features	= 4,\
+	.poolset_uuid		= "POOLSET_UUID0123",\
+	.uuid			= "UUID0123456789AB",\
+	.next_uuid		= "NEXT_UUID0123456",\
+	.prev_uuid		= "PREV_UUID0123456",\
+	.user_flags		= "USER_FLAGS\0\0\0\n~.",\
+}
+
+/* as above but with SINGLEHDR incompat feature */
+#define POOL_ATTR_INIT_SINGLEHDR {\
+	.signature		= "<RPMEM>",\
+	.major			= 1,\
+	.compat_features	= 2,\
+	.incompat_features	= 1,\
 	.ro_compat_features	= 4,\
 	.poolset_uuid		= "POOLSET_UUID0123",\
 	.uuid			= "UUID0123456789AB",\
@@ -66,7 +80,21 @@
 	.signature		= "<ALT>",\
 	.major			= 5,\
 	.compat_features	= 6,\
-	.incompat_features	= 7,\
+	.incompat_features	= 0,\
+	.ro_compat_features	= 8,\
+	.poolset_uuid		= "UUID_POOLSET_ALT",\
+	.uuid			= "ALT_UUIDCDEFFEDC",\
+	.next_uuid		= "456UUID_NEXT_ALT",\
+	.prev_uuid		= "UUID012_ALT_PREV",\
+	.user_flags		= "\0\0\0\n~._ALT_FLAGS",\
+}
+
+/* as above but with SINGLEHDR incompat feature */
+#define POOL_ATTR_ALT_SINGLEHDR {\
+	.signature		= "<ALT>",\
+	.major			= 5,\
+	.compat_features	= 6,\
+	.incompat_features	= 1,\
 	.ro_compat_features	= 8,\
 	.poolset_uuid		= "UUID_POOLSET_ALT",\
 	.uuid			= "ALT_UUIDCDEFFEDC",\
@@ -77,12 +105,16 @@
 
 const struct rpmem_pool_attr pool_attrs[] = {
 	POOL_ATTR_INIT,
-	POOL_ATTR_ALT
+	POOL_ATTR_INIT_SINGLEHDR,
+	POOL_ATTR_ALT,
+	POOL_ATTR_ALT_SINGLEHDR
 };
 
 const char *pool_attr_names[] = {
 	"init",
-	"alt"
+	"init_singlehdr",
+	"alt",
+	"alt_singlehdr"
 };
 
 #define POOL_ATTR_INIT_INDEX	0
@@ -91,9 +123,13 @@ const char *pool_attr_names[] = {
 
 struct pool_entry {
 	RPMEMpool *rpp;
+	const char *target;
 	void *pool;
 	size_t size;
+	unsigned nlanes;
 	int is_mem;
+	int error_must_occur;
+	int exp_errno;
 };
 
 #define MAX_IDS	1024
@@ -103,9 +139,13 @@ struct pool_entry pools[MAX_IDS];
  * init_pool -- map local pool file or allocate memory region
  */
 static void
-init_pool(struct pool_entry *pool, const char *pool_path,
+init_pool(struct pool_entry *pool, const char *target, const char *pool_path,
 	const char *pool_size)
 {
+	pool->target = target;
+	pool->exp_errno = 0;
+	pool->nlanes = NLANES;
+
 	int ret = util_parse_size(pool_size, &pool->size);
 	UT_ASSERTeq(ret, 0);
 
@@ -114,7 +154,7 @@ init_pool(struct pool_entry *pool, const char *pool_path,
 		flags |= PMEM_FILE_EXCL;
 
 
-	if (strcmp(pool_path, "mem") == 0) {
+	if (strncmp(pool_path, "mem", strlen("mem")) == 0) {
 		pool->pool = PAGEALIGNMALLOC(pool->size);
 
 		pool->is_mem = 1;
@@ -138,12 +178,12 @@ init_pool(struct pool_entry *pool, const char *pool_path,
 		 * The librpmem client requires fork() support to work
 		 * correctly.
 		 */
-		ret = madvise(pool->pool, pool->size, MADV_DONTFORK);
+		ret = os_madvise(pool->pool, pool->size, MADV_DONTFORK);
+
 		UT_ASSERTeq(ret, 0);
 
 		pool->is_mem = 0;
 		os_unlink(pool_path);
-		pool->size -= POOL_HDR_SIZE;
 	}
 }
 
@@ -156,11 +196,11 @@ free_pool(struct pool_entry *pool)
 	if (pool->is_mem)
 		FREE(pool->pool);
 	else
-		UT_ASSERTeq(pmem_unmap(pool->pool,
-			pool->size + POOL_HDR_SIZE), 0);
+		UT_ASSERTeq(pmem_unmap(pool->pool, pool->size), 0);
 
 	pool->pool = NULL;
 	pool->rpp = NULL;
+	pool->target = NULL;
 }
 
 /*
@@ -190,70 +230,113 @@ static void
 cmp_pool_attr(const struct rpmem_pool_attr *attr1,
 	const struct rpmem_pool_attr *attr2)
 {
-	UT_ASSERTeq(memcmp(attr1->signature, attr2->signature,
+	if (attr2 == NULL) {
+		UT_ASSERTeq(util_is_zeroed(attr1, sizeof(*attr1)), 1);
+	} else {
+		UT_ASSERTeq(memcmp(attr1->signature, attr2->signature,
 				sizeof(attr1->signature)), 0);
-	UT_ASSERTeq(attr1->major, attr2->major);
-	UT_ASSERTeq(attr1->compat_features, attr2->compat_features);
-	UT_ASSERTeq(attr1->ro_compat_features, attr2->ro_compat_features);
-	UT_ASSERTeq(attr1->incompat_features, attr2->incompat_features);
-	UT_ASSERTeq(memcmp(attr1->uuid, attr2->uuid,
+		UT_ASSERTeq(attr1->major, attr2->major);
+		UT_ASSERTeq(attr1->compat_features, attr2->compat_features);
+		UT_ASSERTeq(attr1->ro_compat_features,
+				attr2->ro_compat_features);
+		UT_ASSERTeq(attr1->incompat_features, attr2->incompat_features);
+		UT_ASSERTeq(memcmp(attr1->uuid, attr2->uuid,
 				sizeof(attr1->uuid)), 0);
-	UT_ASSERTeq(memcmp(attr1->poolset_uuid, attr2->poolset_uuid,
+		UT_ASSERTeq(memcmp(attr1->poolset_uuid, attr2->poolset_uuid,
 				sizeof(attr1->poolset_uuid)), 0);
-	UT_ASSERTeq(memcmp(attr1->prev_uuid, attr2->prev_uuid,
+		UT_ASSERTeq(memcmp(attr1->prev_uuid, attr2->prev_uuid,
 				sizeof(attr1->prev_uuid)), 0);
-	UT_ASSERTeq(memcmp(attr1->next_uuid, attr2->next_uuid,
+		UT_ASSERTeq(memcmp(attr1->next_uuid, attr2->next_uuid,
 				sizeof(attr1->next_uuid)), 0);
+	}
 }
 
 /*
+ * check_return_and_errno - validate return value and errno
+ */
+#define check_return_and_errno(ret, error_must_occur, exp_errno) \
+	if (exp_errno != 0) { \
+		if (error_must_occur) { \
+			UT_ASSERTne(ret, 0); \
+			UT_ASSERTeq(errno, exp_errno); \
+		} else { \
+			if (ret != 0) { \
+				UT_ASSERTeq(errno, exp_errno); \
+			} \
+		} \
+	} else { \
+		UT_ASSERTeq(ret, 0); \
+	}
+
+/*
  * test_create -- test case for creating remote pool
+ *
+ * The <option> argument values:
+ * - "singlehdr" - the incompat feature flag is set to POOL_FEAT_SINGLEHDR,
+ * - "noattr" - NULL pool attributes are passed to rpmem_create(),
+ * - "none" or any other string - no options.
  */
 static int
 test_create(const struct test_case *tc, int argc, char *argv[])
 {
-	if (argc < 5)
+	if (argc < 6)
 		UT_FATAL("usage: test_create <id> <pool set> "
-				"<target> <pool> <size>");
+				"<target> <pool> <size> <option>");
 
 	const char *id_str = argv[0];
 	const char *pool_set = argv[1];
 	const char *target = argv[2];
 	const char *pool_path = argv[3];
 	const char *size_str = argv[4];
+	const char *option = argv[5];
 
-	unsigned nlanes = NLANES;
 	int id = atoi(id_str);
 	UT_ASSERT(id >= 0 && id < MAX_IDS);
 	struct pool_entry *pool = &pools[id];
 	UT_ASSERTeq(pool->rpp, NULL);
 
-	init_pool(pool, pool_path, size_str);
-
+	struct rpmem_pool_attr *rattr = NULL;
 	struct rpmem_pool_attr pool_attr = pool_attrs[POOL_ATTR_INIT_INDEX];
+
+	if (strcmp(option, "noattr") == 0) {
+		/* pass NULL pool attributes */
+	} else {
+		if (strcmp(option, "singlehdr") == 0)
+			pool_attr.incompat_features |= POOL_FEAT_SINGLEHDR;
+		rattr = &pool_attr;
+	}
+
+	init_pool(pool, target, pool_path, size_str);
+
 	pool->rpp = rpmem_create(target, pool_set, pool->pool,
-			pool->size, &nlanes, &pool_attr);
+			pool->size, &pool->nlanes, rattr);
 
 	if (pool->rpp) {
-		UT_ASSERTne(nlanes, 0);
+		UT_ASSERTne(pool->nlanes, 0);
 		UT_OUT("%s: created", pool_set);
 	} else {
 		UT_OUT("!%s", pool_set);
 		free_pool(pool);
 	}
 
-	return 5;
+	return 6;
 }
 
 /*
  * test_open -- test case for opening remote pool
+ *
+ * The <option> argument values:
+ * - "singlehdr" - the incompat feature flag is set to POOL_FEAT_SINGLEHDR,
+ * - "noattr" - NULL pool attributes are passed to rpmem_create(),
+ * - "none" or any other string - no options.
  */
 static int
 test_open(const struct test_case *tc, int argc, char *argv[])
 {
-	if (argc < 6)
+	if (argc < 7)
 		UT_FATAL("usage: test_open <id> <pool set> "
-				"<target> <pool> <pool attr name>");
+				"<target> <pool> <size> <pool attr name> "
+				"<option>");
 
 	const char *id_str = argv[0];
 	const char *pool_set = argv[1];
@@ -261,24 +344,34 @@ test_open(const struct test_case *tc, int argc, char *argv[])
 	const char *pool_path = argv[3];
 	const char *size_str = argv[4];
 	const char *pool_attr_name = argv[5];
+	const char *option = argv[6];
 
 	int id = atoi(id_str);
 	UT_ASSERT(id >= 0 && id < MAX_IDS);
 	struct pool_entry *pool = &pools[id];
 	UT_ASSERTeq(pool->rpp, NULL);
+
+	const struct rpmem_pool_attr *rattr = NULL;
 	const int pool_attr_id = str_2_pool_attr_index(pool_attr_name);
+	struct rpmem_pool_attr pool_attr = pool_attrs[pool_attr_id];
+	if (strcmp(option, "noattr") == 0) {
+		/* pass NULL pool attributes */
+	} else {
+		/* pass non-NULL pool attributes */
+		if (strcmp(option, "singlehdr") == 0)
+			pool_attr.incompat_features |= POOL_FEAT_SINGLEHDR;
+		rattr = &pool_attr;
+	}
 
-	unsigned nlanes = NLANES;
+	init_pool(pool, target, pool_path, size_str);
 
-	init_pool(pool, pool_path, size_str);
-
-	struct rpmem_pool_attr pool_attr;
+	struct rpmem_pool_attr pool_attr_open;
 	pool->rpp = rpmem_open(target, pool_set, pool->pool,
-			pool->size, &nlanes, &pool_attr);
+			pool->size, &pool->nlanes, &pool_attr_open);
 
 	if (pool->rpp) {
-		cmp_pool_attr(&pool_attr, &pool_attrs[pool_attr_id]);
-		UT_ASSERTne(nlanes, 0);
+		cmp_pool_attr(&pool_attr_open, rattr);
+		UT_ASSERTne(pool->nlanes, 0);
 
 		UT_OUT("%s: opened", pool_set);
 	} else {
@@ -286,7 +379,7 @@ test_open(const struct test_case *tc, int argc, char *argv[])
 		free_pool(pool);
 	}
 
-	return 6;
+	return 7;
 }
 
 /*
@@ -305,12 +398,15 @@ test_close(const struct test_case *tc, int argc, char *argv[])
 	UT_ASSERTne(pool->rpp, NULL);
 
 	int ret = rpmem_close(pool->rpp);
-	UT_ASSERTeq(ret, 0);
+	check_return_and_errno(ret, pool->error_must_occur, pool->exp_errno);
 
 	free_pool(pool);
 
 	return 1;
 }
+
+typedef int (*flush_func)(RPMEMpool *rpp, size_t off,
+		size_t size, unsigned lane);
 
 /*
  * thread_arg -- persist worker thread arguments
@@ -321,52 +417,49 @@ struct thread_arg {
 	size_t size;
 	int nops;
 	unsigned lane;
+	int error_must_occur;
+	int exp_errno;
+
+	flush_func flush;
 };
 
 /*
- * persist_thread -- persist worker thread function
+ * thread_func -- worker thread function
  */
 static void *
-persist_thread(void *arg)
+thread_func(void *arg)
 {
 	struct thread_arg *args = arg;
-	size_t persist_size = args->size / args->nops;
+	size_t flush_size = args->size / args->nops;
 	UT_ASSERTeq(args->size % args->nops, 0);
 	for (int i = 0; i < args->nops; i++) {
-		size_t off = args->off + i * persist_size;
-		size_t left = args->size - i * persist_size;
-		size_t size = left < persist_size ?
-				left : persist_size;
+		size_t off = args->off + i * flush_size;
+		size_t left = args->size - i * flush_size;
+		size_t size = left < flush_size ?
+				left : flush_size;
 
-		int ret = rpmem_persist(args->rpp, off, size, args->lane);
-		UT_ASSERTeq(ret, 0);
+		int ret = args->flush(args->rpp, off, size, args->lane);
+		check_return_and_errno(ret, args->error_must_occur,
+				args->exp_errno);
 	}
 
 	return NULL;
 }
 
-/*
- * test_persist -- test case for persist operation
- */
-static int
-test_persist(const struct test_case *tc, int argc, char *argv[])
+static void
+test_flush(int id, int seed, int nthreads, int nops, flush_func func)
 {
-	if (argc < 4)
-		UT_FATAL("usage: test_persist <id> <seed> <nthreads> <nops>");
-
-	int id = atoi(argv[0]);
-	UT_ASSERT(id >= 0 && id < MAX_IDS);
 	struct pool_entry *pool = &pools[id];
-	int seed = atoi(argv[1]);
 
-	int nthreads = atoi(argv[2]);
-	int nops = atoi(argv[3]);
+	UT_ASSERTne(pool->nlanes, 0);
+	nthreads = min(nthreads, pool->nlanes);
 
-	size_t buff_size = pool->size;
+	size_t buff_size = pool->size - POOL_HDR_SIZE;
 
 	if (seed) {
 		srand(seed);
-		uint8_t *buff = (uint8_t *)pool->pool;
+		uint8_t *buff = (uint8_t *)((uintptr_t)pool->pool +
+				POOL_HDR_SIZE);
 		for (size_t i = 0; i < buff_size; i++)
 			buff[i] = rand();
 	}
@@ -380,18 +473,61 @@ test_persist(const struct test_case *tc, int argc, char *argv[])
 		args[i].rpp = pool->rpp;
 		args[i].nops = nops;
 		args[i].lane = (unsigned)i;
-		args[i].off = i * size_per_thread;
+		args[i].off = POOL_HDR_SIZE + i * size_per_thread;
+		args[i].flush = func;
 		size_t size_left = buff_size - size_per_thread * i;
 		args[i].size = size_left < size_per_thread ?
 				size_left : size_per_thread;
-		PTHREAD_CREATE(&threads[i], NULL, persist_thread, &args[i]);
+		args[i].exp_errno = pool->exp_errno;
+		args[i].error_must_occur = pool->error_must_occur;
+
+		PTHREAD_CREATE(&threads[i], NULL, thread_func, &args[i]);
 	}
 
 	for (int i = 0; i < nthreads; i++)
-		PTHREAD_JOIN(threads[i], NULL);
+		PTHREAD_JOIN(&threads[i], NULL);
 
 	FREE(args);
 	FREE(threads);
+}
+
+/*
+ * test_persist -- test case for persist operation
+ */
+static int
+test_persist(const struct test_case *tc, int argc, char *argv[])
+{
+	if (argc < 4)
+		UT_FATAL("usage: test_persist <id> <seed> <nthreads> <nops>");
+
+	int id = atoi(argv[0]);
+	UT_ASSERT(id >= 0 && id < MAX_IDS);
+	int seed = atoi(argv[1]);
+	int nthreads = atoi(argv[2]);
+	int nops = atoi(argv[3]);
+
+	test_flush(id, seed, nthreads, nops, rpmem_persist);
+
+	return 4;
+}
+
+/*
+ * test_deep_persist -- test case for deep_persist operation
+ */
+static int
+test_deep_persist(const struct test_case *tc, int argc, char *argv[])
+{
+	if (argc < 4)
+		UT_FATAL("usage: test_deep_persist <id> <seed> <nthreads> "
+				"<nops>");
+
+	int id = atoi(argv[0]);
+	UT_ASSERT(id >= 0 && id < MAX_IDS);
+	int seed = atoi(argv[1]);
+	int nthreads = atoi(argv[2]);
+	int nops = atoi(argv[3]);
+
+	test_flush(id, seed, nthreads, nops, rpmem_deep_persist);
 
 	return 4;
 }
@@ -415,12 +551,14 @@ test_read(const struct test_case *tc, int argc, char *argv[])
 	uint8_t *buff = (uint8_t *)((uintptr_t)pool->pool + POOL_HDR_SIZE);
 	size_t buff_size = pool->size - POOL_HDR_SIZE;
 
-	ret = rpmem_read(pool->rpp, buff, 0, buff_size, 0);
-	UT_ASSERTeq(ret, 0);
+	ret = rpmem_read(pool->rpp, buff, POOL_HDR_SIZE, buff_size, 0);
+	check_return_and_errno(ret, pool->error_must_occur, pool->exp_errno);
 
-	for (size_t i = 0; i < buff_size; i++) {
-		uint8_t r = rand();
-		UT_ASSERTeq(buff[i], r);
+	if (ret == 0) {
+		for (size_t i = 0; i < buff_size; i++) {
+			uint8_t r = rand();
+			UT_ASSERTeq(buff[i], r);
+		}
 	}
 
 	return 2;
@@ -463,24 +601,38 @@ test_remove(const struct test_case *tc, int argc, char *argv[])
 static int
 test_set_attr(const struct test_case *tc, int argc, char *argv[])
 {
-	if (argc < 2)
-		UT_FATAL("usage: test_set_attr <id> <pool attr name>");
+	if (argc < 3)
+		UT_FATAL("usage: test_set_attr <id> <pool attr name> <option>");
 
 	const char *id_str = argv[0];
 	const char *pool_attr_name = argv[1];
+	const char *option = argv[2];
 
 	int id = atoi(id_str);
 	UT_ASSERT(id >= 0 && id < MAX_IDS);
 	struct pool_entry *pool = &pools[id];
 	UT_ASSERTne(pool->rpp, NULL);
+
+	struct rpmem_pool_attr *rattr = NULL;
 	const int pool_attr_id = str_2_pool_attr_index(pool_attr_name);
+	struct rpmem_pool_attr pool_attr = pool_attrs[pool_attr_id];
+	if (strcmp(option, "noattr") == 0) {
+		/* pass NULL pool attributes */
+	} else {
+		/* pass non-NULL pool attributes */
+		if (strcmp(option, "singlehdr") == 0)
+			pool_attr.incompat_features |= POOL_FEAT_SINGLEHDR;
+		rattr = &pool_attr;
+	}
 
-	int ret = rpmem_set_attr(pool->rpp, &pool_attrs[pool_attr_id]);
-	UT_ASSERTeq(ret, 0);
+	int ret = rpmem_set_attr(pool->rpp, rattr);
 
-	UT_OUT("set attributes succeeded (%s)", pool_attr_name);
+	if (ret)
+		UT_OUT("set attributes failed (%s)", pool_attr_name);
+	else
+		UT_OUT("set attributes succeeded (%s)", pool_attr_name);
 
-	return 2;
+	return 3;
 }
 
 /*
@@ -502,7 +654,7 @@ check_pool(const struct test_case *tc, int argc, char *argv[])
 	size -= POOL_HDR_SIZE;
 
 	struct pool_set *set;
-	ret = util_poolset_create_set(&set, pool_set, 0, 0);
+	ret = util_poolset_create_set(&set, pool_set, 0, 0, 0);
 	UT_ASSERTeq(ret, 0);
 	ret = util_pool_open_nocheck(set, 0);
 	UT_ASSERTeq(ret, 0);
@@ -533,7 +685,7 @@ fill_pool(const struct test_case *tc, int argc, char *argv[])
 	int ret;
 
 	struct pool_set *set;
-	ret = util_poolset_create_set(&set, pool_set, 0, 0);
+	ret = util_poolset_create_set(&set, pool_set, 0, 0, 0);
 	UT_ASSERTeq(ret, 0);
 	ret = util_pool_open_nocheck(set, 0);
 	UT_ASSERTeq(ret, 0);
@@ -547,6 +699,166 @@ fill_pool(const struct test_case *tc, int argc, char *argv[])
 	return 2;
 }
 
+enum wait_type {
+	WAIT,
+	NOWAIT
+};
+
+const char *wait_type_str[2] = {
+	"wait",
+	"nowait"
+};
+
+static enum wait_type
+str2wait(const char *str)
+{
+	for (int i = 0; i < ARRAY_SIZE(wait_type_str); ++i) {
+		if (strcmp(wait_type_str[i], str) == 0)
+			return (enum wait_type)i;
+	}
+
+	UT_FATAL("'%s' does not match <wait|nowait>", str);
+}
+
+#define SSH_EXE "ssh"
+#define RPMEMD_TERMINATE_CMD SSH_EXE " -tt %s kill -9 %d"
+#define GET_RPMEMD_PID_CMD SSH_EXE " %s cat %s"
+#define COUNT_RPMEMD_CMD SSH_EXE " %s ps -A | grep -c %d"
+
+/*
+ * rpmemd_kill -- kill target rpmemd
+ */
+static int
+rpmemd_kill(const char *target, int pid)
+{
+	char cmd[100];
+	snprintf(cmd, sizeof(cmd), RPMEMD_TERMINATE_CMD, target, pid);
+	return system(cmd);
+}
+
+/*
+ * popen_readi -- popen cmd and read integer
+ */
+static int
+popen_readi(const char *cmd)
+{
+	FILE *stream = popen(cmd, "r");
+	UT_ASSERT(stream != NULL);
+
+	int i;
+	int ret = fscanf(stream, "%d", &i);
+	UT_ASSERT(ret == 1);
+
+	pclose(stream);
+
+	return i;
+}
+
+/*
+ * rpmemd_get_pid -- get target rpmemd pid
+ */
+static int
+rpmemd_get_pid(const char *target, const char *pid_file)
+{
+	char cmd[PATH_MAX];
+	snprintf(cmd, sizeof(cmd), GET_RPMEMD_PID_CMD, target, pid_file);
+	return popen_readi(cmd);
+}
+
+/*
+ * rpmemd_is_running -- tell if target rpmemd is running
+ */
+static int
+rpmemd_is_running(const char *target, int pid)
+{
+	char cmd[100];
+	snprintf(cmd, sizeof(cmd), COUNT_RPMEMD_CMD, target, pid);
+	return popen_readi(cmd) > 0;
+}
+
+/*
+ * rpmemd_kill_wait -- kill target rpmemd and wait for it to stop
+ */
+static void
+rpmemd_kill_wait(const char *target, const char *pid_file, enum wait_type wait)
+{
+	int pid = rpmemd_get_pid(target, pid_file);
+	int ret;
+
+	do {
+		ret = rpmemd_kill(target, pid);
+		if (ret != 0 || wait == NOWAIT) {
+			break;
+		}
+	} while (rpmemd_is_running(target, pid));
+}
+
+/*
+ * rpmemd_terminate -- terminate target rpmemd
+ */
+static int
+rpmemd_terminate(const struct test_case *tc, int argc, char *argv[])
+{
+	if (argc < 3) {
+		UT_FATAL("usage: rpmemd_terminate <id> <pid file> "
+				"<wait|nowait>");
+	}
+
+	const char *id_str = argv[0];
+	const char *pid_file = argv[1];
+	const char *wait_str = argv[2];
+
+	int id = atoi(id_str);
+	UT_ASSERT(id >= 0 && id < MAX_IDS);
+
+	struct pool_entry *pool = &pools[id];
+	UT_ASSERTne(pool->target, NULL);
+	pool->exp_errno = ECONNRESET;
+
+	enum wait_type wait = str2wait(wait_str);
+	/*
+	 * if process will wait for rpmemd to terminate it is sure error will
+	 * occur
+	 */
+	pool->error_must_occur = wait == WAIT;
+	rpmemd_kill_wait(pool->target, pid_file, wait);
+
+	return 3;
+}
+
+/*
+ * test_persist_header -- test case for persisting data with offset < 4096
+ *
+ * if 'hdr' argument is used, test passes if rpmem_persist fails
+ * if 'nohdr' argument is used, test passes if rpmem_persist passes
+ */
+static int
+test_persist_header(const struct test_case *tc, int argc, char *argv[])
+{
+	if (argc < 2)
+		UT_FATAL("usage: test_persist_header <id> <hdr|nohdr>");
+
+	int id = atoi(argv[0]);
+	const char *hdr_str = argv[1];
+	UT_ASSERT(id >= 0 && id < MAX_IDS);
+	struct pool_entry *pool = &pools[id];
+
+	int with_hdr;
+	if (strcmp(hdr_str, "hdr") == 0)
+		with_hdr = 1;
+	else if (strcmp(hdr_str, "nohdr") == 0)
+		with_hdr = 0;
+	else
+		UT_ASSERT(0);
+
+	for (size_t off = 0; off < POOL_HDR_SIZE; off += 8) {
+		int ret = rpmem_persist(pool->rpp, off, 8, 0);
+		UT_ASSERTeq(ret, with_hdr ? -1 : 0);
+	}
+
+	return 2;
+}
+
 /*
  * test_cases -- available test cases
  */
@@ -556,10 +868,13 @@ static struct test_case test_cases[] = {
 	TEST_CASE(test_set_attr),
 	TEST_CASE(test_close),
 	TEST_CASE(test_persist),
+	TEST_CASE(test_deep_persist),
 	TEST_CASE(test_read),
 	TEST_CASE(test_remove),
 	TEST_CASE(check_pool),
 	TEST_CASE(fill_pool),
+	TEST_CASE(rpmemd_terminate),
+	TEST_CASE(test_persist_header),
 };
 
 #define NTESTS	(sizeof(test_cases) / sizeof(test_cases[0]))

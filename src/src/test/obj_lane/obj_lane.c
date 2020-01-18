@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,6 +49,9 @@
 #define MAX_MOCK_LANES 5
 #define MOCK_RUNTIME (void *)(0xABC)
 #define MOCK_RUNTIME_2 (void *)(0xBCD)
+
+#define MOCK_LAYOUT (void *)(0xAAA)
+#define MOCK_LAYOUT_2 (void *)(0xBBB)
 
 #define LOG_PREFIX "trace"
 #define LOG_LEVEL_VAR "TRACE_LOG_LEVEL"
@@ -114,12 +117,21 @@ lane_noop_boot(PMEMobjpool *pop)
 	return 0;
 }
 
+static int
+lane_noop_cleanup(PMEMobjpool *pop)
+{
+	UT_OUT("lane_noop_cleanup");
+
+	return 0;
+}
+
 static struct section_operations noop_ops = {
 	.construct_rt = lane_noop_construct_rt,
 	.destroy_rt = lane_noop_destroy_rt,
 	.recover = lane_noop_recovery,
 	.check = lane_noop_check,
-	.boot = lane_noop_boot
+	.boot = lane_noop_boot,
+	.cleanup = lane_noop_cleanup,
 };
 
 SECTION_PARM(LANE_SECTION_ALLOCATOR, &noop_ops);
@@ -223,10 +235,12 @@ test_lane_hold_release(void)
 	struct lane mock_lane = {
 		.sections = {
 			[LANE_SECTION_ALLOCATOR] = {
-				.runtime = MOCK_RUNTIME
+				.runtime = MOCK_RUNTIME,
+				.layout = MOCK_LAYOUT
 			},
 			[LANE_SECTION_LIST] = {
-				.runtime = MOCK_RUNTIME_2
+				.runtime = MOCK_RUNTIME_2,
+				.layout = MOCK_LAYOUT_2
 			}
 		}
 	};
@@ -327,7 +341,7 @@ test_lane_info_destroy_in_separate_thread(void)
 	os_thread_t thread;
 
 	os_thread_create(&thread, NULL, test_separate_thread, &data);
-	os_thread_join(thread, NULL);
+	os_thread_join(&thread, NULL);
 
 	lane_info_destroy();
 }
@@ -363,7 +377,7 @@ test_lane_cleanup_in_separate_thread(void)
 	os_thread_t thread;
 
 	os_thread_create(&thread, NULL, test_separate_thread, &data);
-	os_thread_join(thread, NULL);
+	os_thread_join(&thread, NULL);
 
 	UT_ASSERTeq(pop->p.lanes_desc.lane, NULL);
 	UT_ASSERTeq(pop->p.lanes_desc.lane_locks, NULL);
@@ -407,5 +421,6 @@ main(int argc, char *argv[])
 		usage(argv[0]);
 	}
 
+	common_fini();
 	DONE(NULL);
 }

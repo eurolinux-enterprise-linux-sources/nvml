@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,7 +46,7 @@
 #ifdef _WIN32
 #include <pmemcompat.h>
 
-#ifndef NVML_UTF8_API
+#ifndef PMDK_UTF8_API
 #define pmem_map_file pmem_map_fileW
 #define pmem_check_version pmem_check_versionW
 #define pmem_errormsg pmem_errormsgW
@@ -63,6 +63,12 @@ extern "C" {
 #endif
 
 #include <sys/types.h>
+
+/*
+ * This limit is set arbitrary to incorporate a pool header and required
+ * alignment plus supply.
+ */
+#define PMEM_MIN_PART ((size_t)(1024 * 1024 * 2)) /* 2 MiB */
 
 /*
  * flags supported by pmem_map_file()
@@ -86,7 +92,11 @@ int pmem_unmap(void *addr, size_t len);
 int pmem_is_pmem(const void *addr, size_t len);
 void pmem_persist(const void *addr, size_t len);
 int pmem_msync(const void *addr, size_t len);
+int pmem_has_auto_flush(void);
 void pmem_flush(const void *addr, size_t len);
+void pmem_deep_flush(const void *addr, size_t len);
+int pmem_deep_drain(const void *addr, size_t len);
+int pmem_deep_persist(const void *addr, size_t len);
 void pmem_drain(void);
 int pmem_has_hw_drain(void);
 void *pmem_memmove_persist(void *pmemdest, const void *src, size_t len);
@@ -103,7 +113,7 @@ void *pmem_memset_nodrain(void *pmemdest, int c, size_t len);
  * compile-time by passing these defines to pmem_check_version().
  */
 #define PMEM_MAJOR_VERSION 1
-#define PMEM_MINOR_VERSION 0
+#define PMEM_MINOR_VERSION 1
 
 #ifndef _WIN32
 const char *pmem_check_version(unsigned major_required,

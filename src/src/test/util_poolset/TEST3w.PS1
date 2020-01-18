@@ -1,5 +1,5 @@
 #
-# Copyright 2017, Intel Corporation
+# Copyright 2017-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -38,8 +38,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "util_poolset/TEST3w"
-$Env:UNITTEST_NUM = "3w"
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
@@ -52,11 +50,12 @@ setup
 $Env:TEST_LOG_LEVEL = "4"
 $Env:TEST_LOG_FILE = "test$Env:UNITTEST_NUM.log"
 
-$MIN_POOL = 256 * 1024  # 4 * mmap alignment
+$MIN_POOL = 4 * 1024 * 1024 # 4MiB
+$MIN_PART = (2 * 1024 * 1024).toString() + "B" # 2MiB
 
 $FILES = @()
 for ($p = 1; $p -le 128; $p++) {
-    $FILES += "256K:$DIR\testfile${p}:x"
+    $FILES += "${MIN_PART}:$DIR\testfile${p}:x"
 }
 
 # prepare pool sets

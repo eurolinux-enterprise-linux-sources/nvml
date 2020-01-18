@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,6 +46,8 @@
 #include "redo.h"
 #include "ctl.h"
 #include "ringbuf.h"
+#include "sync.h"
+#include "stats.h"
 
 #define PMEMOBJ_LOG_PREFIX "libpmemobj"
 #define PMEMOBJ_LOG_LEVEL_VAR "PMEMOBJ_LOG_LEVEL"
@@ -54,9 +56,14 @@
 /* attributes of the obj memory pool format for the pool header */
 #define OBJ_HDR_SIG "PMEMOBJ"	/* must be 8 bytes including '\0' */
 #define OBJ_FORMAT_MAJOR 4
-#define OBJ_FORMAT_COMPAT 0x0000
-#define OBJ_FORMAT_INCOMPAT 0x0000
-#define OBJ_FORMAT_RO_COMPAT 0x0000
+
+#define OBJ_FORMAT_COMPAT_DEFAULT 0x0000
+#define OBJ_FORMAT_INCOMPAT_DEFAULT 0x000
+#define OBJ_FORMAT_RO_COMPAT_DEFAULT 0x0000
+
+#define OBJ_FORMAT_COMPAT_CHECK 0x0000
+#define OBJ_FORMAT_INCOMPAT_CHECK POOL_FEAT_ALL
+#define OBJ_FORMAT_RO_COMPAT_CHECK 0x0000
 
 /* size of the persistent part of PMEMOBJ pool descriptor (2kB) */
 #define OBJ_DSC_P_SIZE		2048
@@ -80,7 +87,8 @@
 
 #define OBJ_PTR_FROM_POOL(pop, ptr)\
 	((uintptr_t)(ptr) >= (uintptr_t)(pop) &&\
-	(uintptr_t)(ptr) < (uintptr_t)(pop) + (pop)->size)
+	(uintptr_t)(ptr) < (uintptr_t)(pop) +\
+	(pop)->heap_offset + (pop)->heap_size)
 
 #define OBJ_OFF_IS_VALID(pop, off)\
 	(OBJ_OFF_FROM_HEAP(pop, off) ||\
@@ -112,7 +120,7 @@ struct pmemobjpool {
 	uint64_t lanes_offset;
 	uint64_t nlanes;
 	uint64_t heap_offset;
-	uint64_t heap_size;
+	uint64_t unused3;
 	unsigned char unused[OBJ_DSC_P_UNUSED]; /* must be zero */
 	uint64_t checksum;	/* checksum of above fields */
 
@@ -129,11 +137,14 @@ struct pmemobjpool {
 	 */
 	uint64_t conversion_flags;
 
-	char pmem_reserved[512]; /* must be zeroed */
+	uint64_t heap_size;
+
+	struct stats_persistent stats_persistent;
+
+	char pmem_reserved[496]; /* must be zeroed */
 
 	/* some run-time state, allocated out of memory pool... */
 	void *addr;		/* mapped region */
-	size_t size;		/* size of mapped region */
 	int is_pmem;		/* true if pool is PMEM */
 	int rdonly;		/* true if pool is opened read-only */
 	struct palloc_heap heap;
@@ -142,6 +153,7 @@ struct pmemobjpool {
 	int is_dev_dax;		/* true if mapped on device dax */
 
 	struct ctl *ctl;
+	struct stats *stats;
 	struct ringbuf *tx_postcommit_tasks;
 
 	struct pool_set *set;		/* pool set info */
@@ -164,7 +176,7 @@ struct pmemobjpool {
 
 	/* remote replica section */
 	void *rpp;	/* RPMEMpool opaque handle if it is a remote replica */
-	uintptr_t remote_base;	/* beginning of the pool's descriptor */
+	uintptr_t remote_base;	/* beginning of the remote pool */
 	char *node_addr;	/* address of a remote node */
 	char *pool_desc;	/* descriptor of a poolset */
 
@@ -175,9 +187,17 @@ struct pmemobjpool {
 
 	struct tx_parameters *tx_params;
 
+	/*
+	 * Locks are dynamically allocated on FreeBSD. Keep track so
+	 * we can free them on pmemobj_close.
+	 */
+	PMEMmutex_internal *mutex_head;
+	PMEMrwlock_internal *rwlock_head;
+	PMEMcond_internal *cond_head;
+
 	/* padding to align size of this structure to page boundary */
 	/* sizeof(unused2) == 8192 - offsetof(struct pmemobjpool, unused2) */
-	char unused2[1028];
+	char unused2[1004];
 };
 
 /*
@@ -186,6 +206,9 @@ struct pmemobjpool {
  * functions.
  */
 #define OBJ_INTERNAL_OBJECT_MASK ((1ULL) << 15)
+
+#define CLASS_ID_FROM_FLAG(flag)\
+((uint16_t)((flag) >> 48))
 
 /*
  * pmemobj_get_uuid_lo -- (internal) evaluates XOR sum of least significant

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,7 +44,7 @@
 #include <sys/file.h>
 #include <sys/mman.h>
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__FreeBSD__)
 #include <sys/sysmacros.h>
 #endif
 
@@ -76,8 +76,8 @@ device_dax_size(const char *path)
 	}
 
 	char spath[PATH_MAX];
-	snprintf(spath, PATH_MAX, "/sys/dev/char/%d:%d/size",
-		major(st.st_rdev), minor(st.st_rdev));
+	snprintf(spath, PATH_MAX, "/sys/dev/char/%u:%u/size",
+		os_major(st.st_rdev), os_minor(st.st_rdev));
 
 	LOG(4, "device size path \"%s\"", spath);
 
@@ -155,8 +155,8 @@ util_fd_is_device_dax(int fd)
 	}
 
 	char spath[PATH_MAX];
-	snprintf(spath, PATH_MAX, "/sys/dev/char/%d:%d/subsystem",
-		major(st.st_rdev), minor(st.st_rdev));
+	snprintf(spath, PATH_MAX, "/sys/dev/char/%u:%u/subsystem",
+		os_major(st.st_rdev), os_minor(st.st_rdev));
 
 	LOG(4, "device subsystem path \"%s\"", spath);
 
@@ -260,7 +260,7 @@ util_file_map_whole(const char *path)
 		goto out;
 	}
 
-	addr = util_map(fd, (size_t)size, MAP_SHARED, 0, 0);
+	addr = util_map(fd, (size_t)size, MAP_SHARED, 0, 0, NULL);
 	if (addr == NULL) {
 		LOG(2, "failed to map entire file \"%s\"", path);
 		goto out;
@@ -278,7 +278,7 @@ out:
  * util_file_zero -- zeroes the specified region of the file
  */
 int
-util_file_zero(const char *path, off_t off, size_t len)
+util_file_zero(const char *path, os_off_t off, size_t len)
 {
 	LOG(3, "path \"%s\" off %ju len %zu", path, off, len);
 
@@ -311,7 +311,7 @@ util_file_zero(const char *path, off_t off, size_t len)
 		len = (size_t)(size - off);
 	}
 
-	void *addr = util_map(fd, (size_t)size, MAP_SHARED, 0, 0);
+	void *addr = util_map(fd, (size_t)size, MAP_SHARED, 0, 0, NULL);
 	if (addr == NULL) {
 		LOG(2, "failed to map entire file \"%s\"", path);
 		ret = -1;
@@ -336,7 +336,7 @@ out:
  */
 ssize_t
 util_file_pwrite(const char *path, const void *buffer, size_t size,
-	off_t offset)
+	os_off_t offset)
 {
 	LOG(3, "path \"%s\" buffer %p size %zu offset %ju",
 			path, buffer, size, offset);
@@ -385,7 +385,7 @@ util_file_pwrite(const char *path, const void *buffer, size_t size,
  */
 ssize_t
 util_file_pread(const char *path, void *buffer, size_t size,
-	off_t offset)
+	os_off_t offset)
 {
 	LOG(3, "path \"%s\" buffer %p size %zu offset %ju",
 			path, buffer, size, offset);
@@ -445,8 +445,8 @@ util_file_create(const char *path, size_t size, size_t minsize)
 		return -1;
 	}
 
-	if (((off_t)size) < 0) {
-		ERR("invalid size (%zu) for off_t", size);
+	if (((os_off_t)size) < 0) {
+		ERR("invalid size (%zu) for os_off_t", size);
 		errno = EFBIG;
 		return -1;
 	}
@@ -470,7 +470,7 @@ util_file_create(const char *path, size_t size, size_t minsize)
 		return -1;
 	}
 
-	if ((errno = os_posix_fallocate(fd, 0, (off_t)size)) != 0) {
+	if ((errno = os_posix_fallocate(fd, 0, (os_off_t)size)) != 0) {
 		ERR("!posix_fallocate \"%s\", %zu", path, size);
 		goto err;
 	}

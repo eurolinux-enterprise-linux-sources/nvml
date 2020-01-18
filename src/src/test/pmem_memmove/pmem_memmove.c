@@ -83,8 +83,8 @@ swap_mappings(char **dest, char **src, size_t size, int fd)
  * so as not to introduce any possible side affects.
  */
 static void
-do_memmove(int fd, char *dest, char *src, char *file_name, off_t dest_off,
-	off_t src_off, off_t off, off_t bytes)
+do_memmove(int fd, char *dest, char *src, char *file_name, os_off_t dest_off,
+	os_off_t src_off, os_off_t off, os_off_t bytes)
 {
 	void *ret;
 	char *src1 = MALLOC(bytes);
@@ -121,9 +121,15 @@ do_memmove(int fd, char *dest, char *src, char *file_name, off_t dest_off,
 	UT_ASSERTeq(ret, dest + dest_off);
 
 	/* memcmp will validate that what I expect in memory. */
-	if (memcmp(src1 + src_off, dest + dest_off, bytes / 2))
-		UT_ERR("%s: %zu bytes do not match with memcmp",
+	if (memcmp(src1 + src_off, dest + dest_off, bytes / 2)) {
+		for (int i = 0; i < bytes / 2; ++i)
+			UT_ERR("%d 0x%02x 0x%02x %s", i, *(src1 + src_off + i),
+					*(dest + dest_off + i),
+					*(src1 + src_off + i) !=
+					*(dest + dest_off + i) ? "!!!" : "");
+		UT_FATAL("%s: %zu bytes do not match with memcmp",
 			file_name, bytes / 2);
+	}
 
 	/*
 	 * This is a special case. An overlapping dest means that
@@ -135,17 +141,17 @@ do_memmove(int fd, char *dest, char *src, char *file_name, off_t dest_off,
 	 * went wrong.
 	 */
 	if (dest > src && off != 0) {
-		LSEEK(fd, (off_t)dest_off + off, SEEK_SET);
+		LSEEK(fd, (os_off_t)dest_off + off, SEEK_SET);
 		if (READ(fd, buf, bytes / 2) == bytes / 2) {
 			if (memcmp(src1 + src_off, buf, bytes / 2))
-				UT_ERR("%s: first %zu bytes do not match",
+				UT_FATAL("%s: first %zu bytes do not match",
 					file_name, bytes / 2);
 		}
 	} else {
-		LSEEK(fd, (off_t)dest_off, SEEK_SET);
+		LSEEK(fd, (os_off_t)dest_off, SEEK_SET);
 		if (READ(fd, buf, bytes / 2) == bytes / 2) {
 			if (memcmp(src1 + src_off, buf, bytes / 2))
-				UT_ERR("%s: first %zu bytes do not match",
+				UT_FATAL("%s: first %zu bytes do not match",
 					file_name, bytes / 2);
 		}
 	}
@@ -162,14 +168,26 @@ main(int argc, char *argv[])
 	int fd;
 	char *dest;
 	char *src;
-	off_t dest_off = 0;
-	off_t src_off = 0;
+	char *dest_orig;
+	char *src_orig;
+	os_off_t dest_off = 0;
+	os_off_t src_off = 0;
 	uint64_t bytes = 0;
 	int who = 0;
-	off_t overlap = 0;
+	os_off_t overlap = 0;
 	size_t mapped_len;
 
-	START(argc, argv, "pmem_memmove");
+	const char *thr = getenv("PMEM_MOVNT_THRESHOLD");
+	const char *avx = getenv("PMEM_AVX");
+	const char *avx512f = getenv("PMEM_AVX512F");
+
+	START(argc, argv, "pmem_memmove %s %s %s %s %savx %savx512f",
+			argc > 2 ? argv[2] : "null",
+			argc > 3 ? argv[3] : "null",
+			argc > 4 ? argv[4] : "null",
+			thr ? thr : "default",
+			avx ? "" : "!",
+			avx512f ? "" : "!");
 
 	fd = OPEN(argv[1], O_RDWR);
 
@@ -181,7 +199,7 @@ main(int argc, char *argv[])
 		    argv[arg][0]) == NULL || argv[arg][1] != ':')
 			UT_FATAL("op must be d: or s: or b: or o: or S:");
 
-		off_t val = strtoul(&argv[arg][2], NULL, 0);
+		os_off_t val = strtoul(&argv[arg][2], NULL, 0);
 
 		switch (argv[arg][0]) {
 		case 'd':
@@ -224,11 +242,12 @@ main(int argc, char *argv[])
 	/* for overlap the src and dest must be created differently */
 	if (who == 0) {
 		/* src > dest */
-		dest = pmem_map_file(argv[1], 0, 0, 0, &mapped_len, NULL);
+		dest_orig = dest = pmem_map_file(argv[1], 0, 0, 0,
+			&mapped_len, NULL);
 		if (dest == NULL)
 			UT_FATAL("!could not mmap dest file %s", argv[1]);
 
-		src = MMAP(dest + mapped_len, mapped_len,
+		src_orig = src = MMAP(dest + mapped_len, mapped_len,
 			PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS,
 			-1, 0);
 		/*
@@ -241,7 +260,7 @@ main(int argc, char *argv[])
 		if (src <= dest) {
 			swap_mappings(&dest, &src, mapped_len, fd);
 			if (src <= dest)
-				UT_ERR("cannot map files in memory order");
+				UT_FATAL("cannot map files in memory order");
 		}
 
 		do_memmove(fd, dest, src, argv[1], dest_off, src_off,
@@ -251,15 +270,19 @@ main(int argc, char *argv[])
 		swap_mappings(&dest, &src, mapped_len, fd);
 
 		if (dest <= src)
-			UT_ERR("cannot map files in memory order");
+			UT_FATAL("cannot map files in memory order");
 
 		do_memmove(fd, dest, src, argv[1], dest_off, src_off, 0,
 			bytes);
-		MUNMAP(dest, mapped_len);
-		MUNMAP(src, mapped_len);
+
+		int ret = pmem_unmap(dest_orig, mapped_len);
+		UT_ASSERTeq(ret, 0);
+
+		MUNMAP(src_orig, mapped_len);
 	} else if (who == 1) {
 		/* src overlap with dest */
-		dest = pmem_map_file(argv[1], 0, 0, 0, &mapped_len, NULL);
+		dest_orig = dest = pmem_map_file(argv[1], 0, 0, 0,
+			&mapped_len, NULL);
 		if (dest == NULL)
 			UT_FATAL("!Could not mmap %s: \n", argv[1]);
 
@@ -268,20 +291,25 @@ main(int argc, char *argv[])
 		util_persist_auto(util_fd_is_device_dax(fd), dest, bytes);
 		do_memmove(fd, dest, src, argv[1], dest_off, src_off,
 			overlap, bytes);
-		MUNMAP(dest, mapped_len);
+
+		int ret = pmem_unmap(dest_orig, mapped_len);
+		UT_ASSERTeq(ret, 0);
 	} else {
 		/* dest overlap with src */
-		dest = pmem_map_file(argv[1], 0, 0, 0, &mapped_len, NULL);
-		if (dest == NULL) {
+		dest_orig = dest = pmem_map_file(argv[1], 0, 0, 0,
+			&mapped_len, NULL);
+		if (dest == NULL)
 			UT_FATAL("!Could not mmap %s: \n", argv[1]);
-		}
+
 		src = dest;
 		dest = src + overlap;
 		memset(src, 0, bytes);
 		util_persist_auto(util_fd_is_device_dax(fd), src, bytes);
 		do_memmove(fd, dest, src, argv[1], dest_off, src_off,
 			overlap, bytes);
-		MUNMAP(src, mapped_len);
+
+		int ret = pmem_unmap(dest_orig, mapped_len);
+		UT_ASSERTeq(ret, 0);
 	}
 
 	CLOSE(fd);

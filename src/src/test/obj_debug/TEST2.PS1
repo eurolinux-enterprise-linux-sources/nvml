@@ -1,5 +1,5 @@
 #
-# Copyright 2015-2017, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -38,18 +38,12 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "obj_debug/TEST2"
-$Env:UNITTEST_NUM = "2"
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
 
 require_test_type medium
 require_build_type debug
-
-# XXX - no Valgrind equivalent for Windows yet
-# test causes 5 pmemcheck errors by design
-#configure_valgrind pmemcheck force-disable
 
 setup
 

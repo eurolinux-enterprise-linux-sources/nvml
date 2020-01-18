@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -42,8 +42,8 @@
  * creation.
  */
 
+#include "alloc_class.h"
 #include "bucket.h"
-#include "ctree.h"
 #include "heap.h"
 #include "out.h"
 #include "sys_util.h"
@@ -68,9 +68,23 @@ bucket_new(struct block_container *c, struct alloc_class *aclass)
 	util_mutex_init(&b->lock);
 
 	b->is_active = 0;
+	b->active_memory_block = NULL;
+	if (aclass && aclass->type == CLASS_RUN) {
+		b->active_memory_block =
+			Zalloc(sizeof(struct memory_block_reserved));
+
+		if (b->active_memory_block == NULL)
+			goto error_active_alloc;
+	}
 	b->aclass = aclass;
 
 	return b;
+
+error_active_alloc:
+
+	util_mutex_destroy(&b->lock);
+	Free(b);
+	return NULL;
 }
 
 /*
@@ -79,11 +93,11 @@ bucket_new(struct block_container *c, struct alloc_class *aclass)
 int
 bucket_insert_block(struct bucket *b, const struct memory_block *m)
 {
-#if defined(USE_VG_MEMCHECK) || defined(USE_VG_HELGRIND) || defined(USE_VG_DRD)
+#if VG_MEMCHECK_ENABLED || VG_HELGRIND_ENABLED || VG_DRD_ENABLED
 	if (On_valgrind) {
 		size_t size = m->m_ops->get_real_size(m);
 		void *data = m->m_ops->get_real_data(m);
-		VALGRIND_MAKE_MEM_NOACCESS(data, size);
+		VALGRIND_DO_MAKE_MEM_NOACCESS(data, size);
 		VALGRIND_ANNOTATE_NEW_MEMORY(data, size);
 	}
 #endif
@@ -96,7 +110,19 @@ bucket_insert_block(struct bucket *b, const struct memory_block *m)
 void
 bucket_delete(struct bucket *b)
 {
+	if (b->active_memory_block)
+		Free(b->active_memory_block);
+
 	util_mutex_destroy(&b->lock);
 	b->c_ops->destroy(b->container);
 	Free(b);
+}
+
+/*
+ * bucket_current_resvp -- returns the pointer to the current reservation count
+ */
+int *
+bucket_current_resvp(struct bucket *b)
+{
+	return b->active_memory_block ? &b->active_memory_block->nresv : NULL;
 }

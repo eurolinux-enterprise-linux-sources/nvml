@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -30,19 +30,20 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #
-# src/Makefile -- Makefile for NVML
+# src/Makefile -- Makefile for PMDK
 #
 TOP := $(dir $(lastword $(MAKEFILE_LIST)))..
 include $(TOP)/src/common.inc
 include $(TOP)/src/version.inc
 
 TARGETS = libpmem libvmem libpmemblk libpmemlog libpmemobj libpmempool\
-	libvmmalloc tools
+		  libpmemcto libvmmalloc tools
 ALL_TARGETS = $(TARGETS) common librpmem examples benchmarks
+
 SCOPE_DIRS = $(TARGETS) common librpmem rpmem_common
 
 DEBUG_RELEASE_TARGETS = common libpmem libvmem libpmemblk libpmemlog libpmemobj\
-	libpmempool libvmmalloc librpmem
+	libpmempool libvmmalloc librpmem libpmemcto
 RELEASE_TARGETS = tools examples benchmarks
 
 CLEAN_NO_JE_TARGETS = $(ALL_TARGETS) rpmem_common test
@@ -57,7 +58,7 @@ HEADERS_DESTDIR = $(DESTDIR)$(includedir)
 HEADERS_INSTALL = include/libpmem.h include/libvmem.h\
 		include/libpmemobj.h include/libpmempool.h\
 		include/libpmemblk.h include/libpmemlog.h\
-		include/libvmmalloc.h
+		include/libvmmalloc.h include/libpmemcto.h
 
 OBJ_HEADERS_INSTALL = include/libpmemobj/*.h
 
@@ -66,7 +67,8 @@ CPP_HEADERS_DESTDIR = $(DESTDIR)$(includedir)/libpmemobj++
 PKG_CONFIG_DESTDIR = $(DESTDIR)$(pkgconfigdir)
 PKG_CONFIG_COMMON = common.pc
 PKG_CONFIG_FILES = libpmem.pc libvmem.pc libvmmalloc.pc libpmemobj.pc\
-		libpmemlog.pc libpmemblk.pc libpmempool.pc libpmemobj++.pc
+		libpmemlog.pc libpmemblk.pc libpmempool.pc libpmemobj++.pc\
+		libpmemcto.pc
 
 ifeq ($(BUILD_RPMEM),y)
 	PKG_CONFIG_FILES += librpmem.pc
@@ -74,14 +76,25 @@ ifeq ($(BUILD_RPMEM),y)
 	INSTALL_TARGETS += librpmem
 endif
 
+rwildcard=$(strip $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2)\
+	$(filter $(subst *,%,$2),$d)))
+
 SCOPE_SRC_DIRS = $(SCOPE_DIRS) include jemalloc/src
 SCOPE_HDR_DIRS = $(SCOPE_DIRS) include jemalloc/src\
 		jemalloc/include/jemalloc\
 		jemalloc/include/jemalloc/internal\
-		debug/jemalloc/include/jemalloc\
-		debug/jemalloc/include/jemalloc/internal\
-		nondebug/jemalloc/include/jemalloc\
-		nondebug/jemalloc/include/jemalloc/internal
+		debug/libvmem/jemalloc/include/jemalloc\
+		debug/libvmmalloc/jemalloc/include/jemalloc\
+		debug/libpmemcto/jemalloc/include/jemalloc\
+		debug/libvmem/jemalloc/include/jemalloc/internal\
+		debug/libvmmalloc/jemalloc/include/jemalloc/internal\
+		debug/libpmemcto/jemalloc/include/jemalloc/internal\
+		nondebug/libvmem/jemalloc/include/jemalloc\
+		nondebug/libvmmalloc/jemalloc/include/jemalloc\
+		nondebug/libpmemcto/jemalloc/include/jemalloc\
+		nondebug/libvmem/jemalloc/include/jemalloc/internal\
+		nondebug/libvmmalloc/jemalloc/include/jemalloc/internal\
+		nondebug/libpmemcto/jemalloc/include/jemalloc/internal
 
 SCOPE_SRC_FILES = $(foreach d, $(SCOPE_SRC_DIRS), $(wildcard $(d)/*.c))
 SCOPE_HDR_FILES = $(foreach d, $(SCOPE_HDR_DIRS), $(wildcard $(D)/*.h))
@@ -90,6 +103,8 @@ SCOPEFILES = $(SCOPE_SRC_FILES) $(SCOPE_HDR_FILES)
 # include/lib*.h - skip include/pmemcompat.h
 HEADERS =\
 	$(foreach f, $(wildcard\
+		freebsd/include/*.h\
+		freebsd/include/*/*.h\
 		include/lib*.h\
 		include/libpmemobj/*.h\
 		include/libpmemobj++/*.hpp\
@@ -102,13 +117,15 @@ ifneq ($(filter 1 2, $(CSTYLEON)),)
 TMP_HEADERS := $(addprefix debug/, $(addsuffix tmp, $(HEADERS)))
 endif
 
+SCRIPTS = $(call rwildcard,,*.sh)
+
 debug/%.htmp: %.h
 	$(call check-cstyle, $<, $@)
 
 debug/%.hpptmp: %.hpp
 	$(call check-cstyle, $<, $@)
 
-all: $(TMP_HEADERS) $(ALL_TARGETS) pkg-config
+all: $(TMP_HEADERS) $(ALL_TARGETS)
 install: $(INSTALL_TARGETS:=-install)
 uninstall: $(INSTALL_TARGETS:=-uninstall)
 clean: $(CLEAN_TARGETS:=-clean)
@@ -121,18 +138,13 @@ sparse: $(SPARSE_TARGETS:=-sparse)
 
 custom_build = $(DEBUG)$(OBJDIR)
 
-libvmmalloc libvmem: jemalloc
-tools: libpmem libpmemblk libpmemlog libpmemobj
-libpmemblk libpmemlog libpmemobj: libpmem
+libvmmalloc libvmem libpmemcto: jemalloc
+tools: libpmem libpmemblk libpmemlog libpmemobj libpmemcto
+libpmemblk libpmemlog libpmemobj libpmemcto: libpmem
 benchmarks test tools: common
 
-# re-generate *.pc files if version, prefix or libdir changes
-old_pc=$(strip $(shell cat $(PKG_CONFIG_COMMON) 2>/dev/null))
-new_pc="version=$(SRCVERSION) libdir=$(libdir) prefix=$(prefix)"
-update_pc=$(findstring $(old_pc), $(new_pc))
-
 pkg-cfg-common:
-	@$(if $(update_pc),, printf "version=%s\nlibdir=%s\nprefix=%s\n" "$(SRCVERSION)" "$(libdir)" "$(prefix)" > $(PKG_CONFIG_COMMON))
+	@printf "version=%s\nlibdir=%s\nprefix=%s\n" "$(SRCVERSION)" "$(libdir)" "$(prefix)" > $(PKG_CONFIG_COMMON)
 
 $(PKG_CONFIG_COMMON): pkg-cfg-common
 
@@ -172,9 +184,13 @@ check-remote: test
 	$(MAKE) -C test $@
 
 jemalloc jemalloc-clean jemalloc-clobber jemalloc-test jemalloc-check:
-	$(MAKE) -C jemalloc -f Makefile.nvml $@
+	$(MAKE) -C jemalloc -f Makefile.libvmem     $@ EXTRA_CFLAGS="$(EXTRA_CFLAGS) -I$(abspath $(TOP))/src/common"
+	$(MAKE) -C jemalloc -f Makefile.libvmmalloc $@ EXTRA_CFLAGS="$(EXTRA_CFLAGS) -I$(abspath $(TOP))/src/common"
+	$(MAKE) -C jemalloc -f Makefile.libpmemcto  $@ EXTRA_CFLAGS="$(EXTRA_CFLAGS) -I$(abspath $(TOP))/src/common"
 ifeq ($(custom_build),)
-	$(MAKE) -C jemalloc -f Makefile.nvml $@ DEBUG=1
+	$(MAKE) -C jemalloc -f Makefile.libvmem     $@ DEBUG=1 EXTRA_CFLAGS="$(EXTRA_CFLAGS) -I$(abspath $(TOP))/src/common"
+	$(MAKE) -C jemalloc -f Makefile.libvmmalloc $@ DEBUG=1 EXTRA_CFLAGS="$(EXTRA_CFLAGS) -I$(abspath $(TOP))/src/common"
+	$(MAKE) -C jemalloc -f Makefile.libpmemcto  $@ DEBUG=1 EXTRA_CFLAGS="$(EXTRA_CFLAGS) -I$(abspath $(TOP))/src/common"
 endif
 
 install-cpp:
@@ -188,13 +204,17 @@ uninstall-cpp:
 
 uninstall: uninstall-cpp
 
-install: all
+# Re-generate pkg-config files on 'make install' (not on 'make all'),
+# to handle the case when prefix is specified only for 'install'.
+# Clean up generated files when done.
+install: all pkg-config
 	install -d $(HEADERS_DESTDIR)
 	install -p -m 0644 $(HEADERS_INSTALL) $(HEADERS_DESTDIR)
 	install -d $(HEADERS_DESTDIR)/libpmemobj
 	install -p -m 0644 $(OBJ_HEADERS_INSTALL) $(HEADERS_DESTDIR)/libpmemobj
 	install -d $(PKG_CONFIG_DESTDIR)
 	install -p -m 0644 $(PKG_CONFIG_FILES) $(PKG_CONFIG_DESTDIR)
+	$(RM) $(PKG_CONFIG_FILES)
 
 uninstall:
 	$(foreach f, $(HEADERS_INSTALL), $(RM) $(HEADERS_DESTDIR)/$(notdir $(f)))
@@ -203,6 +223,7 @@ uninstall:
 
 cstyle:
 	$(STYLE_CHECK) check $(HEADERS)
+	$(CHECK_SHEBANG) $(SCRIPTS)
 
 format:
 	$(STYLE_CHECK) format $(HEADERS)
@@ -218,7 +239,7 @@ clean: clean-here
 
 clobber: clean-here
 
-.NOTPARALLEL: libvmem libvmmalloc
+.NOTPARALLEL: libvmem libvmmalloc libpmemcto
 
 .PHONY: all install uninstall uninstall-cpp install-cpp clean clobber cstyle\
 	format test check pcheck jemalloc jemalloc-clean jemalloc-test\

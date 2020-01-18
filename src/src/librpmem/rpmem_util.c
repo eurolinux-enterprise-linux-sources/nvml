@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -110,7 +110,9 @@ static struct rpmem_err_str_errno {
 };
 
 static char *Rpmem_cmds;
-static char *Rpmem_current_cmd;
+static char **Rpmem_cmd_arr;
+static size_t Rpmem_current_cmd;
+static size_t Rpmem_ncmds;
 
 #define RPMEM_CMD_SEPARATOR '|'
 
@@ -140,6 +142,20 @@ rpmem_util_proto_errno(enum rpmem_err err)
 }
 
 /*
+ * rpmem_util_cmds_inc -- increase size of array for rpmem commands
+ */
+static void
+rpmem_util_cmds_inc(void)
+{
+	Rpmem_ncmds++;
+	Rpmem_cmd_arr = realloc(Rpmem_cmd_arr,
+			Rpmem_ncmds * sizeof(*Rpmem_cmd_arr));
+	if (!Rpmem_cmd_arr)
+		RPMEM_FATAL("!realloc");
+
+}
+
+/*
  * rpmem_util_cmds_init -- read a RPMEM_CMD from the environment variable
  */
 void
@@ -153,7 +169,17 @@ rpmem_util_cmds_init(void)
 	if (!Rpmem_cmds)
 		RPMEM_FATAL("!strdup");
 
-	Rpmem_current_cmd = Rpmem_cmds;
+	char *next = Rpmem_cmds;
+	while (next) {
+		rpmem_util_cmds_inc();
+		Rpmem_cmd_arr[Rpmem_ncmds - 1] = next;
+
+		next = strchr(next, RPMEM_CMD_SEPARATOR);
+		if (next) {
+			*next = '\0';
+			next++;
+		}
+	}
 }
 
 /*
@@ -163,10 +189,17 @@ void
 rpmem_util_cmds_fini(void)
 {
 	RPMEM_ASSERT(Rpmem_cmds);
+	RPMEM_ASSERT(Rpmem_cmd_arr);
+	RPMEM_ASSERT(Rpmem_current_cmd < Rpmem_ncmds);
 
 	free(Rpmem_cmds);
 	Rpmem_cmds = NULL;
-	Rpmem_current_cmd = NULL;
+
+	free(Rpmem_cmd_arr);
+	Rpmem_cmd_arr = NULL;
+
+	Rpmem_ncmds = 0;
+	Rpmem_current_cmd = 0;
 }
 
 /*
@@ -181,14 +214,37 @@ const char *
 rpmem_util_cmd_get(void)
 {
 	RPMEM_ASSERT(Rpmem_cmds);
-	RPMEM_ASSERT(Rpmem_current_cmd);
+	RPMEM_ASSERT(Rpmem_cmd_arr);
+	RPMEM_ASSERT(Rpmem_current_cmd < Rpmem_ncmds);
 
-	char *eol = strchr(Rpmem_current_cmd, RPMEM_CMD_SEPARATOR);
-	char *ret = Rpmem_current_cmd;
-	if (eol) {
-		*eol = '\0';
-		Rpmem_current_cmd = eol + 1;
-	}
+	char *ret = Rpmem_cmd_arr[Rpmem_current_cmd];
+
+	Rpmem_current_cmd = (Rpmem_current_cmd + 1) % Rpmem_ncmds;
 
 	return ret;
+}
+
+/*
+ * rpmem_util_get_env_max_nlanes -- read the maximum number of lanes from
+ * RPMEM_MAX_NLANES
+ */
+void
+rpmem_util_get_env_max_nlanes(unsigned *max_nlanes)
+{
+	char *env_nlanes = os_getenv(RPMEM_MAX_NLANES_ENV);
+	if (env_nlanes && env_nlanes[0] != '\0') {
+		char *endptr;
+		errno = 0;
+
+		long nlanes = strtol(env_nlanes, &endptr, 10);
+
+		if (endptr[0] != '\0' || nlanes <= 0 ||
+			(errno == ERANGE &&
+			(nlanes == LONG_MAX || nlanes == LONG_MIN))) {
+			RPMEM_LOG(ERR, "%s variable must be a positive integer",
+					RPMEM_MAX_NLANES_ENV);
+		} else {
+			*max_nlanes = (unsigned)nlanes;
+		}
+	}
 }

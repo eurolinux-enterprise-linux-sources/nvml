@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
 # Copyright 2016-2017, Intel Corporation
 #
@@ -32,8 +32,10 @@
 
 #
 # run-build-package.sh - is called inside a Docker container; prepares
-#                        the environment and starts a build of NVML project.
+#                        the environment and starts a build of PMDK project.
 #
+
+set -e
 
 # Prepare build enviromnent
 ./prepare-for-build.sh

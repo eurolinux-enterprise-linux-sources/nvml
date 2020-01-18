@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2016-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -32,10 +32,12 @@
 
 #
 # build-travis.sh - runs a Docker container from a Docker image with environment
-#                   prepared for building NVML project and starts building NVML
+#                   prepared for building PMDK project and starts building PMDK
 #
-# this script is for building NVML on Travis only
+# this script is for building PMDK on Travis only
 #
+
+set -e
 
 if [[ "$TRAVIS_EVENT_TYPE" != "cron" && "$TRAVIS_BRANCH" != "coverity_scan" \
 	&& "$COVERITY" -eq 1 ]]; then
@@ -59,7 +61,7 @@ fi
 
 if [[ -z "$HOST_WORKDIR" ]]; then
 	echo "ERROR: The variable HOST_WORKDIR has to contain a path to " \
-		"the root of the nvml project on the host machine"
+		"the root of the PMDK project on the host machine"
 	exit 1
 fi
 
@@ -67,8 +69,8 @@ if [[ -z "$TEST_BUILD" ]]; then
 	TEST_BUILD=all
 fi
 
-imageName=pmem/nvml:${OS}-${OS_VER}
-containerName=nvml-${OS}-${OS_VER}
+imageName=pmem/pmdk:${OS}-${OS_VER}
+containerName=pmdk-${OS}-${OS_VER}
 
 if [[ $MAKE_PKG -eq 0 ]] ; then command="./run-build.sh"; fi
 if [[ $MAKE_PKG -eq 1 ]] ; then command="./run-build-package.sh"; fi
@@ -81,20 +83,21 @@ fi
 
 if [ -n "$DNS_SERVER" ]; then DNS_SETTING=" --dns=$DNS_SERVER "; fi
 
-WORKDIR=/nvml
+WORKDIR=/pmdk
 SCRIPTSDIR=$WORKDIR/utils/docker
 
 # Run a container with
 #  - environment variables set (--env)
-#  - host directory containing nvml source mounted (-v)
+#  - host directory containing PMDK source mounted (-v)
 #  - working directory set (-w)
 docker run --rm --privileged=true --name=$containerName -ti \
 	$DNS_SETTING \
 	$ci_env \
 	--env http_proxy=$http_proxy \
 	--env https_proxy=$https_proxy \
-	--env CC=$NVML_CC \
-	--env CXX=$NVML_CXX \
+	--env CC=$PMDK_CC \
+	--env CXX=$PMDK_CXX \
+	--env VALGRIND=$VALGRIND \
 	--env EXTRA_CFLAGS=$EXTRA_CFLAGS \
 	--env EXTRA_CXXFLAGS=$EXTRA_CXXFLAGS \
 	--env USE_LLVM_LIBCPP=$USE_LLVM_LIBCPP \
@@ -114,6 +117,7 @@ docker run --rm --privileged=true --name=$containerName -ti \
 	--env TRAVIS_EVENT_TYPE=$TRAVIS_EVENT_TYPE \
 	--env COVERITY_SCAN_TOKEN=$COVERITY_SCAN_TOKEN \
 	--env COVERITY_SCAN_NOTIFICATION_EMAIL=$COVERITY_SCAN_NOTIFICATION_EMAIL \
+	--env NDCTL_ENABLE=$NDCTL_ENABLE \
 	-v $HOST_WORKDIR:$WORKDIR \
 	-v /etc/localtime:/etc/localtime \
 	-w $SCRIPTSDIR \

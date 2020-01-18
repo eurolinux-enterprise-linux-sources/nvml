@@ -38,6 +38,7 @@
 #include <inttypes.h>
 #include <sys/param.h>
 #include <syslog.h>
+#include <pwd.h>
 
 #include "unittest.h"
 #include "rpmemd_log.h"
@@ -111,6 +112,10 @@ parse_test_params(int *argc, char *argv[])
 int
 main(int argc, char *argv[])
 {
+
+	/* workaround for getpwuid open fd */
+	getpwuid(getuid());
+
 	START(argc, argv, "rpmemd_config");
 
 	int ret = rpmemd_log_init("rpmemd_log", NULL, 0);
@@ -120,9 +125,12 @@ main(int argc, char *argv[])
 
 	struct rpmemd_config config;
 
-	UT_ASSERT(rpmemd_config_read(&config, argc, argv) == 0);
-
-	config_print(&config);
+	ret = rpmemd_config_read(&config, argc, argv);
+	if (ret) {
+		UT_OUT("invalid config");
+	} else {
+		config_print(&config);
+	}
 
 	rpmemd_log_close();
 	rpmemd_config_free(&config);

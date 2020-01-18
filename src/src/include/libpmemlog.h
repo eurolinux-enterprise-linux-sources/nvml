@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,7 +46,7 @@
 #ifdef _WIN32
 #include <pmemcompat.h>
 
-#ifndef NVML_UTF8_API
+#ifndef PMDK_UTF8_API
 #define pmemlog_open pmemlog_openW
 #define pmemlog_create pmemlog_createW
 #define pmemlog_check pmemlog_checkW
@@ -83,7 +83,7 @@ typedef struct pmemlog PMEMlogpool;
  * these defines to pmemlog_check_version().
  */
 #define PMEMLOG_MAJOR_VERSION 1
-#define PMEMLOG_MINOR_VERSION 0
+#define PMEMLOG_MINOR_VERSION 1
 
 #ifndef _WIN32
 const char *pmemlog_check_version(unsigned major_required,
@@ -98,7 +98,13 @@ const wchar_t *pmemlog_check_versionW(unsigned major_required,
 /*
  * support for PMEM-resident log files...
  */
-#define PMEMLOG_MIN_POOL ((size_t)(1024 * 1024 * 2)) /* min pool size: 2MB */
+#define PMEMLOG_MIN_POOL ((size_t)(1024 * 1024 * 2)) /* min pool size: 2MiB */
+
+/*
+ * This limit is set arbitrary to incorporate a pool header and required
+ * alignment plus supply.
+ */
+#define PMEMLOG_MIN_PART ((size_t)(1024 * 1024 * 2)) /* 2 MiB */
 
 #ifndef _WIN32
 PMEMlogpool *pmemlog_open(const char *path);

@@ -24,12 +24,6 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="grep0.log.match">
-      <Filter>Match Files</Filter>
-    </None>
-    <None Include="TEST0.PS1">
-      <Filter>Test Scripts</Filter>
-    </None>
     <None Include="pool0w.set">
       <Filter>Pool Set Files</Filter>
     </None>
@@ -149,6 +143,51 @@
     </None>
     <None Include="pool39w.set">
       <Filter>Pool Set Files</Filter>
+    </None>
+    <None Include="pool40w.set">
+      <Filter>Pool Set Files</Filter>
+    </None>
+    <None Include="pool41w.set">
+      <Filter>Pool Set Files</Filter>
+    </None>
+    <None Include="pool42w.set">
+      <Filter>Pool Set Files</Filter>
+    </None>
+    <None Include="pool43w.set">
+      <Filter>Pool Set Files</Filter>
+    </None>
+    <None Include="pool44w.set">
+      <Filter>Pool Set Files</Filter>
+    </None>
+    <None Include="pool45w.set">
+      <Filter>Pool Set Files</Filter>
+    </None>
+    <None Include="pool46w.set">
+      <Filter>Pool Set Files</Filter>
+    </None>
+    <None Include="pool47w.set">
+      <Filter>Pool Set Files</Filter>
+    </None>
+    <None Include="pool48w.set">
+      <Filter>Pool Set Files</Filter>
+    </None>
+    <None Include="pool49w.set">
+      <Filter>Pool Set Files</Filter>
+    </None>
+    <None Include="pool50w.set">
+      <Filter>Pool Set Files</Filter>
+    </None>
+    <None Include="pool51w.set">
+      <Filter>Pool Set Files</Filter>
+    </None>
+    <None Include="pool52w.set">
+      <Filter>Pool Set Files</Filter>
+    </None>
+    <None Include="grep0w.log.match">
+      <Filter>Match Files</Filter>
+    </None>
+    <None Include="TEST0w.PS1">
+      <Filter>Test Scripts</Filter>
     </None>
   </ItemGroup>
 </Project>

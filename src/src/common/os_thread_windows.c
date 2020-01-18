@@ -62,17 +62,22 @@ typedef struct {
 	CONDITION_VARIABLE cond;
 } internal_os_cond_t;
 
+typedef long long internal_os_once_t;
+
 typedef struct {
 	HANDLE handle;
 } internal_semaphore_t;
 
+typedef struct {
+	GROUP_AFFINITY affinity;
+} internal_os_cpu_set_t;
 
 typedef struct {
 	HANDLE thread_handle;
 	void *arg;
 	void *(*start_routine)(void *);
 	void *result;
-} internal_os_thread_info, *internal_os_thread_t;
+} internal_os_thread_t;
 
 /* number of useconds between 1970-01-01T00:00:00Z and 1601-01-01T00:00:00Z */
 #define DELTA_WIN2UNIX (11644473600000000ull)
@@ -394,8 +399,25 @@ os_cond_wait(os_cond_t *__restrict cond,
 int
 os_once(os_once_t *once, void (*func)(void))
 {
-	if (!_InterlockedCompareExchange64(once, 1, 0))
+	internal_os_once_t *once_internal = (internal_os_once_t *)once;
+	internal_os_once_t tmp;
+
+	while ((tmp = *once_internal) != 2) {
+		if (tmp == 1)
+			continue; /* another thread is already calling func() */
+
+		/* try to be the first one... */
+		if (!util_bool_compare_and_swap64(once_internal, tmp, 1))
+			continue; /* sorry, another thread was faster */
+
 		func();
+
+		if (!util_bool_compare_and_swap64(once_internal, 1, 2)) {
+			ERR("error setting once");
+			return -1;
+		}
+	}
+
 	return 0;
 }
 
@@ -405,13 +427,9 @@ os_once(os_once_t *once, void (*func)(void))
 int
 os_tls_key_create(os_tls_key_t *key, void (*destructor)(void *))
 {
-	/* XXX - destructor not supported */
-
-	*key = TlsAlloc();
+	*key = FlsAlloc(destructor);
 	if (*key == TLS_OUT_OF_INDEXES)
 		return EAGAIN;
-	if (!TlsSetValue(*key, NULL)) /* XXX - not needed? */
-		return ENOMEM;
 	return 0;
 }
 
@@ -421,9 +439,7 @@ os_tls_key_create(os_tls_key_t *key, void (*destructor)(void *))
 int
 os_tls_key_delete(os_tls_key_t key)
 {
-	/* XXX - destructor not supported */
-
-	if (!TlsFree(key))
+	if (!FlsFree(key))
 		return EINVAL;
 	return 0;
 }
@@ -434,7 +450,7 @@ os_tls_key_delete(os_tls_key_t key)
 int
 os_tls_set(os_tls_key_t key, const void *value)
 {
-	if (!TlsSetValue(key, (LPVOID)value))
+	if (!FlsSetValue(key, (LPVOID)value))
 		return ENOENT;
 	return 0;
 }
@@ -445,43 +461,21 @@ os_tls_set(os_tls_key_t key, const void *value)
 void *
 os_tls_get(os_tls_key_t key)
 {
-	return TlsGetValue(key);
+	return FlsGetValue(key);
 }
 
 /* threading */
-static os_once_t Pthread_self_index_initialized;
-static DWORD Pthread_self_index;
-
-/*
- * os_thread_init is called once before the first POSIX thread is spawned i.e.
- * before the start_routine of the first POSIX thread is executed.  Here
- * we make sure:
- *
- *  - we have an entry allocated in thread local storage, where we will store
- *    the address of the os_thread_v structure for each thread
- */
-void
-os_thread_init(void)
-{
-	Pthread_self_index = TlsAlloc();
-	if (Pthread_self_index == TLS_OUT_OF_INDEXES)
-		abort();
-}
 
 /*
  * os_thread_start_routine_wrapper is a start routine for _beginthreadex() and
  * it helps:
  *
  *  - wrap the os_thread_create's start function
- *  - do the necessary initialization for POSIX threading implementation
  */
 static unsigned __stdcall
 os_thread_start_routine_wrapper(void *arg)
 {
-	internal_os_thread_t thread_info = (internal_os_thread_t)arg;
-
-	os_once(&Pthread_self_index_initialized, os_thread_init);
-	TlsSetValue(Pthread_self_index, thread_info);
+	internal_os_thread_t *thread_info = (internal_os_thread_t *)arg;
 
 	thread_info->result = thread_info->start_routine(thread_info->arg);
 
@@ -495,12 +489,8 @@ int
 os_thread_create(os_thread_t *thread, const os_thread_attr_t *attr,
 	void *(*start_routine)(void *), void *arg)
 {
-	internal_os_thread_info *thread_info;
-
-	ASSERT(attr == NULL);
-
-	if ((thread_info = malloc(sizeof(internal_os_thread_info))) == NULL)
-		return EAGAIN;
+	COMPILE_ERROR_ON(sizeof(os_thread_t) < sizeof(internal_os_thread_t));
+	internal_os_thread_t *thread_info = (internal_os_thread_t *)thread;
 
 	thread_info->start_routine = start_routine;
 	thread_info->arg = arg;
@@ -518,8 +508,6 @@ os_thread_create(os_thread_t *thread, const os_thread_attr_t *attr,
 		return EAGAIN;
 	}
 
-	*thread = (os_thread_t)thread_info;
-
 	return 0;
 }
 
@@ -527,18 +515,26 @@ os_thread_create(os_thread_t *thread, const os_thread_attr_t *attr,
  * os_thread_join -- joins a thread
  */
 int
-os_thread_join(os_thread_t thread, void **result)
+os_thread_join(os_thread_t *thread, void **result)
 {
-	internal_os_thread_t internal_thread = (internal_os_thread_t)thread;
+	internal_os_thread_t *internal_thread = (internal_os_thread_t *)thread;
 	WaitForSingleObject(internal_thread->thread_handle, INFINITE);
 	CloseHandle(internal_thread->thread_handle);
 
 	if (result != NULL)
 		*result = internal_thread->result;
 
-	free(internal_thread);
-
 	return 0;
+}
+
+/*
+ * os_thread_self -- returns handle to calling thread
+ */
+void
+os_thread_self(os_thread_t *thread)
+{
+	internal_os_thread_t *internal_thread = (internal_os_thread_t *)thread;
+	internal_thread->thread_handle = GetCurrentThread();
 }
 
 /*
@@ -547,7 +543,9 @@ os_thread_join(os_thread_t thread, void **result)
 void
 os_cpu_zero(os_cpu_set_t *set)
 {
-	memset(set, 0, sizeof(*set));
+	internal_os_cpu_set_t *internal_set = (internal_os_cpu_set_t *)set;
+
+	memset(&internal_set->affinity, 0, sizeof(internal_set->affinity));
 }
 
 /*
@@ -556,23 +554,44 @@ os_cpu_zero(os_cpu_set_t *set)
 void
 os_cpu_set(size_t cpu, os_cpu_set_t *set)
 {
-	PDWORD set_internal = (PDWORD)set;
-	ASSERT(cpu < sizeof(*set_internal) * 8);
-	*set_internal |= 1LL << cpu;
+	internal_os_cpu_set_t *internal_set = (internal_os_cpu_set_t *)set;
+	int sum = 0;
+	int group_max = GetActiveProcessorGroupCount();
+	int group = 0;
+	while (group < group_max) {
+		sum += GetActiveProcessorCount(group);
+		if (sum > cpu) {
+			/*
+			 * XXX: can't set affinity to two diffrent cpu groups
+			 */
+			if (internal_set->affinity.Group != group) {
+				internal_set->affinity.Mask = 0;
+				internal_set->affinity.Group = group;
+			}
+
+			cpu -= sum - GetActiveProcessorCount(group);
+			internal_set->affinity.Mask |= 1LL << cpu;
+			return;
+		}
+
+		group++;
+	}
+	FATAL("os_cpu_set cpu out of bounds");
 }
 
 /*
  * os_thread_setaffinity_np -- sets affinity of the thread
  */
 int
-os_thread_setaffinity_np(os_thread_t thread, size_t set_size,
+os_thread_setaffinity_np(os_thread_t *thread, size_t set_size,
 	const os_cpu_set_t *set)
 {
-	internal_os_thread_t internal_thread = (internal_os_thread_t)thread;
-	PDWORD set_internal = (PDWORD)set;
-	DWORD_PTR result = SetThreadAffinityMask(internal_thread->thread_handle,
-		*set_internal);
-	return result != 0 ? 0 : EINVAL;
+	internal_os_cpu_set_t *internal_set = (internal_os_cpu_set_t *)set;
+	internal_os_thread_t *internal_thread = (internal_os_thread_t *)thread;
+
+	int ret = SetThreadGroupAffinity(internal_thread->thread_handle,
+			&internal_set->affinity, NULL);
+	return ret != 0 ? 0 : EINVAL;
 }
 
 /*

@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -40,7 +40,11 @@
 TOP := $(dir $(lastword $(MAKEFILE_LIST)))../..
 
 include $(TOP)/src/common.inc
+ARCH := $(call get_arch)
+include $(TOP)/src/libpmem/$(ARCH)/sources.inc
 
+INCS += $(OS_INCS)
+LDFLAGS += $(OS_LIBS)
 LIBS_DIR=$(TOP)/src
 
 EXAMPLES_DIR=$(TOP)/src/examples
@@ -48,23 +52,25 @@ EX_LIBPMEM=$(EXAMPLES_DIR)/libpmem
 EX_LIBPMEMBLK=$(EXAMPLES_DIR)/libpmemblk
 EX_LIBPMEMLOG=$(EXAMPLES_DIR)/libpmemlog
 EX_LIBPMEMOBJ=$(EXAMPLES_DIR)/libpmemobj
+EX_LIBPMEMOBJCPP=$(EXAMPLES_DIR)/libpmemobj++
+EX_LIBPMEMCTO=$(EXAMPLES_DIR)/libpmemcto
 
 UT = ../unittest/libut.a
-LIBS += $(UT)
+LIBS += $(UT) $(LIBUUID)
 
 ifeq ($(USE_LIBUNWIND),1)
-LIBS += -ldl -lunwind
+LIBS += $(LIBDL) -lunwind
 else
 ifneq ($(USE_LIBUNWIND),0)
 UNWIND := $(call check_package, libunwind)
 ifeq ($(UNWIND),y)
-LIBS += -ldl $(shell $(PKG_CONFIG) --libs libunwind)
+LIBS += $(LIBDL) $(shell $(PKG_CONFIG) --libs libunwind)
 endif
 endif
 endif
 
 LIBS += -L$(LIBS_DIR)/debug
-LIBS += -pthread
+LIBS += -pthread $(LIBUTIL)
 
 # XXX: required by clock_gettime(), if glibc version < 2.17
 # The os_clock_gettime() function is now in OS abstraction layer,
@@ -74,40 +80,43 @@ LIBS += -lrt
 endif
 
 ifeq ($(LIBPMEMPOOL), y)
+LIBPMEM=y
 DYNAMIC_LIBS += -lpmempool
 STATIC_DEBUG_LIBS += $(LIBS_DIR)/debug/libpmempool.a
 STATIC_NONDEBUG_LIBS += $(LIBS_DIR)/nondebug/libpmempool.a
-LIBS += -ldl
 CFLAGS += -DUSE_LIBDL
 endif
 
 ifeq ($(LIBPMEMBLK), y)
+LIBPMEM=y
 DYNAMIC_LIBS += -lpmemblk
 STATIC_DEBUG_LIBS += $(LIBS_DIR)/debug/libpmemblk.a
 STATIC_NONDEBUG_LIBS += $(LIBS_DIR)/nondebug/libpmemblk.a
 endif
 
 ifeq ($(LIBPMEMLOG), y)
+LIBPMEM=y
 DYNAMIC_LIBS += -lpmemlog
 STATIC_DEBUG_LIBS += $(LIBS_DIR)/debug/libpmemlog.a
 STATIC_NONDEBUG_LIBS += $(LIBS_DIR)/nondebug/libpmemlog.a
 endif
 
 ifeq ($(LIBPMEMOBJ), y)
-LIBS += -ldl
+LIBPMEM=y
 DYNAMIC_LIBS += -lpmemobj
 STATIC_DEBUG_LIBS += $(LIBS_DIR)/debug/libpmemobj.a
 STATIC_NONDEBUG_LIBS += $(LIBS_DIR)/nondebug/libpmemobj.a
 endif
 
 ifeq ($(LIBPMEMOBJ), internal-debug)
+LIBPMEM=y
+LIBPMEMCOMMON=internal-debug
 OBJS += $(TOP)/src/debug/libpmemobj/alloc_class.o\
 	$(TOP)/src/debug/libpmemobj/bucket.o\
-	$(TOP)/src/debug/libpmemobj/container_ctree.o\
+	$(TOP)/src/debug/libpmemobj/container_ravl.o\
 	$(TOP)/src/debug/libpmemobj/container_seglists.o\
 	$(TOP)/src/debug/libpmemobj/ctl.o\
 	$(TOP)/src/debug/libpmemobj/ctl_global.o\
-	$(TOP)/src/debug/libpmemobj/ctree.o\
 	$(TOP)/src/debug/libpmemobj/cuckoo.o\
 	$(TOP)/src/debug/libpmemobj/heap.o\
 	$(TOP)/src/debug/libpmemobj/lane.o\
@@ -119,26 +128,26 @@ OBJS += $(TOP)/src/debug/libpmemobj/alloc_class.o\
 	$(TOP)/src/debug/libpmemobj/palloc.o\
 	$(TOP)/src/debug/libpmemobj/pmalloc.o\
 	$(TOP)/src/debug/libpmemobj/pvector.o\
+	$(TOP)/src/debug/libpmemobj/ravl.o\
 	$(TOP)/src/debug/libpmemobj/recycler.o\
 	$(TOP)/src/debug/libpmemobj/redo.o\
 	$(TOP)/src/debug/libpmemobj/ringbuf.o\
 	$(TOP)/src/debug/libpmemobj/sync.o\
-	$(TOP)/src/debug/libpmemobj/tx.o
+	$(TOP)/src/debug/libpmemobj/tx.o\
+	$(TOP)/src/debug/libpmemobj/stats.o
 
-LIBS += -ldl
 INCS += -I$(TOP)/src/libpmemobj
-LIBPMEM=y
-LIBPMEMCOMMON=y
 endif
 
 ifeq ($(LIBPMEMOBJ), internal-nondebug)
+LIBPMEM=y
+LIBPMEMCOMMON=internal-nondebug
 OBJS += $(TOP)/src/nondebug/libpmemobj/alloc_class.o\
 	$(TOP)/src/nondebug/libpmemobj/bucket.o\
-	$(TOP)/src/nondebug/libpmemobj/container_ctree.o\
+	$(TOP)/src/nondebug/libpmemobj/container_ravl.o\
 	$(TOP)/src/nondebug/libpmemobj/container_seglists.o\
 	$(TOP)/src/nondebug/libpmemobj/ctl.o\
 	$(TOP)/src/nondebug/libpmemobj/ctl_global.o\
-	$(TOP)/src/nondebug/libpmemobj/ctree.o\
 	$(TOP)/src/nondebug/libpmemobj/cuckoo.o\
 	$(TOP)/src/nondebug/libpmemobj/heap.o\
 	$(TOP)/src/nondebug/libpmemobj/lane.o\
@@ -150,22 +159,102 @@ OBJS += $(TOP)/src/nondebug/libpmemobj/alloc_class.o\
 	$(TOP)/src/nondebug/libpmemobj/palloc.o\
 	$(TOP)/src/nondebug/libpmemobj/pmalloc.o\
 	$(TOP)/src/nondebug/libpmemobj/pvector.o\
+	$(TOP)/src/nondebug/libpmemobj/ravl.o\
 	$(TOP)/src/nondebug/libpmemobj/recycler.o\
 	$(TOP)/src/nondebug/libpmemobj/redo.o\
 	$(TOP)/src/nondebug/libpmemobj/ringbuf.o\
 	$(TOP)/src/nondebug/libpmemobj/sync.o\
-	$(TOP)/src/nondebug/libpmemobj/tx.o
+	$(TOP)/src/nondebug/libpmemobj/tx.o\
+	$(TOP)/src/nondebug/libpmemobj/stats.o
 
 INCS += -I$(TOP)/src/libpmemobj
+endif
+
+ifeq ($(LIBPMEMCTO), y)
 LIBPMEM=y
-LIBPMEMCOMMON=y
+DYNAMIC_LIBS += -lpmemcto
+STATIC_DEBUG_LIBS += $(LIBS_DIR)/debug/libpmemcto.a
+STATIC_NONDEBUG_LIBS += $(LIBS_DIR)/nondebug/libpmemcto.a
+endif
+
+ifeq ($(LIBPMEM), internal-nondebug)
+OBJS +=\
+	$(TOP)/src/nondebug/libpmem/libpmem.o\
+	$(TOP)/src/nondebug/libpmem/pmem.o\
+	$(TOP)/src/nondebug/libpmem/pmem_posix.o
+
+OBJS_MEM = $(SOURCE:.c=.o)
+OBJS += $(addprefix $(TOP)/src/nondebug/libpmem/, ${OBJS_MEM})
+
+INCS += -I$(TOP)/src/libpmem
+INCS += -I$(TOP)/src/libpmem/$(ARCH)
+endif
+
+ifeq ($(LIBPMEM), internal-debug)
+OBJS +=\
+	$(TOP)/src/debug/libpmem/libpmem.o\
+	$(TOP)/src/debug/libpmem/pmem.o\
+	$(TOP)/src/debug/libpmem/pmem_posix.o
+
+OBJS_MEM = $(SOURCE:.c=.o)
+OBJS += $(addprefix $(TOP)/src/debug/libpmem/, ${OBJS_MEM})
+
+INCS += -I$(TOP)/src/libpmem
+INCS += -I$(TOP)/src/libpmem/$(ARCH)
 endif
 
 ifeq ($(LIBPMEMCOMMON), y)
+LIBPMEM=y
 OBJS += $(LIBS_DIR)/debug/libpmemcommon.a
 INCS += -I$(TOP)/src/common
-LIBS += -ldl
-LIBPMEM=y
+endif
+
+ifeq ($(LIBPMEMCOMMON), internal-nondebug)
+OBJS +=\
+	$(TOP)/src/nondebug/common/file.o\
+	$(TOP)/src/nondebug/common/file_posix.o\
+	$(TOP)/src/nondebug/common/fs_posix.o\
+	$(TOP)/src/nondebug/common/mmap.o\
+	$(TOP)/src/nondebug/common/mmap_posix.o\
+	$(TOP)/src/nondebug/common/os_posix.o\
+	$(TOP)/src/nondebug/common/os_thread_posix.o\
+	$(TOP)/src/nondebug/common/os_deep_linux.o\
+	$(TOP)/src/nondebug/common/os_auto_flush_linux.o\
+	$(TOP)/src/nondebug/common/os_dimm_$(OS_DIMM).o\
+	$(TOP)/src/nondebug/common/out.o\
+	$(TOP)/src/nondebug/common/pool_hdr.o\
+	$(TOP)/src/nondebug/common/set.o\
+	$(TOP)/src/nondebug/common/shutdown_state.o\
+	$(TOP)/src/nondebug/common/util.o\
+	$(TOP)/src/nondebug/common/util_posix.o\
+	$(TOP)/src/nondebug/common/uuid.o\
+	$(call osdep, $(TOP)/src/nondebug/common/uuid,.o)
+
+INCS += -I$(TOP)/src/common
+endif
+
+ifeq ($(LIBPMEMCOMMON), internal-debug)
+OBJS +=\
+	$(TOP)/src/debug/common/file.o\
+	$(TOP)/src/debug/common/file_posix.o\
+	$(TOP)/src/debug/common/fs_posix.o\
+	$(TOP)/src/debug/common/mmap.o\
+	$(TOP)/src/debug/common/mmap_posix.o\
+	$(TOP)/src/debug/common/os_posix.o\
+	$(TOP)/src/debug/common/os_thread_posix.o\
+	$(TOP)/src/debug/common/os_deep_linux.o\
+	$(TOP)/src/debug/common/os_auto_flush_linux.o\
+	$(TOP)/src/debug/common/os_dimm_$(OS_DIMM).o\
+	$(TOP)/src/debug/common/out.o\
+	$(TOP)/src/debug/common/pool_hdr.o\
+	$(TOP)/src/debug/common/set.o\
+	$(TOP)/src/debug/common/shutdown_state.o\
+	$(TOP)/src/debug/common/util.o\
+	$(TOP)/src/debug/common/util_posix.o\
+	$(TOP)/src/debug/common/uuid.o\
+	$(call osdep, $(TOP)/src/debug/common/uuid,.o)
+
+INCS += -I$(TOP)/src/common
 endif
 
 ifeq ($(LIBPMEM),y)
@@ -186,16 +275,31 @@ STATIC_DEBUG_LIBS += $(LIBS_DIR)/debug/libvmem.a
 STATIC_NONDEBUG_LIBS += $(LIBS_DIR)/nondebug/libvmem.a
 endif
 
+ifneq ($(LIBPMEMCOMMON)$(LIBPMEM)$(LIBPMEMPOOL)$(LIBPMEMBLK)$(LIBPMEMLOG)$(LIBPMEMOBJ)$(LIBPMEMCTO)$(LIBVMEM)$(LIBRPMEM),)
+LIBS += -pthread
+endif
+
+ifneq ($(LIBPMEMCOMMON)$(LIBPMEMPOOL)$(LIBPMEMOBJ),)
+LIBS += $(LIBDL)
+endif
+
+ifneq ($(LIBPMEMCOMMON)$(LIBPMEMPOOL)$(LIBPMEMBLK)$(LIBPMEMLOG)$(LIBPMEMOBJ)$(LIBPMEMCTO),)
+LIBS += $(LIBNDCTL)
+endif
+
+
 #
 # This is a helper function to be combined with usage of macros available
 # in the unittest framework. It scans the code for functions that should be
 # wrapped and adds required linker flags.
 #
-WRAPPER_FUNCS=FUNC_MOCK_RET_ALWAYS|FUNC_MOCK_RET_ALWAYS_VOID|FUNC_MOCK
 PAREN=(
 extract_funcs = $(shell \
-    grep -Po '($(WRAPPER_FUNCS))\$(PAREN)\K[^,]*' $(1) | \
-    awk '{print "-Wl,--wrap="$$0}')
+    awk -F '[$(PAREN),]' \
+    '/(FUNC_MOCK_RET_ALWAYS|FUNC_MOCK_RET_ALWAYS_VOID|FUNC_MOCK)\$(PAREN)[^,]/ \
+    { \
+        print "-Wl,--wrap=" $$2 \
+    }' $(1) )
 
 INCS += -I../unittest -I$(TOP)/src/include -I$(TOP)/src/common
 
@@ -203,10 +307,14 @@ COMMON_FLAGS  = -ggdb
 COMMON_FLAGS += -Wall
 COMMON_FLAGS += -Werror
 COMMON_FLAGS += -Wpointer-arith
+
+ifeq ($(call check_compiler, icc), n)
 COMMON_FLAGS += -Wunused-macros
+endif
 COMMON_FLAGS += -fno-common
 
 CXXFLAGS  = -std=c++11
+CXXFLAGS += $(GLIBC_CXXFLAGS)
 CXXFLAGS += -ggdb
 CXXFLAGS += $(COMMON_FLAGS)
 CXXFLAGS += $(EXTRA_CXXFLAGS)
@@ -223,6 +331,17 @@ CFLAGS += $(GCOV_CFLAGS)
 CXXFLAGS += $(GCOV_CFLAGS)
 LDFLAGS += $(GCOV_LDFLAGS)
 LIBS += $(GCOV_LIBS)
+endif
+
+ifeq ($(VALGRIND),0)
+CFLAGS += -DVALGRIND_ENABLED=0
+CXXFLAGS += -DVALGRIND_ENABLED=0
+endif
+
+ifneq ($(SANITIZE),)
+CFLAGS += -fsanitize=$(SANITIZE)
+CXXFLAGS += -fsanitize=$(SANITIZE)
+LDFLAGS += -fsanitize=$(SANITIZE)
 endif
 
 LINKER=$(CC)
@@ -244,8 +363,10 @@ TARGET_STATIC_DEBUG=$(TARGET).static-debug
 SCP_TARGET_STATIC_DEBUG=$(SCP_SRC_DIR)/$(SCP_TARGET).static-debug
 endif
 ifneq ($(BUILD_STATIC_NONDEBUG),n)
+ifneq ($(DEBUG),1)
 TARGET_STATIC_NONDEBUG=$(TARGET).static-nondebug
 SCP_TARGET_STATIC_NONDEBUG=$(SCP_SRC_DIR)/$(SCP_TARGET).static-nondebug
+endif
 endif
 endif
 endif
@@ -267,10 +388,10 @@ ifeq ($(USE_LLVM_LIBCPP),1)
 $(call check_defined, LIBCPP_LIBDIR LIBCPP_INCDIR, when using USE_LLVM_LIBCPP)
 
 ifeq ($(COMPILE_LANG), cpp)
-CXXFLAGS += -stdlib=libc++
+CXXFLAGS += -nostdinc++
 INCS += -I$(LIBCPP_INCDIR)
-LIBS += -L$(LIBCPP_LIBDIR) -lc++ -lc++abi
-LDFLAGS += -stdlib=libc++ -Wl,-rpath,$(LIBCPP_LIBDIR)
+LIBS += -L$(LIBCPP_LIBDIR) -lc++ $(LIBCXXABI)
+LDFLAGS += -Wl,-rpath,$(LIBCPP_LIBDIR)
 endif
 endif
 
@@ -320,7 +441,7 @@ objdir=.
 	$(call check-cstyle, $<, $@)
 
 clean:
-	$(RM) *.o */*.o core a.out *.log testfile* $(SYNC_FILE) $(TMP_HEADERS)
+	$(RM) *.o */*.o core *.core a.out *.log testfile* $(SYNC_FILE) $(TMP_HEADERS)
 
 clobber: clean
 	$(RM) $(TARGET) $(TARGET_STATIC_DEBUG) $(TARGET_STATIC_NONDEBUG)
@@ -336,6 +457,7 @@ else
 ifeq ($(SCP_SRC_DIR),)
 $(error SCP_SRC_DIR is not set)
 endif
+	$(SCP) common
 	$(SCP) test $(SCP_SRC_DIR)/$(SCP_TARGET) $(SCP_TARGET_STATIC_DEBUG) $(SCP_TARGET_STATIC_NONDEBUG)
 endif
 	@touch $(SYNC_FILE)
@@ -344,7 +466,7 @@ endif
 sync-test: all $(SYNC_FILE) $(TESTCONFIG)
 
 TST=$(shell basename `pwd`)
-TSTCHECKS=$(shell ls -1 TEST* | grep -v -i -e "\.ps1" | sort -V)
+TSTCHECKS=$(shell ls -1 TEST* 2> /dev/null | grep -v -i -e "\.ps1" | sort -V)
 
 $(TSTCHECKS): sync-test
 	@cd .. && ./RUNTESTS ${TST} $(RUNTEST_OPTIONS) -s $@

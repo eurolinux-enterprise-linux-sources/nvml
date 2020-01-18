@@ -223,7 +223,7 @@ pmempool_dump_log(struct pmempool_dump *pdp)
 		return -1;
 	}
 
-	off_t off = pmemlog_tell(plp);
+	os_off_t off = pmemlog_tell(plp);
 	if (off < 0) {
 		warn("%s", pdp->fname);
 		pmemlog_close(plp);
@@ -273,9 +273,9 @@ pmempool_dump_blk(struct pmempool_dump *pdp)
 	uint64_t i;
 	struct range *curp = NULL;
 	LIST_FOREACH(curp, &pdp->ranges.head, next) {
-		assert((off_t)curp->last >= 0);
+		assert((os_off_t)curp->last >= 0);
 		for (i = curp->first; i <= curp->last; i++) {
-			if (pmemblk_read(pbp, buff, (off_t)i)) {
+			if (pmemblk_read(pbp, buff, (os_off_t)i)) {
 				ret = -1;
 				outv_err("reading block number %lu "
 					"failed\n", i);
@@ -392,6 +392,10 @@ pmempool_dump_func(char *appname, int argc, char *argv[])
 		break;
 	case PMEM_POOL_TYPE_OBJ:
 		outv_err("%s: PMEMOBJ pool not supported\n", pd.fname);
+		ret = -1;
+		goto out;
+	case PMEM_POOL_TYPE_CTO:
+		outv_err("%s: PMEMCTO pool not supported\n", pd.fname);
 		ret = -1;
 		goto out;
 	case PMEM_POOL_TYPE_UNKNOWN:

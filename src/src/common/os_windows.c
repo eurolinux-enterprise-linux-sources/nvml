@@ -1,5 +1,5 @@
 /*
- * Copyright 2017, Intel Corporation
+ * Copyright 2017-2018, Intel Corporation
  * Copyright (c) 2016, Microsoft Corporation. All rights reserved.
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -76,7 +76,7 @@ os_open(const char *pathname, int flags, ...)
 		if (_read(ret, bom, sizeof(bom)) != 3 ||
 				memcmp(bom, UTF8_BOM, 3) != 0) {
 			/* UTF-8 bom not found - reset file to the beginning */
-			lseek(ret, 0, SEEK_SET);
+			_lseek(ret, 0, SEEK_SET);
 		}
 	}
 	errno = orig_errno;
@@ -168,7 +168,7 @@ os_fopen(const char *pathname, const char *mode)
 		return NULL;
 
 	wchar_t *wmode = util_toUTF16(mode);
-	if (path == NULL) {
+	if (wmode == NULL) {
 		util_free_UTF16(path);
 		return NULL;
 	}
@@ -265,7 +265,7 @@ out:
  * os_posix_fallocate -- allocate file space
  */
 int
-os_posix_fallocate(int fd, off_t offset, off_t len)
+os_posix_fallocate(int fd, os_off_t offset, os_off_t len)
 {
 	/*
 	 * From POSIX:
@@ -316,7 +316,7 @@ os_posix_fallocate(int fd, off_t offset, off_t len)
  * os_ftruncate -- truncate a file to a specified length
  */
 int
-os_ftruncate(int fd, off_t length)
+os_ftruncate(int fd, os_off_t length)
 {
 	return _chsize_s(fd, length);
 }
@@ -350,7 +350,7 @@ os_flock(int fd, int operation)
 			return -1;
 	}
 
-	off_t filelen = _filelengthi64(fd);
+	os_off_t filelen = _filelengthi64(fd);
 	if (filelen < 0)
 		return -1;
 

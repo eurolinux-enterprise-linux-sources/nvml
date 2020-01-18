@@ -88,6 +88,7 @@
 #include <libpmemblk.h>
 #include <libpmemlog.h>
 #include <libpmemobj.h>
+#include <libpmemcto.h>
 #include <libpmempool.h>
 #include <libvmem.h>
 
@@ -109,7 +110,9 @@ extern "C" {
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/file.h>
+#ifndef __FreeBSD__
 #include <sys/mount.h>
+#endif
 #include <fcntl.h>
 #include <signal.h>
 #include <errno.h>
@@ -118,6 +121,7 @@ extern "C" {
 /* XXX: move OS abstraction layer out of common */
 #include "os.h"
 #include "os_thread.h"
+#include "util.h"
 
 int ut_get_uuid_str(char *);
 #define UT_MAX_ERR_MSG 128
@@ -382,10 +386,12 @@ int ut_wopen(const char *file, int line, const char *func, const wchar_t *path,
 
 int ut_close(const char *file, int line, const char *func, int fd);
 
-int ut_unlink(const char *file, int line, const char *func, const char *path);
+FILE *ut_fopen(const char *file, int line, const char *func, const char *path,
+    const char *mode);
 
-int ut_access(const char *file, int line, const char *func, const char *path,
-    int mode);
+int ut_fclose(const char *file, int line, const char *func, FILE *stream);
+
+int ut_unlink(const char *file, int line, const char *func, const char *path);
 
 size_t ut_write(const char *file, int line, const char *func, int fd,
     const void *buf, size_t len);
@@ -393,19 +399,11 @@ size_t ut_write(const char *file, int line, const char *func, int fd,
 size_t ut_read(const char *file, int line, const char *func, int fd,
     void *buf, size_t len);
 
-#ifndef _WIN32
-size_t ut_readlink(const char *file, int line, const char *func,
-    const char *path, void *buf, size_t len);
-
-int ut_fcntl(const char *file, int line, const char *func, int fd,
-    int cmd, int num, ...);
-#endif
-
-off_t ut_lseek(const char *file, int line, const char *func, int fd,
-    off_t offset, int whence);
+os_off_t ut_lseek(const char *file, int line, const char *func, int fd,
+    os_off_t offset, int whence);
 
 int ut_posix_fallocate(const char *file, int line, const char *func, int fd,
-    off_t offset, off_t len);
+    os_off_t offset, os_off_t len);
 
 int ut_stat(const char *file, int line, const char *func, const char *path,
     os_stat_t *st_bufp);
@@ -416,10 +414,8 @@ int ut_statW(const char *file, int line, const char *func, const wchar_t *path,
 int ut_fstat(const char *file, int line, const char *func, int fd,
     os_stat_t *st_bufp);
 
-int ut_flock(const char *file, int line, const char *func, int fd, int op);
-
 void *ut_mmap(const char *file, int line, const char *func, void *addr,
-    size_t length, int prot, int flags, int fd, off_t offset);
+    size_t length, int prot, int flags, int fd, os_off_t offset);
 
 int ut_munmap(const char *file, int line, const char *func, void *addr,
     size_t length);
@@ -427,54 +423,8 @@ int ut_munmap(const char *file, int line, const char *func, void *addr,
 int ut_mprotect(const char *file, int line, const char *func, void *addr,
     size_t len, int prot);
 
-#ifndef _WIN32
-int ut_symlink(const char *file, int line, const char *func,
-    const char *oldpath, const char *newpath);
-
-int ut_link(const char *file, int line, const char *func,
-    const char *oldpath, const char *newpath);
-
-int ut_mkdir(const char *file, int line, const char *func,
-    const char *pathname, mode_t mode);
-
-int ut_rmdir(const char *file, int line, const char *func,
-    const char *pathname);
-#endif
-
-int ut_rename(const char *file, int line, const char *func,
-    const char *oldpath, const char *newpath);
-
-#ifndef _WIN32
-int ut_mount(const char *file, int line, const char *func, const char *src,
-    const char *tar, const char *fstype, unsigned long flags,
-    const void *data);
-
-int ut_umount(const char *file, int line, const char *func, const char *tar);
-
-int ut_pselect(const char *file, int line, const char *func, int nfds,
-    fd_set *rfds, fd_set *wfds, fd_set *efds, const struct timespec *tv,
-    const sigset_t *sigmask);
-
-int ut_mknod(const char *file, int line, const char *func,
-    const char *pathname, mode_t mode, dev_t dev);
-
-int ut_truncate(const char *file, int line, const char *func,
-    const char *path, off_t length);
-#endif
-
 int ut_ftruncate(const char *file, int line, const char *func,
-    int fd, off_t length);
-
-int ut_chmod(const char *file, int line, const char *func,
-    const char *path, mode_t mode);
-
-#ifndef _WIN32
-DIR *ut_opendir(const char *file, int line, const char *func, const char *name);
-
-int ut_dirfd(const char *file, int line, const char *func, DIR *dirp);
-
-int ut_closedir(const char *file, int line, const char *func, DIR *dirp);
-#endif
+    int fd, os_off_t length);
 
 /* an open() that can't return < 0 */
 #define OPEN(path, ...)\
@@ -488,13 +438,17 @@ int ut_closedir(const char *file, int line, const char *func, DIR *dirp);
 #define CLOSE(fd)\
     ut_close(__FILE__, __LINE__, __func__, fd)
 
+/* an fopen() that can't return != 0 */
+#define FOPEN(path, mode)\
+    ut_fopen(__FILE__, __LINE__, __func__, path, mode)
+
+/* a fclose() that can't return != 0 */
+#define FCLOSE(stream)\
+    ut_fclose(__FILE__, __LINE__, __func__, stream)
+
 /* an unlink() that can't return -1 */
 #define UNLINK(path)\
     ut_unlink(__FILE__, __LINE__, __func__, path)
-
-/* an access() that can't return -1 */
-#define ACCESS(path, mode)\
-    ut_access(__FILE__, __LINE__, __func__, path, mode)
 
 /* a write() that can't return -1 */
 #define WRITE(fd, buf, len)\
@@ -504,35 +458,15 @@ int ut_closedir(const char *file, int line, const char *func, DIR *dirp);
 #define READ(fd, buf, len)\
     ut_read(__FILE__, __LINE__, __func__, fd, buf, len)
 
-#ifndef _WIN32
-/* a readlink() that can't return -1 */
-#define READLINK(path, buf, len)\
-    ut_readlink(__FILE__, __LINE__, __func__, path, buf, len)
-#endif
-
 /* a lseek() that can't return -1 */
 #define LSEEK(fd, offset, whence)\
     ut_lseek(__FILE__, __LINE__, __func__, fd, offset, whence)
-
-#ifndef _WIN32
-/*
- * The C Standard specifies that at least one argument must be passed to
- * the ellipsis, to ensure that the macro does not resolve to an expression
- * with a trailing comma. So, when calling this macro if num = 0
- * pass in a 0 for the argument.
- */
-#define FCNTL(fd, cmd, num, ...)\
-    ut_fcntl(__FILE__, __LINE__, __func__, fd, cmd, num, __VA_ARGS__)
-#endif
 
 #define POSIX_FALLOCATE(fd, off, len)\
     ut_posix_fallocate(__FILE__, __LINE__, __func__, fd, off, len)
 
 #define FSTAT(fd, st_bufp)\
     ut_fstat(__FILE__, __LINE__, __func__, fd, st_bufp)
-
-#define FLOCK(fd, op)\
-    ut_flock(__FILE__, __LINE__, __func__, fd, op)
 
 /* a mmap() that can't return MAP_FAILED */
 #define MMAP(addr, len, prot, flags, fd, offset)\
@@ -552,56 +486,10 @@ int ut_closedir(const char *file, int line, const char *func, DIR *dirp);
 #define STATW(path, st_bufp)\
     ut_statW(__FILE__, __LINE__, __func__, path, st_bufp)
 
-#ifndef _WIN32
-#define SYMLINK(oldpath, newpath)\
-    ut_symlink(__FILE__, __LINE__, __func__, oldpath, newpath)
-
-#define LINK(oldpath, newpath)\
-    ut_link(__FILE__, __LINE__, __func__, oldpath, newpath)
-
-#define MKDIR(pathname, mode)\
-    ut_mkdir(__FILE__, __LINE__, __func__, pathname, mode)
-
-#define RMDIR(pathname)\
-    ut_rmdir(__FILE__, __LINE__, __func__, pathname)
-#endif
-
-#define RENAME(oldpath, newpath)\
-    ut_rename(__FILE__, __LINE__, __func__, oldpath, newpath)
-
-#ifndef _WIN32
-#define MOUNT(src, tar, fstype, flags, data)\
-    ut_mount(__FILE__, __LINE__, __func__, src, tar, fstype, flags, data)
-
-#define UMOUNT(tar)\
-    ut_umount(__FILE__, __LINE__, __func__, tar)
-
-#define PSELECT(nfds, rfds, wfds, efds, tv, sigmask)\
-    ut_pselect(__FILE__, __LINE__, __func__, nfds, rfds, wfds, efds,\
-    tv, sigmask)
-
-#define MKNOD(pathname, mode, dev)\
-    ut_mknod(__FILE__, __LINE__, __func__, pathname, mode, dev)
-
-#define TRUNCATE(path, length)\
-    ut_truncate(__FILE__, __LINE__, __func__, path, length)
-#endif
-
 #define FTRUNCATE(fd, length)\
     ut_ftruncate(__FILE__, __LINE__, __func__, fd, length)
 
-#define CHMOD(path, mode)\
-    ut_chmod(__FILE__, __LINE__, __func__, path, mode)
-
 #ifndef _WIN32
-#define OPENDIR(name)\
-    ut_opendir(__FILE__, __LINE__, __func__, name)
-
-#define DIRFD(dirp)\
-    ut_dirfd(__FILE__, __LINE__, __func__, dirp)
-
-#define CLOSEDIR(dirp)\
-    ut_closedir(__FILE__, __LINE__, __func__, dirp)
 #define ut_jmp_buf_t sigjmp_buf
 #define ut_siglongjmp(b) siglongjmp(b, 1)
 #define ut_sigsetjmp(b) sigsetjmp(b, 1)
@@ -633,7 +521,7 @@ int ut_thread_create(const char *file, int line, const char *func,
     const os_thread_attr_t *__restrict attr,
     void *(*start_routine)(void *), void *__restrict arg);
 int ut_thread_join(const char *file, int line, const char *func,
-    os_thread_t thread, void **value_ptr);
+    os_thread_t *thread, void **value_ptr);
 
 /* a os_thread_create() that can't return an error */
 #define PTHREAD_CREATE(thread, attr, start_routine, arg)\
@@ -667,7 +555,7 @@ intptr_t ut_spawnv(int argc, const char **argv, ...);
  * Such solution seems to be sufficient for the purpose of our tests, even
  * though it has some limitations.  I.e. it does no work well with malloc/free,
  * so to wrap the system memory allocator functions, we use the built-in
- * feature of all the NVML libraries, allowing to override default memory
+ * feature of all the PMDK libraries, allowing to override default memory
  * allocator with the custom one.
  */
 #ifndef _WIN32
@@ -697,7 +585,7 @@ intptr_t ut_spawnv(int argc, const char **argv, ...);
 	static unsigned RCOUNTER(name);\
 	ret_type __wrap_##name(__VA_ARGS__);\
 	ret_type __wrap_##name(__VA_ARGS__) {\
-		switch (__sync_fetch_and_add(&RCOUNTER(name), 1)) {
+		switch (util_fetch_and_add32(&RCOUNTER(name), 1)) {
 
 #define FUNC_MOCK_END\
 	}}
@@ -810,6 +698,33 @@ if (off != sizeof(type))\
 		"sizeof(%s) = %lu, fields size = %lu",\
 		STR(type), last, STR(type), sizeof(type), off);\
 } while (0)
+
+/*
+ * AddressSanitizer
+ */
+#ifdef __clang__
+#if __has_feature(address_sanitizer)
+#define UT_DEFINE_ASAN_POISON
+#endif
+#else
+#ifdef __SANITIZE_ADDRESS__
+#define UT_DEFINE_ASAN_POISON
+#endif
+#endif
+#ifdef UT_DEFINE_ASAN_POISON
+void __asan_poison_memory_region(void const volatile *addr, size_t size);
+void __asan_unpoison_memory_region(void const volatile *addr, size_t size);
+#define ASAN_POISON_MEMORY_REGION(addr, size) \
+	__asan_poison_memory_region((addr), (size))
+#define ASAN_UNPOISON_MEMORY_REGION(addr, size) \
+	__asan_unpoison_memory_region((addr), (size))
+#else
+#define ASAN_POISON_MEMORY_REGION(addr, size) \
+	((void)(addr), (void)(size))
+#define ASAN_UNPOISON_MEMORY_REGION(addr, size) \
+	((void)(addr), (void)(size))
+#endif
+
 
 #ifdef __cplusplus
 }

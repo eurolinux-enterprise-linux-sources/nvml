@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,12 +43,18 @@
 
 #ifndef _WIN32
 #include <sys/ioctl.h>
+#ifdef __FreeBSD__
+#include <sys/disk.h>
+#define BLKGETSIZE64 DIOCGMEDIASIZE
+#else
 #include <linux/fs.h>
+#endif
 #endif
 
 #include "libpmem.h"
 #include "libpmemlog.h"
 #include "libpmemblk.h"
+#include "libpmemcto.h"
 #include "libpmempool.h"
 
 #include "out.h"
@@ -57,6 +63,7 @@
 #include "lane.h"
 #include "obj.h"
 #include "btt.h"
+#include "cto.h"
 #include "file.h"
 #include "os.h"
 #include "set.h"
@@ -70,10 +77,10 @@
 /*
  * pool_btt_lseek -- (internal) perform lseek in BTT file mode
  */
-static inline off_t
-pool_btt_lseek(struct pool_data *pool, off_t offset, int whence)
+static inline os_off_t
+pool_btt_lseek(struct pool_data *pool, os_off_t offset, int whence)
 {
-	off_t result;
+	os_off_t result;
 	if ((result = os_lseek(pool->set_file->fd, offset, whence)) == -1)
 		ERR("!lseek");
 
@@ -123,27 +130,6 @@ pool_btt_write(struct pool_data *pool, const void *src, size_t count)
 	}
 
 	return (ssize_t)total;
-}
-
-/*
- * pool_get_min_size -- (internal) return minimum size of pool for specified
- *	type
- */
-static uint64_t
-pool_get_min_size(enum pool_type type)
-{
-	switch (type) {
-	case POOL_TYPE_LOG:
-		return PMEMLOG_MIN_POOL;
-	case POOL_TYPE_BLK:
-		return PMEMBLK_MIN_POOL;
-	case POOL_TYPE_OBJ:
-		return PMEMOBJ_MIN_POOL;
-	default:
-		break;
-	}
-
-	return 0;
 }
 
 /*
@@ -203,17 +189,15 @@ pool_set_map(const char *fname, struct pool_set **poolset, int rdonly)
 		return -1;
 	}
 
-	/* get minimum size based on pool type for util_pool_open */
-	size_t minsize = pool_get_min_size(type);
-
 	/*
 	 * Open the poolset, the values passed to util_pool_open are read
 	 * from the first poolset file, these values are then compared with
 	 * the values from all headers of poolset files.
 	 */
-	if (util_pool_open(poolset, fname, rdonly, minsize, hdr.signature,
-			hdr.major, hdr.compat_features, hdr.incompat_features,
-			hdr.ro_compat_features, NULL)) {
+	struct pool_attr attr;
+	util_pool_hdr2attr(&attr, &hdr);
+	if (util_pool_open(poolset, fname, rdonly, 0 /* minpartsize */,
+			&attr, NULL, true, NULL)) {
 		ERR("opening poolset failed");
 		return -1;
 	}
@@ -255,6 +239,8 @@ pool_check_type_to_pool_type(enum pmempool_pool_type check_pool_type)
 		return POOL_TYPE_BLK;
 	case PMEMPOOL_POOL_TYPE_OBJ:
 		return POOL_TYPE_OBJ;
+	case PMEMPOOL_POOL_TYPE_CTO:
+		return POOL_TYPE_CTO;
 	default:
 		ERR("can not convert pmempool_pool_type %u to pool_type",
 			check_pool_type);
@@ -304,7 +290,8 @@ pool_params_parse(const PMEMpoolcheck *ppc, struct pool_params *params,
 			if (pool_set_map(ppc->path, &set, 0))
 				return -1;
 		} else {
-			ret = util_poolset_create_set(&set, ppc->path, 0, 0);
+			ret = util_poolset_create_set(&set, ppc->path,
+				0, 0, true);
 			if (ret < 0) {
 				LOG(2, "cannot open pool set -- '%s'",
 					ppc->path);
@@ -334,6 +321,7 @@ pool_params_parse(const PMEMpoolcheck *ppc, struct pool_params *params,
 			goto out_unmap;
 		}
 		params->is_dev_dax = set->replica[0]->part[0].is_dev_dax;
+		params->is_pmem = set->replica[0]->is_pmem;
 	} else if (is_btt) {
 		params->size = (size_t)stat_buf.st_size;
 #ifndef _WIN32
@@ -351,12 +339,15 @@ pool_params_parse(const PMEMpoolcheck *ppc, struct pool_params *params,
 			goto out_close;
 		}
 		params->size = (size_t)s;
-		addr = util_map(fd, params->size, MAP_SHARED, 1, 0);
+		int map_sync;
+		addr = util_map(fd, params->size, MAP_SHARED, 1, 0, &map_sync);
 		if (addr == NULL) {
 			ret = -1;
 			goto out_close;
 		}
 		params->is_dev_dax = util_file_is_device_dax(ppc->path);
+		params->is_pmem = params->is_dev_dax || map_sync ||
+			pmem_is_pmem(addr, params->size);
 	}
 
 	/* stop processing for BTT device */
@@ -376,6 +367,7 @@ pool_params_parse(const PMEMpoolcheck *ppc, struct pool_params *params,
 			pool_check_type_to_pool_type(ppc->args.pool_type);
 		if ((params->type & ~declared_type) != 0) {
 			ERR("declared pool type does not match");
+			errno = EINVAL;
 			ret = 1;
 			goto out_unmap;
 		}
@@ -389,6 +381,10 @@ pool_params_parse(const PMEMpoolcheck *ppc, struct pool_params *params,
 		struct pmemobjpool *pop = addr;
 		memcpy(params->obj.layout, pop->layout,
 			PMEMOBJ_MAX_LAYOUT);
+	} else if (params->type == POOL_TYPE_CTO) {
+		struct pmemcto *pcp = addr;
+		memcpy(params->cto.layout, pcp->layout,
+			PMEMCTO_MAX_LAYOUT);
 	}
 
 out_unmap:
@@ -426,7 +422,8 @@ pool_set_file_open(const char *fname, struct pool_params *params, int rdonly)
 	const char *path = file->fname;
 
 	if (params->type != POOL_TYPE_BTT) {
-		int ret = util_poolset_create_set(&file->poolset, path, 0, 0);
+		int ret = util_poolset_create_set(&file->poolset, path,
+			0, 0, true);
 		if (ret < 0) {
 			LOG(2, "cannot open pool set -- '%s'", path);
 			goto err_free_fname;
@@ -626,7 +623,7 @@ pool_read(struct pool_data *pool, void *buff, size_t nbytes, uint64_t off)
 	if (pool->params.type != POOL_TYPE_BTT)
 		memcpy(buff, (char *)pool->set_file->addr + off, nbytes);
 	else {
-		if (pool_btt_lseek(pool, (off_t)off, SEEK_SET) == -1)
+		if (pool_btt_lseek(pool, (os_off_t)off, SEEK_SET) == -1)
 			return -1;
 		if ((size_t)pool_btt_read(pool, buff, nbytes) != nbytes)
 			return -1;
@@ -650,10 +647,10 @@ pool_write(struct pool_data *pool, const void *buff, size_t nbytes,
 
 	if (pool->params.type != POOL_TYPE_BTT) {
 		memcpy((char *)pool->set_file->addr + off, buff, nbytes);
-		util_persist_auto(pool->params.is_dev_dax,
+		util_persist_auto(pool->params.is_pmem,
 				(char *)pool->set_file->addr + off, nbytes);
 	} else {
-		if (pool_btt_lseek(pool, (off_t)off, SEEK_SET) == -1)
+		if (pool_btt_lseek(pool, (os_off_t)off, SEEK_SET) == -1)
 			return -1;
 		if ((size_t)pool_btt_write(pool, buff, nbytes) != nbytes)
 			return -1;
@@ -819,7 +816,7 @@ pool_memset(struct pool_data *pool, uint64_t off, int c, size_t count)
 	if (pool->params.type != POOL_TYPE_BTT)
 		memset((char *)off, 0, count);
 	else {
-		if (pool_btt_lseek(pool, (off_t)off, SEEK_SET) == -1)
+		if (pool_btt_lseek(pool, (os_off_t)off, SEEK_SET) == -1)
 			return -1;
 
 		size_t zero_size = min(count, RW_BUFFERING_SIZE);
@@ -919,6 +916,8 @@ pool_get_signature(enum pool_type type)
 		return BLK_HDR_SIG;
 	case POOL_TYPE_OBJ:
 		return OBJ_HDR_SIG;
+	case POOL_TYPE_CTO:
+		return CTO_HDR_SIG;
 	default:
 		return NULL;
 	}
@@ -939,21 +938,27 @@ pool_hdr_default(enum pool_type type, struct pool_hdr *hdrp)
 	switch (type) {
 	case POOL_TYPE_LOG:
 		hdrp->major = LOG_FORMAT_MAJOR;
-		hdrp->compat_features = LOG_FORMAT_COMPAT;
-		hdrp->incompat_features = LOG_FORMAT_INCOMPAT;
-		hdrp->ro_compat_features = LOG_FORMAT_RO_COMPAT;
+		hdrp->compat_features = LOG_FORMAT_COMPAT_DEFAULT;
+		hdrp->incompat_features = LOG_FORMAT_INCOMPAT_DEFAULT;
+		hdrp->ro_compat_features = LOG_FORMAT_RO_COMPAT_DEFAULT;
 		break;
 	case POOL_TYPE_BLK:
 		hdrp->major = BLK_FORMAT_MAJOR;
-		hdrp->compat_features = BLK_FORMAT_COMPAT;
-		hdrp->incompat_features = BLK_FORMAT_INCOMPAT;
-		hdrp->ro_compat_features = BLK_FORMAT_RO_COMPAT;
+		hdrp->compat_features = BLK_FORMAT_COMPAT_DEFAULT;
+		hdrp->incompat_features = BLK_FORMAT_INCOMPAT_DEFAULT;
+		hdrp->ro_compat_features = BLK_FORMAT_RO_COMPAT_DEFAULT;
 		break;
 	case POOL_TYPE_OBJ:
 		hdrp->major = OBJ_FORMAT_MAJOR;
-		hdrp->compat_features = OBJ_FORMAT_COMPAT;
-		hdrp->incompat_features = OBJ_FORMAT_INCOMPAT;
-		hdrp->ro_compat_features = OBJ_FORMAT_RO_COMPAT;
+		hdrp->compat_features = OBJ_FORMAT_COMPAT_DEFAULT;
+		hdrp->incompat_features = OBJ_FORMAT_INCOMPAT_DEFAULT;
+		hdrp->ro_compat_features = OBJ_FORMAT_RO_COMPAT_DEFAULT;
+		break;
+	case POOL_TYPE_CTO:
+		hdrp->major = CTO_FORMAT_MAJOR;
+		hdrp->compat_features = CTO_FORMAT_COMPAT_DEFAULT;
+		hdrp->incompat_features = CTO_FORMAT_INCOMPAT_DEFAULT;
+		hdrp->ro_compat_features = CTO_FORMAT_RO_COMPAT_DEFAULT;
 		break;
 	default:
 		break;
@@ -972,8 +977,32 @@ pool_hdr_get_type(const struct pool_hdr *hdrp)
 		return POOL_TYPE_BLK;
 	else if (memcmp(hdrp->signature, OBJ_HDR_SIG, POOL_HDR_SIG_LEN) == 0)
 		return POOL_TYPE_OBJ;
+	else if (memcmp(hdrp->signature, CTO_HDR_SIG, POOL_HDR_SIG_LEN) == 0)
+		return POOL_TYPE_CTO;
 	else
 		return POOL_TYPE_UNKNOWN;
+}
+
+/*
+ * pool_get_pool_type_str -- return human-readable pool type string
+ */
+const char *
+pool_get_pool_type_str(enum pool_type type)
+{
+	switch (type) {
+	case POOL_TYPE_BTT:
+		return "btt";
+	case POOL_TYPE_LOG:
+		return "pmemlog";
+	case POOL_TYPE_BLK:
+		return "pmemblk";
+	case POOL_TYPE_OBJ:
+		return "pmemobj";
+	case POOL_TYPE_CTO:
+		return "pmemcto";
+	default:
+		return "unknown";
+	}
 }
 
 /*
@@ -1007,7 +1036,7 @@ pool_btt_info_valid(struct btt_info *infop)
 	if (memcmp(infop->sig, BTTINFO_SIG, BTTINFO_SIG_LEN) != 0)
 		return 0;
 
-	return util_checksum(infop, sizeof(*infop), &infop->checksum, 0);
+	return util_checksum(infop, sizeof(*infop), &infop->checksum, 0, 0);
 }
 
 /*
@@ -1096,4 +1125,25 @@ pool_get_first_valid_btt(struct pool_data *pool, struct btt_info *infop,
 	}
 
 	return 0;
+}
+
+/*
+ * pool_get_min_size -- return the minimum pool size of a pool of a given type
+ */
+size_t
+pool_get_min_size(enum pool_type type)
+{
+	switch (type) {
+	case POOL_TYPE_LOG:
+		return PMEMLOG_MIN_POOL;
+	case POOL_TYPE_BLK:
+		return PMEMBLK_MIN_POOL;
+	case POOL_TYPE_OBJ:
+		return PMEMOBJ_MIN_POOL;
+	case POOL_TYPE_CTO:
+		return PMEMCTO_MIN_POOL;
+	default:
+		ERR("unknown type of a pool");
+		return SIZE_MAX;
+	}
 }

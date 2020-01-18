@@ -49,7 +49,7 @@
  * case is to use two, one for modification of the object destination memory
  * location and the second for applying the chunk metadata modifications.
  */
-#define ALLOC_REDO_LOG_SIZE 10
+#define ALLOC_REDO_LOG_SIZE MAX_MEMOPS_ENTRIES
 struct lane_alloc_layout {
 	struct redo_log redo[ALLOC_REDO_LOG_SIZE];
 };
@@ -57,21 +57,23 @@ struct lane_alloc_layout {
 int pmalloc_operation(struct palloc_heap *heap,
 	uint64_t off, uint64_t *dest_off, size_t size,
 	palloc_constr constructor, void *arg,
-	uint64_t extra_field, uint16_t flags,
+	uint64_t extra_field, uint16_t object_flags, uint16_t class_id,
 	struct operation_context *ctx);
 
 int pmalloc(PMEMobjpool *pop, uint64_t *off, size_t size,
-	uint64_t extra_field, uint16_t flags);
+	uint64_t extra_field, uint16_t object_flags);
 int pmalloc_construct(PMEMobjpool *pop, uint64_t *off, size_t size,
 	palloc_constr constructor, void *arg,
-	uint64_t extra_field, uint16_t flags);
+	uint64_t extra_field, uint16_t object_flags, uint16_t class_id);
 
 int prealloc(PMEMobjpool *pop, uint64_t *off, size_t size,
-	uint64_t extra_field, uint16_t flags);
+	uint64_t extra_field, uint16_t object_flags);
 
 void pfree(PMEMobjpool *pop, uint64_t *off);
 
 struct redo_log *pmalloc_redo_hold(PMEMobjpool *pop);
 void pmalloc_redo_release(PMEMobjpool *pop);
+
+void pmalloc_ctl_register(PMEMobjpool *pop);
 
 #endif

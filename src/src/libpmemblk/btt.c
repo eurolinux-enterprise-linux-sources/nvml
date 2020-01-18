@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -135,6 +135,7 @@
 #include "btt.h"
 #include "btt_layout.h"
 #include "sys_util.h"
+#include "util.h"
 
 /*
  * The opaque btt handle containing state tracked by this module
@@ -269,6 +270,26 @@ static const unsigned Nseq[] = { 0, 2, 3, 1 };
 #define NSEQ(seq) (Nseq[(seq) & 3])
 
 /*
+ * get_map_lock_num -- (internal) Calculate offset into map_locks[]
+ *
+ * map_locks[] contains nfree locks which are used to protect the map
+ * from concurrent access to the same cache line.  The index into
+ * map_locks[] is calculated by looking at the byte offset into the map
+ * (premap_lba * BTT_MAP_ENTRY_SIZE), figuring out how many cache lines
+ * that is into the map that is (dividing by BTT_MAP_LOCK_ALIGN), and
+ * then selecting one of nfree locks (the modulo at the end).
+ *
+ * The extra cast is to keep gcc from generating a false positive
+ * 64-32 bit conversion error when -fsanitize is set.
+ */
+static inline uint32_t
+get_map_lock_num(uint32_t premap_lba, uint32_t nfree)
+{
+	return (uint32_t)(premap_lba * BTT_MAP_ENTRY_SIZE / BTT_MAP_LOCK_ALIGN)
+		% nfree;
+}
+
+/*
  * invalid_lba -- (internal) set errno and return true if lba is invalid
  *
  * This function is used at the top of the entry points where an external
@@ -315,7 +336,7 @@ read_info(struct btt *bttp, struct btt_info *infop)
 	}
 
 	/* to be valid, the fields must checksum correctly */
-	if (!util_checksum(infop, sizeof(*infop), &infop->checksum, 0)) {
+	if (!util_checksum(infop, sizeof(*infop), &infop->checksum, 0, 0)) {
 		LOG(3, "invalid checksum");
 		return 0;
 	}
@@ -613,7 +634,7 @@ arena_setf(struct btt *bttp, struct arena *arenap, unsigned lane, uint32_t setf)
 	LOG(3, "bttp %p arenap %p lane %u setf 0x%x", bttp, arenap, lane, setf);
 
 	/* update runtime state */
-	__sync_fetch_and_or(&arenap->flags, setf);
+	util_fetch_and_or32(&arenap->flags, setf);
 
 	if (!bttp->laidout) {
 		/* no layout yet to update */
@@ -642,7 +663,7 @@ arena_setf(struct btt *bttp, struct arena *arenap, unsigned lane, uint32_t setf)
 	info.flags |= htole32(setf);
 
 	/* update checksum */
-	util_checksum(&info, sizeof(info), &info.checksum, 1);
+	util_checksum(&info, sizeof(info), &info.checksum, 1, 0);
 
 	if ((*bttp->ns_cbp->nswrite)(bttp->ns, lane, &info,
 				sizeof(info), arena_off) < 0) {
@@ -730,7 +751,7 @@ build_rtt(struct btt *bttp, struct arena *arenap)
 	}
 	for (uint32_t lane = 0; lane < bttp->nfree; lane++)
 		arenap->rtt[lane] = BTT_MAP_ENTRY_ERROR;
-	__sync_synchronize();
+	util_synchronize();
 
 	return 0;
 }
@@ -1209,7 +1230,7 @@ write_layout(struct btt *bttp, unsigned lane, int write)
 		info.minor = BTTINFO_MINOR_VERSION;
 		btt_info_convert2le(&info);
 
-		util_checksum(&info, sizeof(info), &info.checksum, 1);
+		util_checksum(&info, sizeof(info), &info.checksum, 1, 0);
 
 		if ((*bttp->ns_cbp->nswrite)(bttp->ns, lane, &info,
 				sizeof(info), arena_off) < 0)
@@ -1555,7 +1576,7 @@ btt_read(struct btt *bttp, unsigned lane, uint64_t lba, void *buf)
 		 * both set.
 		 */
 		arenap->rtt[lane] = entry;
-		__sync_synchronize();
+		util_synchronize();
 
 		/*
 		 * In case this thread was preempted between reading entry and
@@ -1608,17 +1629,8 @@ map_lock(struct btt *bttp, unsigned lane, struct arena *arenap,
 
 	uint64_t map_entry_off =
 			arenap->mapoff + BTT_MAP_ENTRY_SIZE * premap_lba;
+	uint32_t map_lock_num = get_map_lock_num(premap_lba, bttp->nfree);
 
-	/*
-	 * map_locks[] contains nfree locks which are used to protect the map
-	 * from concurrent access to the same cache line.  The index into
-	 * map_locks[] is calculated by looking at the byte offset into the map
-	 * (premap_lba * BTT_MAP_ENTRY_SIZE), figuring out how many cache lines
-	 * that is into the map that is (dividing by BTT_MAP_LOCK_ALIGN), and
-	 * then selecting one of nfree locks (the modulo at the end).
-	 */
-	uint32_t map_lock_num = premap_lba * BTT_MAP_ENTRY_SIZE /
-			BTT_MAP_LOCK_ALIGN % bttp->nfree;
 	util_mutex_lock(&arenap->map_locks[map_lock_num]);
 
 	/* read the old map entry */
@@ -1650,9 +1662,8 @@ map_abort(struct btt *bttp, unsigned lane, struct arena *arenap,
 	LOG(3, "bttp %p lane %u arenap %p premap_lba %u",
 			bttp, lane, arenap, premap_lba);
 
-	uint32_t map_lock_num = premap_lba * BTT_MAP_ENTRY_SIZE /
-			BTT_MAP_LOCK_ALIGN % bttp->nfree;
-	util_mutex_unlock(&arenap->map_locks[map_lock_num]);
+	util_mutex_unlock(&arenap->map_locks[get_map_lock_num(premap_lba,
+				bttp->nfree)]);
 }
 
 /*
@@ -1672,11 +1683,8 @@ map_unlock(struct btt *bttp, unsigned lane, struct arena *arenap,
 	int err = (*bttp->ns_cbp->nswrite)(bttp->ns, lane, &entry,
 				sizeof(uint32_t), map_entry_off);
 
-	uint32_t map_lock_num =
-			premap_lba * BTT_MAP_ENTRY_SIZE / BTT_MAP_LOCK_ALIGN
-			% bttp->nfree;
-
-	util_mutex_unlock(&arenap->map_locks[map_lock_num]);
+	util_mutex_unlock(&arenap->map_locks[get_map_lock_num(premap_lba,
+				bttp->nfree)]);
 
 	LOG(9, "unlocked map[%d]: %u%s%s", premap_lba,
 			entry & BTT_MAP_ENTRY_LBA_MASK,

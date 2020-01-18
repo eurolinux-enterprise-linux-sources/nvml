@@ -1,5 +1,5 @@
 #
-# Copyright 2015-2017, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 # Copyright (c) 2016, Microsoft Corporation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -39,8 +39,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "ex_libpmemlog/TEST0"
-$Env:UNITTEST_NUM = "0"
 
 # standard unit test setup
 . ..\unittest\unittest.PS1
@@ -53,12 +51,12 @@ setup
 
 create_holey_file 32M $DIR\testfile1
 
-expect_normal_exit $Env:EXE_DIR\addlog $DIR\testfile1 "Hello" "World!" "foo" "bar" > out$Env:UNITTEST_NUM.log 2>&1
-expect_normal_exit $Env:EXE_DIR\printlog $DIR\testfile1 >> out$Env:UNITTEST_NUM.log 2>&1
-expect_normal_exit $Env:EXE_DIR\addlog $DIR\testfile1 "PMEMLOG" >> out$Env:UNITTEST_NUM.log 2>&1
-expect_normal_exit $Env:EXE_DIR\printlog -t $DIR\testfile1 >> out$Env:UNITTEST_NUM.log 2>&1
-expect_normal_exit $Env:EXE_DIR\addlog $DIR\testfile1 "NVML" >> out$Env:UNITTEST_NUM.log 2>&1
-expect_normal_exit $Env:EXE_DIR\printlog -t $DIR\testfile1 >> out$Env:UNITTEST_NUM.log 2>&1
+expect_normal_exit $Env:EXE_DIR\ex_pmemlog_addlog $DIR\testfile1 "Hello" "World!" "foo" "bar" > out$Env:UNITTEST_NUM.log 2>&1
+expect_normal_exit $Env:EXE_DIR\ex_pmemlog_printlog $DIR\testfile1 >> out$Env:UNITTEST_NUM.log 2>&1
+expect_normal_exit $Env:EXE_DIR\ex_pmemlog_addlog $DIR\testfile1 "PMEMLOG" >> out$Env:UNITTEST_NUM.log 2>&1
+expect_normal_exit $Env:EXE_DIR\ex_pmemlog_printlog -t $DIR\testfile1 >> out$Env:UNITTEST_NUM.log 2>&1
+expect_normal_exit $Env:EXE_DIR\ex_pmemlog_addlog $DIR\testfile1 "PMDK" >> out$Env:UNITTEST_NUM.log 2>&1
+expect_normal_exit $Env:EXE_DIR\ex_pmemlog_printlog -t $DIR\testfile1 >> out$Env:UNITTEST_NUM.log 2>&1
 
 check_pool $DIR\testfile1
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  * Copyright (c) 2016, Microsoft Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -38,10 +38,17 @@
 #include <memoryapi.h>
 #include "pmem.h"
 #include "out.h"
+#include "mmap.h"
 #include "win_mmap.h"
+#include "sys/mman.h"
 
 #if (NTDDI_VERSION >= NTDDI_WIN10_RS1)
-PQVM Func_qvmi = NULL;
+typedef BOOL (WINAPI *PQVM)(
+		HANDLE, const void *,
+		enum WIN32_MEMORY_INFORMATION_CLASS, PVOID,
+		SIZE_T, PSIZE_T);
+
+static PQVM Func_qvmi = NULL;
 #endif
 
 /*
@@ -69,8 +76,8 @@ is_direct_mapped(const void *begin, const void *end)
 	const void *end_aligned = (const void *)roundup((intptr_t)end,
 					Pagesize);
 
-	for (const void *page = begin;
-			page < end;
+	for (const void *page = begin_aligned;
+			page < end_aligned;
 			page = (const void *)((char *)page + Pagesize)) {
 		if (Func_qvmi(GetCurrentProcess(), page,
 				MemoryRegionInfo, &region_info,
@@ -173,4 +180,30 @@ is_pmem_detect(const void *addr, size_t len)
 
 	LOG(4, "returning %d", retval);
 	return retval;
+}
+
+/*
+ * pmem_map_register -- memory map file and register mapping
+ */
+void *
+pmem_map_register(int fd, size_t len, const char *path, int is_dev_dax)
+{
+	/* there is no device dax on windows */
+	ASSERTeq(is_dev_dax, 0);
+
+	return util_map(fd, len, MAP_SHARED, 0, 0, NULL);
+}
+
+/*
+ * pmem_os_init -- os-dependent part of pmem initialization
+ */
+void
+pmem_os_init(void)
+{
+	LOG(3, NULL);
+#if NTDDI_VERSION >= NTDDI_WIN10_RS1
+	Func_qvmi = (PQVM)GetProcAddress(
+			GetModuleHandle(TEXT("KernelBase.dll")),
+			"QueryVirtualMemoryInformation");
+#endif
 }

@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2016-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -39,11 +39,13 @@
 # for automated builds.
 #
 
+set -e
+
 function usage {
 	echo "Usage:"
 	echo "    push-image.sh <OS-VER>"
 	echo "where <OS-VER>, for example, can be 'ubuntu-16.04', provided " \
-		"a Docker image tagged with pmem/nvml:ubuntu-16.04 exists " \
+		"a Docker image tagged with pmem/pmdk:ubuntu-16.04 exists " \
 		"locally."
 }
 
@@ -53,8 +55,8 @@ if [[ -z "$1" ]]; then
 	exit 1
 fi
 
-# Check if the image tagged with nvml/OS-VER exists locally
-if [[ ! $(docker images -a | awk -v pattern="^pmem/nvml:$1\$" \
+# Check if the image tagged with pmdk/OS-VER exists locally
+if [[ ! $(docker images -a | awk -v pattern="^pmem/pmdk:$1\$" \
 	'$1":"$2 ~ pattern') ]]
 then
 	echo "ERROR: wrong argument."
@@ -66,5 +68,4 @@ fi
 docker login -u="$DOCKER_USER" -p="$DOCKER_PASSWORD"
 
 # Push the image to the repository
-docker push pmem/nvml:$1
-
+docker push pmem/pmdk:$1

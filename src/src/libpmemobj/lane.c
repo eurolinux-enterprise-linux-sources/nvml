@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -61,10 +61,21 @@ static __thread struct lane_info *Lane_info_cache;
 struct section_operations *Section_ops[MAX_LANE_SECTION];
 
 /*
- * lane_info_destroy -- destroy lane info hash table
+ * lane_info_create -- (internal) constructor for thread shared data
  */
-inline void
-lane_info_destroy(void)
+static inline void
+lane_info_create(void)
+{
+	Lane_info_ht = cuckoo_new();
+	if (Lane_info_ht == NULL)
+		FATAL("cuckoo_new");
+}
+
+/*
+ * lane_info_delete -- (internal) deletes lane info hash table
+ */
+static inline void
+lane_info_delete(void)
 {
 	if (unlikely(Lane_info_ht == NULL))
 		return;
@@ -84,23 +95,27 @@ lane_info_destroy(void)
 }
 
 /*
+ * lane_info_ht_boot -- (internal) boot lane info and add it to thread shared
+ *	data
+ */
+static inline void
+lane_info_ht_boot(void)
+{
+	lane_info_create();
+	int result = os_tls_set(Lane_info_key, Lane_info_ht);
+	if (result != 0) {
+		errno = result;
+		FATAL("!os_tls_set");
+	}
+}
+
+/*
  * lane_info_ht_destroy -- (internal) destructor for thread shared data
  */
 static inline void
 lane_info_ht_destroy(void *ht)
 {
-	lane_info_destroy();
-}
-
-/*
- * lane_info_create -- (internal) constructor for thread shared data
- */
-static inline void
-lane_info_create(void)
-{
-	Lane_info_ht = cuckoo_new();
-	if (Lane_info_ht == NULL)
-		FATAL("cuckoo_new");
+	lane_info_delete();
 }
 
 /*
@@ -117,18 +132,13 @@ lane_info_boot(void)
 }
 
 /*
- * lane_info_ht_boot -- (internal) boot lane info and add it to thread shared
- *	data
+ * lane_info_destroy -- destroy lane info hash table
  */
-static inline void
-lane_info_ht_boot(void)
+void
+lane_info_destroy(void)
 {
-	lane_info_create();
-	int result = os_tls_set(Lane_info_key, Lane_info_ht);
-	if (result != 0) {
-		errno = result;
-		FATAL("!os_tls_set");
-	}
+	lane_info_delete();
+	(void) os_tls_key_delete(Lane_info_key);
 }
 
 /*
@@ -278,7 +288,8 @@ lane_cleanup(PMEMobjpool *pop)
 }
 
 /*
- * lane_recover_and_boot -- performs initialization and recovery of all lanes
+ * lane_recover_and_section_boot -- performs initialization and recovery of all
+ * lanes
  */
 int
 lane_recover_and_section_boot(PMEMobjpool *pop)
@@ -308,6 +319,25 @@ lane_recover_and_section_boot(PMEMobjpool *pop)
 	}
 
 	return err;
+}
+
+/*
+ * lane_section_cleanup -- performs runtime cleanup of all lanes
+ */
+int
+lane_section_cleanup(PMEMobjpool *pop)
+{
+	int err;
+	int lerr = 0;
+
+	for (int i = 0; i < MAX_LANE_SECTION; i++) {
+		if ((err = Section_ops[i]->cleanup(pop)) != 0) {
+			LOG(2, "section_ops->cleanup %d %d", i, err);
+			lerr = err;
+		}
+	}
+
+	return lerr;
 }
 
 /*
@@ -443,7 +473,7 @@ lane_hold(PMEMobjpool *pop, struct lane_section **section,
 	struct lane_info *lane = get_lane_info_record(pop);
 	while (unlikely(lane->lane_idx == UINT64_MAX)) {
 		/* initial wrap to next CL */
-		lane->primary = lane->lane_idx = __sync_fetch_and_add(
+		lane->primary = lane->lane_idx = util_fetch_and_add32(
 			&pop->lanes_desc.next_lane_idx, LANE_JUMP);
 	} /* handles wraparound */
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -51,19 +51,12 @@
 #include "rpmem_fip.h"
 #include "rpmem_fip_common.h"
 #include "rpmem_ssh.h"
+#include "rpmem_proto.h"
 
 #define RPMEM_REMOVE_FLAGS_ALL (\
 	RPMEM_REMOVE_FORCE |	\
 	RPMEM_REMOVE_POOL_SET	\
 )
-
-extern int Rpmem_fork_unsafe;
-
-/*
- * If set, indicates libfabric does not support fork() and consecutive calls to
- * rpmem_create/rpmem_open must fail.
- */
-int Rpmem_fork_unsafe;
 
 #define RPMEM_CHECK_FORK() do {\
 if (Rpmem_fork_unsafe) {\
@@ -83,6 +76,7 @@ struct rpmem_pool {
 	enum rpmem_provider provider;
 	os_thread_t monitor;
 	int closing;
+	int no_headers;
 	/*
 	 * Last error code, need to be volatile because it can
 	 * be accessed by multiple threads.
@@ -101,6 +95,8 @@ struct rpmem_pool {
 static int
 env_get_bool(const char *name, int *valp)
 {
+	LOG(3, "name %s, valp %p", name, valp);
+
 	const char *env = os_getenv(name);
 	if (!env)
 		return 1;
@@ -128,6 +124,8 @@ err:
 static enum rpmem_provider
 rpmem_get_provider(const char *node)
 {
+	LOG(3, "node %s", node);
+
 	struct rpmem_fip_probe probe;
 	enum rpmem_provider prov = RPMEM_PROV_UNKNOWN;
 
@@ -170,6 +168,8 @@ rpmem_get_provider(const char *node)
 static void *
 rpmem_monitor_thread(void *arg)
 {
+	LOG(3, "arg %p", arg);
+
 	RPMEMpool *rpp = arg;
 
 	int ret = rpmem_obc_monitor(rpp->obc, 0);
@@ -187,6 +187,8 @@ rpmem_monitor_thread(void *arg)
 static RPMEMpool *
 rpmem_common_init(const char *target)
 {
+	LOG(3, "target %s", target);
+
 	int ret;
 
 	RPMEMpool *rpp = calloc(1, sizeof(*rpp));
@@ -250,10 +252,12 @@ err_malloc_rpmem:
 static void
 rpmem_common_fini(RPMEMpool *rpp, int join)
 {
+	LOG(3, "rpp %p, join %d", rpp, join);
+
 	rpmem_obc_disconnect(rpp->obc);
 
 	if (join) {
-		int ret = os_thread_join(rpp->monitor, NULL);
+		int ret = os_thread_join(&rpp->monitor, NULL);
 		if (ret) {
 			errno = ret;
 			ERR("joining monitor thread failed");
@@ -274,6 +278,9 @@ rpmem_common_fip_init(RPMEMpool *rpp, struct rpmem_req_attr *req,
 	struct rpmem_resp_attr *resp, void *pool_addr, size_t pool_size,
 	unsigned *nlanes)
 {
+	LOG(3, "rpp %p, req %p, resp %p, pool_addr %p, pool_size %zu, nlanes "
+			"%p", rpp, req, resp, pool_addr, pool_size, nlanes);
+
 	int ret;
 
 	struct rpmem_fip_attr fip_attr = {
@@ -327,6 +334,8 @@ err_port:
 static void
 rpmem_common_fip_fini(RPMEMpool *rpp)
 {
+	LOG(3, "rpp %p", rpp);
+
 	RPMEM_LOG(INFO, "closing in-band connection");
 
 	rpmem_fip_fini(rpp->fip);
@@ -341,6 +350,10 @@ static void
 rpmem_log_args(const char *req, const char *target, const char *pool_set_name,
 	void *pool_addr, size_t pool_size, unsigned nlanes)
 {
+	LOG(3, "req %s, target %s, pool_set_name %s, pool_addr %p, pool_size "
+			"%zu, nlanes %d", req, target, pool_set_name, pool_addr,
+			pool_size, nlanes);
+
 	RPMEM_LOG(NOTICE, "%s request:", req);
 	RPMEM_LOG(NOTICE, "\ttarget: %s", target);
 	RPMEM_LOG(NOTICE, "\tpool set: %s", pool_set_name);
@@ -355,6 +368,8 @@ rpmem_log_args(const char *req, const char *target, const char *pool_set_name,
 static void
 rpmem_log_resp(const char *req, const struct rpmem_resp_attr *resp)
 {
+	LOG(3, "req %s, resp %p", req, resp);
+
 	RPMEM_LOG(NOTICE, "%s request response:", req);
 	RPMEM_LOG(NOTICE, "\tnlanes: %u", resp->nlanes);
 	RPMEM_LOG(NOTICE, "\tport: %u", resp->port);
@@ -369,6 +384,9 @@ rpmem_log_resp(const char *req, const struct rpmem_resp_attr *resp)
 static int
 rpmem_check_args(void *pool_addr, size_t pool_size, unsigned *nlanes)
 {
+	LOG(3, "pool_addr %p, pool_size %zu, nlanes %p", pool_addr, pool_size,
+			nlanes);
+
 	if (!pool_addr) {
 		errno = EINVAL;
 		ERR("invalid pool address");
@@ -425,6 +443,10 @@ rpmem_create(const char *target, const char *pool_set_name,
 	void *pool_addr, size_t pool_size, unsigned *nlanes,
 	const struct rpmem_pool_attr *create_attr)
 {
+	LOG(3, "target %s, pool_set_name %s, pool_addr %p, pool_size %zu, "
+			"nlanes %p, create_attr %p", target, pool_set_name,
+			pool_addr, pool_size, nlanes, create_attr);
+
 	RPMEM_CHECK_FORK();
 
 	rpmem_log_args("create", target, pool_set_name,
@@ -439,7 +461,7 @@ rpmem_create(const char *target, const char *pool_set_name,
 
 	struct rpmem_req_attr req = {
 		.pool_size	= pool_size,
-		.nlanes		= *nlanes,
+		.nlanes		= min(*nlanes, Rpmem_max_nlanes),
 		.provider	= rpp->provider,
 		.pool_desc	= pool_set_name,
 	};
@@ -450,6 +472,10 @@ rpmem_create(const char *target, const char *pool_set_name,
 		RPMEM_LOG(ERR, "!create request failed");
 		goto err_obc_create;
 	}
+
+	if (create_attr == NULL ||
+			util_is_zeroed(create_attr, sizeof(*create_attr)))
+		rpp->no_headers = 1;
 
 	rpmem_log_resp("create", &resp);
 
@@ -469,7 +495,7 @@ rpmem_create(const char *target, const char *pool_set_name,
 err_monitor:
 	rpmem_common_fip_fini(rpp);
 err_fip_init:
-	rpmem_obc_close(rpp->obc);
+	rpmem_obc_close(rpp->obc, RPMEM_CLOSE_FLAGS_REMOVE);
 err_obc_create:
 	rpmem_common_fini(rpp, 0);
 err_common_init:
@@ -491,6 +517,10 @@ rpmem_open(const char *target, const char *pool_set_name,
 	void *pool_addr, size_t pool_size, unsigned *nlanes,
 	struct rpmem_pool_attr *open_attr)
 {
+	LOG(3, "target %s, pool_set_name %s, pool_addr %p, pool_size %zu, "
+			"nlanes %p, create_attr %p", target, pool_set_name,
+			pool_addr, pool_size, nlanes, open_attr);
+
 	RPMEM_CHECK_FORK();
 
 	rpmem_log_args("open", target, pool_set_name,
@@ -505,7 +535,7 @@ rpmem_open(const char *target, const char *pool_set_name,
 
 	struct rpmem_req_attr req = {
 		.pool_size	= pool_size,
-		.nlanes		= *nlanes,
+		.nlanes		= min(*nlanes, Rpmem_max_nlanes),
 		.provider	= rpp->provider,
 		.pool_desc	= pool_set_name,
 	};
@@ -517,6 +547,9 @@ rpmem_open(const char *target, const char *pool_set_name,
 		RPMEM_LOG(ERR, "!open request failed");
 		goto err_obc_create;
 	}
+
+	if (open_attr == NULL || util_is_zeroed(open_attr, sizeof(*open_attr)))
+		rpp->no_headers = 1;
 
 	rpmem_log_resp("open", &resp);
 
@@ -536,7 +569,7 @@ rpmem_open(const char *target, const char *pool_set_name,
 err_monitor:
 	rpmem_common_fip_fini(rpp);
 err_fip_init:
-	rpmem_obc_close(rpp->obc);
+	rpmem_obc_close(rpp->obc, 0);
 err_obc_create:
 	rpmem_common_fini(rpp, 0);
 err_common_init:
@@ -549,13 +582,15 @@ err_common_init:
 int
 rpmem_close(RPMEMpool *rpp)
 {
+	LOG(3, "rpp %p", rpp);
+
 	RPMEM_LOG(INFO, "closing out-of-band connection");
 
-	__sync_fetch_and_or(&rpp->closing, 1);
+	util_fetch_and_or32(&rpp->closing, 1);
 
 	rpmem_fip_close(rpp->fip);
 
-	int ret = rpmem_obc_close(rpp->obc);
+	int ret = rpmem_obc_close(rpp->obc, 0);
 	if (ret)
 		ERR("!close request failed");
 
@@ -578,12 +613,61 @@ rpmem_close(RPMEMpool *rpp)
 int
 rpmem_persist(RPMEMpool *rpp, size_t offset, size_t length, unsigned lane)
 {
+	LOG(3, "rpp %p, offset %zu, length %zu, lane %d", rpp, offset, length,
+			lane);
+
 	if (unlikely(rpp->error)) {
 		errno = rpp->error;
 		return -1;
 	}
 
-	int ret = rpmem_fip_persist(rpp->fip, offset, length, lane);
+	if (rpp->no_headers == 0 && offset < RPMEM_HDR_SIZE) {
+		ERR("offset (%zu) in pool is less than %d bytes", offset,
+				RPMEM_HDR_SIZE);
+		errno = EINVAL;
+		return -1;
+	}
+
+	int ret = rpmem_fip_persist(rpp->fip, offset, length,
+			lane, RPMEM_PERSIST);
+	if (unlikely(ret)) {
+		ERR("persist operation failed");
+		rpp->error = ret;
+		errno = rpp->error;
+		return -1;
+	}
+
+	return 0;
+}
+
+/*
+ * rpmem_deep_persit -- deep flush operation on target node
+ *
+ * rpp           -- remote pool handle
+ * offset        -- offset in pool
+ * length        -- length of deep flush operation
+ * lane          -- lane number
+ */
+int
+rpmem_deep_persist(RPMEMpool *rpp, size_t offset, size_t length, unsigned lane)
+{
+	LOG(3, "rpp %p, offset %zu, length %zu, lane %d", rpp, offset, length,
+			lane);
+
+	if (unlikely(rpp->error)) {
+		errno = rpp->error;
+		return -1;
+	}
+
+	if (offset < RPMEM_HDR_SIZE) {
+		ERR("offset (%zu) in pool is less than %d bytes", offset,
+				RPMEM_HDR_SIZE);
+		errno = EINVAL;
+		return -1;
+	}
+
+	int ret = rpmem_fip_persist(rpp->fip, offset, length,
+			lane, RPMEM_DEEP_PERSIST);
 	if (unlikely(ret)) {
 		ERR("persist operation failed");
 		rpp->error = ret;
@@ -606,13 +690,22 @@ int
 rpmem_read(RPMEMpool *rpp, void *buff, size_t offset,
 	size_t length, unsigned lane)
 {
+	LOG(3, "rpp %p, buff %p, offset %zu, length %zu, lane %d", rpp, buff,
+			offset, length, lane);
+
 	if (unlikely(rpp->error)) {
 		errno = rpp->error;
 		return -1;
 	}
 
+	if (rpp->no_headers == 0 && offset < RPMEM_HDR_SIZE)
+		LOG(1, "reading from pool at offset (%zu) less than %d bytes",
+				offset, RPMEM_HDR_SIZE);
+
 	int ret = rpmem_fip_read(rpp->fip, buff, length, offset, lane);
 	if (unlikely(ret)) {
+		errno = ret;
+		ERR("!read operation failed");
 		rpp->error = ret;
 		return -1;
 	}
@@ -629,6 +722,8 @@ rpmem_read(RPMEMpool *rpp, void *buff, size_t offset,
 int
 rpmem_set_attr(RPMEMpool *rpp, const struct rpmem_pool_attr *attr)
 {
+	LOG(3, "rpp %p, attr %p", rpp, attr);
+
 	if (unlikely(rpp->error)) {
 		errno = rpp->error;
 		return -1;
@@ -653,6 +748,8 @@ rpmem_set_attr(RPMEMpool *rpp, const struct rpmem_pool_attr *attr)
 int
 rpmem_remove(const char *target, const char *pool_set, int flags)
 {
+	LOG(3, "target %s, pool_set %s, flags %d", target, pool_set, flags);
+
 	if (flags & ~(RPMEM_REMOVE_FLAGS_ALL)) {
 		ERR("invalid flags specified");
 		errno = EINVAL;
@@ -694,12 +791,8 @@ rpmem_remove(const char *target, const char *pool_set, int flags)
 
 	ret = rpmem_ssh_close(ssh);
 	if (ret) {
-		if (ret > 0) {
-			errno = ret;
-			ERR("!remote command failed");
-		} else {
-			ERR("remote command failed");
-		}
+		errno = EINVAL;
+		ERR("remote command failed");
 		goto err_ssh_close;
 	}
 

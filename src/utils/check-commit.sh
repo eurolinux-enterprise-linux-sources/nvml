@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
-# Copyright 2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -33,15 +33,15 @@
 
 #
 # Used to check whether all the commit messages in a pull request
-# follow the GIT/NVML guidelines.
+# follow the GIT/PMDK guidelines.
 #
 # usage: ./check-commit.sh
 #
 
-if [[ $TRAVIS_REPO_SLUG != "pmem/nvml" \
+if [[ $TRAVIS_REPO_SLUG != "pmem/pmdk" \
 	|| $TRAVIS_EVENT_TYPE != "pull_request" ]];
 then
-	echo "SKIP: $0 can only be executed for pull requests to pmem/nvml"
+	echo "SKIP: $0 can only be executed for pull requests to pmem/pmdk"
 	exit 0
 fi
 
@@ -56,7 +56,7 @@ else
 fi
 
 # valid area names
-AREAS="pmem\|rpmem\|log\|blk\|obj\|pool\|test\|benchmark\|examples\|vmem\|vmmalloc\|jemalloc\|cpp\|doc\|common"
+AREAS="pmem\|rpmem\|log\|blk\|obj\|pool\|test\|benchmark\|examples\|vmem\|vmmalloc\|jemalloc\|cpp\|doc\|common\|cto\|daxio"
 
 # Check commit message
 for commit in $commits; do

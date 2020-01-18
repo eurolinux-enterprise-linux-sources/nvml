@@ -5,6 +5,7 @@ _pobj_cached_pool
 _pobj_debug_notice
 pmemobj_alloc
 pmemobj_alloc_usable_size
+pmemobj_cancel
 pmemobj_check
 pmemobj_check_version
 pmemobj_close
@@ -14,6 +15,7 @@ pmemobj_cond_timedwait
 pmemobj_cond_wait
 pmemobj_cond_zero
 pmemobj_create
+pmemobj_ctl_exec
 pmemobj_ctl_get
 pmemobj_ctl_set
 pmemobj_direct
@@ -39,7 +41,9 @@ pmemobj_open
 pmemobj_persist
 pmemobj_pool_by_oid
 pmemobj_pool_by_ptr
+pmemobj_publish
 pmemobj_realloc
+pmemobj_reserve
 pmemobj_root
 pmemobj_root_construct
 pmemobj_root_size
@@ -52,6 +56,7 @@ pmemobj_rwlock_unlock
 pmemobj_rwlock_wrlock
 pmemobj_rwlock_zero
 pmemobj_set_funcs
+pmemobj_set_value
 pmemobj_strdup
 pmemobj_tx_abort
 pmemobj_tx_add_range
@@ -64,6 +69,7 @@ pmemobj_tx_errno
 pmemobj_tx_free
 pmemobj_tx_lock
 pmemobj_tx_process
+pmemobj_tx_publish
 pmemobj_tx_realloc
 pmemobj_tx_stage
 pmemobj_tx_strdup
@@ -75,6 +81,8 @@ pmemobj_tx_zalloc
 pmemobj_tx_zrealloc
 pmemobj_type_num
 pmemobj_wcsdup
+pmemobj_xalloc
+pmemobj_xreserve
 pmemobj_zalloc
 pmemobj_zrealloc
 $(*)/nondebug/libpmemobj.so:
@@ -83,6 +91,7 @@ _pobj_cached_pool
 _pobj_debug_notice
 pmemobj_alloc
 pmemobj_alloc_usable_size
+pmemobj_cancel
 pmemobj_check
 pmemobj_check_version
 pmemobj_close
@@ -92,6 +101,7 @@ pmemobj_cond_timedwait
 pmemobj_cond_wait
 pmemobj_cond_zero
 pmemobj_create
+pmemobj_ctl_exec
 pmemobj_ctl_get
 pmemobj_ctl_set
 pmemobj_direct
@@ -117,7 +127,9 @@ pmemobj_open
 pmemobj_persist
 pmemobj_pool_by_oid
 pmemobj_pool_by_ptr
+pmemobj_publish
 pmemobj_realloc
+pmemobj_reserve
 pmemobj_root
 pmemobj_root_construct
 pmemobj_root_size
@@ -130,6 +142,7 @@ pmemobj_rwlock_unlock
 pmemobj_rwlock_wrlock
 pmemobj_rwlock_zero
 pmemobj_set_funcs
+pmemobj_set_value
 pmemobj_strdup
 pmemobj_tx_abort
 pmemobj_tx_add_range
@@ -142,6 +155,7 @@ pmemobj_tx_errno
 pmemobj_tx_free
 pmemobj_tx_lock
 pmemobj_tx_process
+pmemobj_tx_publish
 pmemobj_tx_realloc
 pmemobj_tx_stage
 pmemobj_tx_strdup
@@ -153,6 +167,8 @@ pmemobj_tx_zalloc
 pmemobj_tx_zrealloc
 pmemobj_type_num
 pmemobj_wcsdup
+pmemobj_xalloc
+pmemobj_xreserve
 pmemobj_zalloc
 pmemobj_zrealloc
 $(*)/debug/libpmemobj.a:
@@ -161,6 +177,7 @@ _pobj_cached_pool
 _pobj_debug_notice
 pmemobj_alloc
 pmemobj_alloc_usable_size
+pmemobj_cancel
 pmemobj_check
 pmemobj_check_version
 pmemobj_close
@@ -170,6 +187,7 @@ pmemobj_cond_timedwait
 pmemobj_cond_wait
 pmemobj_cond_zero
 pmemobj_create
+pmemobj_ctl_exec
 pmemobj_ctl_get
 pmemobj_ctl_set
 pmemobj_direct
@@ -195,7 +213,9 @@ pmemobj_open
 pmemobj_persist
 pmemobj_pool_by_oid
 pmemobj_pool_by_ptr
+pmemobj_publish
 pmemobj_realloc
+pmemobj_reserve
 pmemobj_root
 pmemobj_root_construct
 pmemobj_root_size
@@ -208,6 +228,7 @@ pmemobj_rwlock_unlock
 pmemobj_rwlock_wrlock
 pmemobj_rwlock_zero
 pmemobj_set_funcs
+pmemobj_set_value
 pmemobj_strdup
 pmemobj_tx_abort
 pmemobj_tx_add_range
@@ -220,6 +241,7 @@ pmemobj_tx_errno
 pmemobj_tx_free
 pmemobj_tx_lock
 pmemobj_tx_process
+pmemobj_tx_publish
 pmemobj_tx_realloc
 pmemobj_tx_stage
 pmemobj_tx_strdup
@@ -231,6 +253,8 @@ pmemobj_tx_zalloc
 pmemobj_tx_zrealloc
 pmemobj_type_num
 pmemobj_wcsdup
+pmemobj_xalloc
+pmemobj_xreserve
 pmemobj_zalloc
 pmemobj_zrealloc
 $(*)/nondebug/libpmemobj.a:
@@ -239,6 +263,7 @@ _pobj_cached_pool
 _pobj_debug_notice
 pmemobj_alloc
 pmemobj_alloc_usable_size
+pmemobj_cancel
 pmemobj_check
 pmemobj_check_version
 pmemobj_close
@@ -248,6 +273,7 @@ pmemobj_cond_timedwait
 pmemobj_cond_wait
 pmemobj_cond_zero
 pmemobj_create
+pmemobj_ctl_exec
 pmemobj_ctl_get
 pmemobj_ctl_set
 pmemobj_direct
@@ -273,7 +299,9 @@ pmemobj_open
 pmemobj_persist
 pmemobj_pool_by_oid
 pmemobj_pool_by_ptr
+pmemobj_publish
 pmemobj_realloc
+pmemobj_reserve
 pmemobj_root
 pmemobj_root_construct
 pmemobj_root_size
@@ -286,6 +314,7 @@ pmemobj_rwlock_unlock
 pmemobj_rwlock_wrlock
 pmemobj_rwlock_zero
 pmemobj_set_funcs
+pmemobj_set_value
 pmemobj_strdup
 pmemobj_tx_abort
 pmemobj_tx_add_range
@@ -298,6 +327,7 @@ pmemobj_tx_errno
 pmemobj_tx_free
 pmemobj_tx_lock
 pmemobj_tx_process
+pmemobj_tx_publish
 pmemobj_tx_realloc
 pmemobj_tx_stage
 pmemobj_tx_strdup
@@ -309,5 +339,7 @@ pmemobj_tx_zalloc
 pmemobj_tx_zrealloc
 pmemobj_type_num
 pmemobj_wcsdup
+pmemobj_xalloc
+pmemobj_xreserve
 pmemobj_zalloc
 pmemobj_zrealloc

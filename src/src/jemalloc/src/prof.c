@@ -768,16 +768,16 @@ prof_dump_write(bool propagate_err, const char *s)
 	slen = strlen(s);
 	while (i < slen) {
 		/* Flush the buffer if it is full. */
-		if (prof_dump_buf_end == PROF_DUMP_BUFSIZE)
+		if (prof_dump_buf_end == sizeof(prof_dump_buf))
 			if (prof_dump_flush(propagate_err) && propagate_err)
 				return (true);
 
-		if (prof_dump_buf_end + slen <= PROF_DUMP_BUFSIZE) {
+		if (prof_dump_buf_end + slen <= sizeof(prof_dump_buf)) {
 			/* Finish writing. */
 			n = slen - i;
 		} else {
 			/* Write as much of s as will fit. */
-			n = PROF_DUMP_BUFSIZE - prof_dump_buf_end;
+			n = sizeof(prof_dump_buf) - prof_dump_buf_end;
 		}
 		memcpy(&prof_dump_buf[prof_dump_buf_end], &s[i], n);
 		prof_dump_buf_end += n;
@@ -994,7 +994,7 @@ prof_dump_maps(bool propagate_err)
 		nread = 0;
 		do {
 			prof_dump_buf_end += nread;
-			if (prof_dump_buf_end == PROF_DUMP_BUFSIZE) {
+			if (prof_dump_buf_end == sizeof(prof_dump_buf)) {
 				/* Make space in prof_dump_buf before read(). */
 				if (prof_dump_flush(propagate_err) &&
 				    propagate_err) {
@@ -1003,7 +1003,7 @@ prof_dump_maps(bool propagate_err)
 				}
 			}
 			nread = read(mfd, &prof_dump_buf[prof_dump_buf_end],
-			    PROF_DUMP_BUFSIZE - prof_dump_buf_end);
+			    sizeof(prof_dump_buf) - prof_dump_buf_end);
 		} while (nread > 0);
 	} else {
 		ret = true;
@@ -1388,7 +1388,7 @@ prof_boot2(void)
 			if (opt_abort)
 				abort();
 		}
-		ctx_locks = (malloc_mutex_t *)je_base_malloc(PROF_NCTX_LOCKS *
+		ctx_locks = (malloc_mutex_t *)base_malloc_fn(PROF_NCTX_LOCKS *
 		    sizeof(malloc_mutex_t));
 		if (ctx_locks == NULL)
 			return (true);

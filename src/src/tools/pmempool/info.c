@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -45,7 +45,9 @@
 #include <inttypes.h>
 #include <assert.h>
 #include <sys/param.h>
+#ifndef __FreeBSD__
 #define __USE_UNIX98
+#endif
 #include <unistd.h>
 #include <sys/mman.h>
 
@@ -496,12 +498,15 @@ parse_args(char *appname, int argc, char *argv[],
 		case 'p':
 		{
 			char *endptr;
+			int olderrno = errno;
+			errno = 0;
 			long long ll = strtoll(optarg, &endptr, 10);
 			if ((endptr && *endptr != '\0') || errno) {
 				outv_err("'%s' -- invalid replica number",
 						optarg);
 				return -1;
 			}
+			errno = olderrno;
 			argsp->obj.replica = (size_t)ll;
 			break;
 		}
@@ -579,7 +584,25 @@ pmempool_info_part(struct pmem_info *pip, unsigned repn, unsigned partn, int v)
 	outv_field(v, "size", "%s", out_get_size_str((size_t)size,
 			pip->args.human));
 
+	/* get alignment of device dax */
+	if (is_dev_dax) {
+		size_t alignment = util_file_device_dax_alignment(path);
+		outv_field(v, "alignment", "%s", out_get_size_str(alignment,
+				pip->args.human));
+	}
+
 	return 0;
+}
+
+/*
+ * pmempool_info_directory -- (internal) print information about directory
+ */
+static void
+pmempool_info_directory(struct pool_set_directory *d,
+	int v)
+{
+	outv(v, "Directory %s:\n", d->path);
+	outv_field(v, "reservation size", "%lu", d->resvsize);
 }
 
 /*
@@ -607,6 +630,15 @@ pmempool_info_replica(struct pmem_info *pip, unsigned repn, int v)
 			return -1;
 	}
 
+	if (pip->pfile->poolset->directory_based) {
+		size_t nd = VEC_SIZE(&rep->directory);
+		outv(v, "%lu %s:\n", nd, nd == 1 ? "Directory" : "Directories");
+		struct pool_set_directory *d;
+		VEC_FOREACH_BY_PTR(d, &rep->directory) {
+			pmempool_info_directory(d, v);
+		}
+	}
+
 	return 0;
 }
 
@@ -617,12 +649,22 @@ static int
 pmempool_info_poolset(struct pmem_info *pip, int v)
 {
 	ASSERTeq(pip->params.is_poolset, 1);
-	outv(v, "Poolset structure:\n");
+	if (pip->pfile->poolset->directory_based)
+		outv(v, "Directory-based Poolset structure:\n");
+	else
+		outv(v, "Poolset structure:\n");
+
 	outv_field(v, "Number of replicas", "%u",
 			pip->pfile->poolset->nreplicas);
 	for (unsigned r = 0; r < pip->pfile->poolset->nreplicas; ++r) {
 		if (pmempool_info_replica(pip, r, v))
 			return -1;
+	}
+
+	if (pip->pfile->poolset->options > 0) {
+		outv_title(v, "Poolset options");
+		if (pip->pfile->poolset->options & OPTION_SINGLEHDR)
+			outv(v, "%s", "SINGLEHDR\n");
 	}
 
 	return 0;
@@ -641,7 +683,7 @@ pmempool_info_pool_hdr(struct pmem_info *pip, int v)
 		"  long",
 		"  long long",
 		"  size_t",
-		"  off_t",
+		"  os_off_t",
 		"  float",
 		"  double",
 		"  long double",
@@ -662,11 +704,7 @@ pmempool_info_pool_hdr(struct pmem_info *pip, int v)
 	}
 
 	struct arch_flags arch_flags;
-	if (util_get_arch_flags(&arch_flags)) {
-		outv_err("cannot read architecture flags\n");
-		free(hdr);
-		return -1;
-	}
+	util_get_arch_flags(&arch_flags);
 
 	outv_title(v, "POOL Header");
 	outv_hexdump(pip->args.vhdrdump, hdr, sizeof(*hdr), 0, 1);
@@ -678,7 +716,8 @@ pmempool_info_pool_hdr(struct pmem_info *pip, int v)
 			pip->params.is_part ?
 			" [part file]" : "");
 	outv_field(v, "Major", "%d", hdr->major);
-	outv_field(v, "Mandatory features", "0x%x", hdr->incompat_features);
+	outv_field(v, "Mandatory features", "%s",
+			out_get_incompat_features_str(hdr->incompat_features));
 	outv_field(v, "Not mandatory features", "0x%x", hdr->compat_features);
 	outv_field(v, "Forced RO", "0x%x", hdr->ro_compat_features);
 	outv_field(v, "Pool set UUID", "%s",
@@ -719,14 +758,15 @@ pmempool_info_pool_hdr(struct pmem_info *pip, int v)
 	}
 
 	outv_field(v, "Class", "%s",
-			out_get_ei_class_str(hdr->arch_flags.ei_class));
+			out_get_arch_machine_class_str(
+				hdr->arch_flags.machine_class));
 	outv_field(v, "Data", "%s",
-			out_get_ei_data_str(hdr->arch_flags.ei_data));
+			out_get_arch_data_str(hdr->arch_flags.data));
 	outv_field(v, "Machine", "%s",
-			out_get_e_machine_str(hdr->arch_flags.e_machine));
+			out_get_arch_machine_str(hdr->arch_flags.machine));
 
 	outv_field(v, "Checksum", "%s", out_get_checksum(hdr, sizeof(*hdr),
-				&hdr->checksum));
+			&hdr->checksum, POOL_HDR_CSUM_END_OFF));
 
 	free(hdr);
 

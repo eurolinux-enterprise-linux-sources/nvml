@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -55,6 +55,7 @@
 #include "os_thread.h"
 #include "util.h"
 #include "uuid.h"
+#include "set.h"
 
 /*
  * rpmemd -- rpmem handle
@@ -157,7 +158,7 @@ rpmemd_db_get_status(int err)
 		return RPMEM_ERR_NOEXIST;
 	case EWOULDBLOCK:
 		return RPMEM_ERR_BUSY;
-	case EBADR:
+	case EBADF:
 		return RPMEM_ERR_BADNAME;
 	case EINVAL:
 		return RPMEM_ERR_POOL_CFG;
@@ -180,7 +181,7 @@ rpmemd_check_pool(struct rpmemd *rpmemd, const struct rpmem_req_attr *req,
 		return -1;
 	}
 
-	if (rpmemd->pool->pool_size - POOL_HDR_SIZE < req->pool_size) {
+	if (rpmemd->pool->pool_size < req->pool_size) {
 		RPMEMD_LOG(ERR, "requested size is too big");
 		*status = RPMEM_ERR_BADSIZE;
 		return -1;
@@ -190,14 +191,24 @@ rpmemd_check_pool(struct rpmemd *rpmemd, const struct rpmem_req_attr *req,
 }
 
 /*
+ * rpmemd_deep_persist -- perform deep persist operation
+ */
+static int
+rpmemd_deep_persist(const void *addr, size_t size, void *ctx)
+{
+	struct rpmemd *rpmemd = (struct rpmemd *)ctx;
+	return util_replica_deep_persist(addr, size, rpmemd->pool->set, 0);
+}
+
+/*
  * rpmemd_common_fip_init -- initialize fabric provider
  */
 static int
 rpmemd_common_fip_init(struct rpmemd *rpmemd, const struct rpmem_req_attr *req,
 	struct rpmem_resp_attr *resp, int *status)
 {
-	void *addr = (void *)((uintptr_t)rpmemd->pool->pool_addr +
-			POOL_HDR_SIZE);
+	/* register the whole pool with header in RDMA */
+	void *addr = (void *)((uintptr_t)rpmemd->pool->pool_addr);
 	struct rpmemd_fip_attr fip_attr = {
 		.addr		= addr,
 		.size		= req->pool_size,
@@ -205,6 +216,8 @@ rpmemd_common_fip_init(struct rpmemd *rpmemd, const struct rpmem_req_attr *req,
 		.nthreads	= rpmemd->nthreads,
 		.provider	= req->provider,
 		.persist_method = rpmemd->persist_method,
+		.deep_persist	= rpmemd_deep_persist,
+		.ctx		= rpmemd
 	};
 
 	const int is_pmem = rpmemd_db_pool_is_pmem(rpmemd->pool);
@@ -234,10 +247,11 @@ err_fip_init:
 static void
 rpmemd_print_req_attr(const struct rpmem_req_attr *req)
 {
-	RPMEMD_LOG(NOTICE, "\tpool descriptor: '%s'", _str(req->pool_desc));
-	RPMEMD_LOG(NOTICE, "\tpool size: %lu", req->pool_size);
-	RPMEMD_LOG(NOTICE, "\tnlanes: %u", req->nlanes);
-	RPMEMD_LOG(NOTICE, "\tprovider: %s",
+	RPMEMD_LOG(NOTICE, RPMEMD_LOG_INDENT "pool descriptor: '%s'",
+			_str(req->pool_desc));
+	RPMEMD_LOG(NOTICE, RPMEMD_LOG_INDENT "pool size: %lu", req->pool_size);
+	RPMEMD_LOG(NOTICE, RPMEMD_LOG_INDENT "nlanes: %u", req->nlanes);
+	RPMEMD_LOG(NOTICE, RPMEMD_LOG_INDENT "provider: %s",
 			rpmem_provider_to_str(req->provider));
 }
 
@@ -247,16 +261,27 @@ rpmemd_print_req_attr(const struct rpmem_req_attr *req)
 static void
 rpmemd_print_pool_attr(const struct rpmem_pool_attr *attr)
 {
-	RPMEMD_LOG(INFO, "\tsignature: '%s'", _str(attr->signature));
-	RPMEMD_LOG(INFO, "\tmajor: %u", attr->major);
-	RPMEMD_LOG(INFO, "\tcompat_features: 0x%x", attr->compat_features);
-	RPMEMD_LOG(INFO, "\tincompat_features: 0x%x", attr->incompat_features);
-	RPMEMD_LOG(INFO, "\tro_compat_features: 0x%x",
-			attr->ro_compat_features);
-	RPMEMD_LOG(INFO, "\tpoolset_uuid: %s", uuid2str(attr->poolset_uuid));
-	RPMEMD_LOG(INFO, "\tuuid: %s", uuid2str(attr->uuid));
-	RPMEMD_LOG(INFO, "\tnext_uuid: %s", uuid2str(attr->next_uuid));
-	RPMEMD_LOG(INFO, "\tprev_uuid: %s", uuid2str(attr->prev_uuid));
+	if (attr == NULL) {
+		RPMEMD_LOG(INFO, RPMEMD_LOG_INDENT "NULL");
+	} else {
+		RPMEMD_LOG(INFO, RPMEMD_LOG_INDENT "signature: '%s'",
+				_str(attr->signature));
+		RPMEMD_LOG(INFO, RPMEMD_LOG_INDENT "major: %u", attr->major);
+		RPMEMD_LOG(INFO, RPMEMD_LOG_INDENT "compat_features: 0x%x",
+				attr->compat_features);
+		RPMEMD_LOG(INFO, RPMEMD_LOG_INDENT "incompat_features: 0x%x",
+				attr->incompat_features);
+		RPMEMD_LOG(INFO, RPMEMD_LOG_INDENT "ro_compat_features: 0x%x",
+				attr->ro_compat_features);
+		RPMEMD_LOG(INFO, RPMEMD_LOG_INDENT "poolset_uuid: %s",
+				uuid2str(attr->poolset_uuid));
+		RPMEMD_LOG(INFO, RPMEMD_LOG_INDENT "uuid: %s",
+				uuid2str(attr->uuid));
+		RPMEMD_LOG(INFO, RPMEMD_LOG_INDENT "next_uuid: %s",
+				uuid2str(attr->next_uuid));
+		RPMEMD_LOG(INFO, RPMEMD_LOG_INDENT "prev_uuid: %s",
+			uuid2str(attr->prev_uuid));
+	}
 }
 
 /*
@@ -265,11 +290,11 @@ rpmemd_print_pool_attr(const struct rpmem_pool_attr *attr)
 static void
 rpmemd_print_resp_attr(const struct rpmem_resp_attr *attr)
 {
-	RPMEMD_LOG(NOTICE, "\tport: %u", attr->port);
-	RPMEMD_LOG(NOTICE, "\trkey: 0x%lx", attr->rkey);
-	RPMEMD_LOG(NOTICE, "\traddr: 0x%lx", attr->raddr);
-	RPMEMD_LOG(NOTICE, "\tnlanes: %u", attr->nlanes);
-	RPMEMD_LOG(NOTICE, "\tpersist method: %s",
+	RPMEMD_LOG(NOTICE, RPMEMD_LOG_INDENT "port: %u", attr->port);
+	RPMEMD_LOG(NOTICE, RPMEMD_LOG_INDENT "rkey: 0x%lx", attr->rkey);
+	RPMEMD_LOG(NOTICE, RPMEMD_LOG_INDENT "raddr: 0x%lx", attr->raddr);
+	RPMEMD_LOG(NOTICE, RPMEMD_LOG_INDENT "nlanes: %u", attr->nlanes);
+	RPMEMD_LOG(NOTICE, RPMEMD_LOG_INDENT "persist method: %s",
 			rpmem_persist_method_to_str(attr->persist_method));
 }
 
@@ -330,7 +355,7 @@ rpmemd_fip_stop_thread(struct rpmemd *rpmemd)
 {
 	RPMEMD_ASSERT(rpmemd->fip_running);
 	void *tret;
-	errno = os_thread_join(rpmemd->fip_thread, &tret);
+	errno = os_thread_join(&rpmemd->fip_thread, &tret);
 	if (errno)
 		RPMEMD_LOG(ERR, "!waiting for in-band thread");
 
@@ -591,7 +616,7 @@ err_pool_opened:
  * rpmemd_req_close -- handle close request
  */
 static int
-rpmemd_req_close(struct rpmemd_obc *obc, void *arg)
+rpmemd_req_close(struct rpmemd_obc *obc, void *arg, int flags)
 {
 	RPMEMD_ASSERT(arg != NULL);
 	RPMEMD_LOG(NOTICE, "close request");
@@ -617,7 +642,8 @@ rpmemd_req_close(struct rpmemd_obc *obc, void *arg)
 		rpmemd_fip_fini(rpmemd->fip);
 	}
 
-	int remove = rpmemd->created && status;
+	int remove = rpmemd->created &&
+			(status || (flags & RPMEM_CLOSE_FLAGS_REMOVE));
 	if (rpmemd_close_pool(rpmemd, remove))
 		RPMEMD_LOG(ERR, "closing pool failed");
 
@@ -683,11 +709,12 @@ rpmemd_print_info(struct rpmemd *rpmemd)
 			_str(os_getenv("SSH_CONNECTION")));
 	RPMEMD_LOG(NOTICE, "user: %s", _str(os_getenv("USER")));
 	RPMEMD_LOG(NOTICE, "configuration");
-	RPMEMD_LOG(NOTICE, "\tpool set directory: '%s'",
+	RPMEMD_LOG(NOTICE, RPMEMD_LOG_INDENT "pool set directory: '%s'",
 			_str(rpmemd->config.poolset_dir));
-	RPMEMD_LOG(NOTICE, "\tpersist method: %s",
+	RPMEMD_LOG(NOTICE, RPMEMD_LOG_INDENT "persist method: %s",
 			rpmem_persist_method_to_str(rpmemd->persist_method));
-	RPMEMD_LOG(NOTICE, "\tnumber of threads: %lu", rpmemd->nthreads);
+	RPMEMD_LOG(NOTICE, RPMEMD_LOG_INDENT "number of threads: %lu",
+			rpmemd->nthreads);
 	RPMEMD_DBG("\tpersist APM: %s",
 		bool2str(rpmemd->config.persist_apm));
 	RPMEMD_DBG("\tpersist GPSPM: %s",

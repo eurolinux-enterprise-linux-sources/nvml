@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -174,7 +174,7 @@ btt_data_write(PMEMpoolcheck *ppc, location *loc)
 
 			util_checksum(&arenap->btt_info,
 					sizeof(arenap->btt_info),
-					&arenap->btt_info.checksum, 1);
+				&arenap->btt_info.checksum, 1, 0);
 		}
 
 		if (pool_write(ppc->pool, &arenap->btt_info,
@@ -209,6 +209,28 @@ error:
 	return -1;
 }
 
+
+/*
+ * cto_write -- (internal) write all structures for pmemcto pool
+ */
+static int
+cto_write(PMEMpoolcheck *ppc, location *loc)
+{
+	LOG(3, NULL);
+
+	if (CHECK_WITHOUT_FIXING(ppc))
+		return 0;
+
+	if (pool_write(ppc->pool, &ppc->pool->hdr.cto,
+			sizeof(ppc->pool->hdr.cto), 0)) {
+		CHECK_INFO(ppc, "%s", ppc->path);
+		ppc->result = CHECK_RESULT_CANNOT_REPAIR;
+		return CHECK_ERR(ppc, "writing pmemcto structure failed");
+	}
+
+	return 0;
+}
+
 struct step {
 	int (*func)(PMEMpoolcheck *, location *loc);
 	enum pool_type type;
@@ -222,6 +244,10 @@ static const struct step steps[] = {
 	{
 		.func		= blk_write,
 		.type		= POOL_TYPE_BLK,
+	},
+	{
+		.func		= cto_write,
+		.type		= POOL_TYPE_CTO,
 	},
 	{
 		.func		= btt_data_write,

@@ -1,5 +1,5 @@
 #
-# Copyright 2016-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -37,8 +37,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "pmempool_info/TEST17"
-$Env:UNITTEST_NUM = "17"
 
 
 . ..\unittest\unittest.ps1
@@ -68,7 +66,7 @@ check_file $POOLSET
 remove_files $POOLS $REPS
 expect_normal_exit $PMEMPOOL create obj --layout pmempool$Env:SUFFIX $POOLSET
 expect_normal_exit $PMEMPOOL info $POOL1 >> $LOG
-expect_normal_exit $PMEMPOOL info $POOL1 >> $LOG
+expect_normal_exit $PMEMPOOL info $POOL2 >> $LOG
 expect_normal_exit $PMEMPOOL info $REPL1 >> $LOG
 expect_normal_exit $PMEMPOOL info $REPL2 >> $LOG
 

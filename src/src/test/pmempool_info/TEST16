@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -33,8 +33,6 @@
 #
 # pmempool_info/TEST16 -- test for info command
 #
-export UNITTEST_NAME=pmempool_info/TEST16
-export UNITTEST_NUM=16
 
 . ../unittest/unittest.sh
 
@@ -82,8 +80,8 @@ expect_normal_exit $PMEMPOOL$EXESUFFIX info $POOLSET >> $LOG
 rm -f $POOLS $REPS
 expect_normal_exit $PMEMPOOL$EXESUFFIX create obj --layout pmempool$SUFFIX $POOLREP
 expect_normal_exit $PMEMPOOL$EXESUFFIX info $POOLREP >> $LOG
-expect_normal_exit $PMEMPOOL$EXESUFFIX info --replica 0 $POOLREP | grep 'UUID' > $LOG_REP0
-expect_normal_exit $PMEMPOOL$EXESUFFIX info --replica 1 $POOLREP | grep 'UUID' > $LOG_REP1
+expect_normal_exit $PMEMPOOL$EXESUFFIX info --replica 0 $POOLREP | $GREP 'UUID' > $LOG_REP0
+expect_normal_exit $PMEMPOOL$EXESUFFIX info --replica 1 $POOLREP | $GREP 'UUID' > $LOG_REP1
 
 echo "DIFF" >> $LOG
 diff --normal $LOG_REP0 $LOG_REP1 >> $LOG || true

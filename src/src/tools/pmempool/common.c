@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -58,6 +58,7 @@
 #include "libpmemblk.h"
 #include "libpmemlog.h"
 #include "libpmemobj.h"
+#include "libpmemcto.h"
 #include "btt.h"
 #include "file.h"
 #include "os.h"
@@ -107,13 +108,13 @@ pmem_pool_checksum(const void *base_pool_addr)
 		memcpy(&bttinfo, sec_page_addr, sizeof(bttinfo));
 		btt_info_convert2h(&bttinfo);
 		return util_checksum(&bttinfo, sizeof(bttinfo),
-				&bttinfo.checksum, 0);
+			&bttinfo.checksum, 0, 0);
 	} else {
 		/* it's not btt device - first page contains header */
 		struct pool_hdr hdrp;
 		memcpy(&hdrp, base_pool_addr, sizeof(hdrp));
 		return util_checksum(&hdrp, sizeof(hdrp),
-				&hdrp.checksum, 0);
+			&hdrp.checksum, 0, POOL_HDR_CSUM_END_OFF);
 	}
 }
 
@@ -129,6 +130,8 @@ pmem_pool_type_parse_hdr(const struct pool_hdr *hdrp)
 		return PMEM_POOL_TYPE_BLK;
 	else if (memcmp(hdrp->signature, OBJ_HDR_SIG, POOL_HDR_SIG_LEN) == 0)
 		return PMEM_POOL_TYPE_OBJ;
+	else if (memcmp(hdrp->signature, CTO_HDR_SIG, POOL_HDR_SIG_LEN) == 0)
+		return PMEM_POOL_TYPE_CTO;
 	else
 		return PMEM_POOL_TYPE_UNKNOWN;
 }
@@ -147,6 +150,8 @@ pmem_pool_type_parse_str(const char *str)
 		return PMEM_POOL_TYPE_OBJ;
 	} else if (strcmp(str, "btt") == 0) {
 		return PMEM_POOL_TYPE_BTT;
+	} else if (strcmp(str, "cto") == 0) {
+		return PMEM_POOL_TYPE_CTO;
 	} else {
 		return PMEM_POOL_TYPE_UNKNOWN;
 	}
@@ -156,13 +161,14 @@ pmem_pool_type_parse_str(const char *str)
  * util_validate_checksum -- validate checksum and return valid one
  */
 int
-util_validate_checksum(void *addr, size_t len, uint64_t *csum)
+util_validate_checksum(void *addr, size_t len, uint64_t *csum,
+	uint64_t skip_off)
 {
 	/* validate checksum */
-	int csum_valid = util_checksum(addr, len, csum, 0);
+	int csum_valid = util_checksum(addr, len, csum, 0, skip_off);
 	/* get valid one */
 	if (!csum_valid)
-		util_checksum(addr, len, csum, 1);
+		util_checksum(addr, len, csum, 1, skip_off);
 	return csum_valid;
 }
 
@@ -487,7 +493,7 @@ int
 util_poolset_map(const char *fname, struct pool_set **poolset, int rdonly)
 {
 	if (util_is_poolset_file(fname) != 1) {
-		int ret = util_poolset_create_set(poolset, fname, 0, 0);
+		int ret = util_poolset_create_set(poolset, fname, 0, 0, true);
 		if (ret < 0) {
 			outv_err("cannot open pool set -- '%s'", fname);
 			return -1;
@@ -508,6 +514,7 @@ util_poolset_map(const char *fname, struct pool_set **poolset, int rdonly)
 		os_close(fd);
 		return -1;
 	}
+	set->ignore_sds = true;
 	os_close(fd);
 
 	/* read the pool header from first pool set file */
@@ -530,9 +537,6 @@ util_poolset_map(const char *fname, struct pool_set **poolset, int rdonly)
 		return -1;
 	}
 
-	/* get minimum size based on pool type for util_pool_open */
-	size_t minsize = pmem_pool_get_min_size(type);
-
 	/*
 	 * Just use one thread - there is no need for multi-threaded access
 	 * to remote pool.
@@ -544,11 +548,10 @@ util_poolset_map(const char *fname, struct pool_set **poolset, int rdonly)
 	 * from the first poolset file, these values are then compared with
 	 * the values from all headers of poolset files.
 	 */
-	if (util_pool_open(poolset, fname, rdonly, minsize,
-			hdr.signature, hdr.major,
-			hdr.compat_features,
-			hdr.incompat_features,
-			hdr.ro_compat_features, &nlanes)) {
+	struct pool_attr attr;
+	util_pool_hdr2attr(&attr, &hdr);
+	if (util_pool_open(poolset, fname, rdonly, 0 /* minpartsize */,
+			&attr, &nlanes, true, NULL)) {
 		outv_err("opening poolset failed\n");
 		return -1;
 	}
@@ -601,7 +604,7 @@ pmem_pool_parse_params(const char *fname, struct pmem_pool_params *paramsp,
 				goto out_close;
 			}
 		} else {
-			ret = util_poolset_create_set(&set, fname, 0, 0);
+			ret = util_poolset_create_set(&set, fname, 0, 0, true);
 			if (ret < 0) {
 				outv_err("cannot open pool set -- '%s'", fname);
 				ret = -1;
@@ -1220,7 +1223,7 @@ pool_set_file_open(const char *fname,
 			goto err_free_fname;
 		}
 
-		off_t seek_size = os_lseek(fd, 0, SEEK_END);
+		os_off_t seek_size = os_lseek(fd, 0, SEEK_END);
 		if (seek_size == -1) {
 			outv_err("lseek SEEK_END failed\n");
 			os_close(fd);
@@ -1240,7 +1243,8 @@ pool_set_file_open(const char *fname,
 				goto err_free_fname;
 		} else {
 			int ret = util_poolset_create_set(&file->poolset,
-				file->fname, 0, 0);
+				file->fname, 0, 0, true);
+
 			if (ret < 0) {
 				outv_err("cannot open pool set -- '%s'",
 					file->fname);
@@ -1302,7 +1306,7 @@ pool_set_file_read(struct pool_set_file *file, void *buff,
 		return -1;
 
 	if (file->fileio) {
-		ssize_t num = pread(file->fd, buff, nbytes, (off_t)off);
+		ssize_t num = pread(file->fd, buff, nbytes, (os_off_t)off);
 		if (num < (ssize_t)nbytes)
 			return -1;
 	} else {
@@ -1325,7 +1329,7 @@ pool_set_file_write(struct pool_set_file *file, void *buff,
 		return -1;
 
 	if (file->fileio) {
-		ssize_t num = pwrite(file->fd, buff, nbytes, (off_t)off);
+		ssize_t num = pwrite(file->fd, buff, nbytes, (os_off_t)off);
 		if (num < (ssize_t)nbytes)
 			return -1;
 	} else {

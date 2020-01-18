@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 # Copyright (c) 2016, Microsoft Corporation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -39,8 +39,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "traces/TEST4"
-$Env:UNITTEST_NUM = "4"
 
 
 # standard unit test setup
@@ -53,7 +51,7 @@ require_build_type debug
 
 setup
 
-$Env:TRACE_LOG_LEVEL = "3"
+$Env:UT_LOG_LEVEL = "3"
 # NOTE: Any test that need to redirect stderr could follow the below syntax:
 #   1. primarily to avoid powershell converting the error strings to exception
 #      objects

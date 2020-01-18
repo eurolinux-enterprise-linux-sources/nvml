@@ -43,12 +43,24 @@
 
 static ut_jmp_buf_t Jmp;
 
+#ifndef _WIN32
+#include <unistd.h>
+#include <stdbool.h>
+static bool is_done;
+#endif
+
 /*
  * signal_handler -- called on SIGSEGV
  */
 static void
 signal_handler(int sig)
 {
+#ifndef _WIN32
+	/* Ignore signals from jemalloc destructor */
+	if (is_done)
+		_exit(0);
+#endif
+
 	UT_OUT("\tsignal: %s", os_strsignal(sig));
 	ut_siglongjmp(Jmp);
 }
@@ -74,6 +86,7 @@ main(int argc, char *argv[])
 	if (ptr == NULL)
 		UT_ERR("!vmem_malloc");
 	vmem_delete(vmp);
+	ASAN_POISON_MEMORY_REGION(vmp, sizeof(vmp));
 
 	/* arrange to catch SEGV */
 	struct sigaction v;
@@ -178,6 +191,12 @@ main(int argc, char *argv[])
 			break;
 		}
 	}
+
+	MUNMAP(mem_pool, VMEM_MIN_POOL);
+
+#ifndef _WIN32
+	is_done = true;
+#endif
 
 	DONE(NULL);
 }

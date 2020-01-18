@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2016-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -47,6 +47,8 @@
 # Docker Hub.
 #
 
+set -e
+
 if [[ "$TRAVIS_EVENT_TYPE" != "cron" && "$TRAVIS_BRANCH" != "coverity_scan" \
 	&& "$COVERITY" -eq 1 ]]; then
 	echo "INFO: Skip Coverity scan job if build is triggered neither by " \
@@ -62,13 +64,13 @@ fi
 
 if [[ -z "$HOST_WORKDIR" ]]; then
 	echo "ERROR: The variable HOST_WORKDIR has to contain a path to " \
-		"the root of the nvml project on the host machine"
+		"the root of the PMDK project on the host machine"
 	exit 1
 fi
 
 # TRAVIS_COMMIT_RANGE is usually invalid for force pushes - ignore such values
 # when used with non-upstream repository
-if [ -n "$TRAVIS_COMMIT_RANGE" -a $TRAVIS_REPO_SLUG != "pmem/nvml" ]; then
+if [ -n "$TRAVIS_COMMIT_RANGE" -a $TRAVIS_REPO_SLUG != "pmem/pmdk" ]; then
 	if ! git rev-list $TRAVIS_COMMIT_RANGE; then
 		TRAVIS_COMMIT_RANGE=
 	fi
@@ -106,11 +108,11 @@ for file in $files; do
 		popd
 
 		# Check if the image has to be pushed to Docker Hub
-		# (i.e. the build is triggered by commits to the pmem/nvml
+		# (i.e. the build is triggered by commits to the pmem/pmdk
 		# repository's master branch, and the Travis build is not
 		# of the "pull_request" type). In that case, create the empty
 		# file.
-		if [[ $TRAVIS_REPO_SLUG == "pmem/nvml" \
+		if [[ $TRAVIS_REPO_SLUG == "pmem/pmdk" \
 			&& $TRAVIS_BRANCH == "master" \
 			&& $TRAVIS_EVENT_TYPE != "pull_request" ]]
 		then
@@ -125,4 +127,4 @@ done
 
 # Getting here means rebuilding the Docker image is not required.
 # Pull the image from Docker Hub.
-docker pull pmem/nvml:${OS}-${OS_VER}
+docker pull pmem/pmdk:${OS}-${OS_VER}

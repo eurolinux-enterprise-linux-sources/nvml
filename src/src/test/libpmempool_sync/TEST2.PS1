@@ -1,5 +1,5 @@
 #
-# Copyright 2016-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -39,8 +39,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "libpmempool_sync/TEST2"
-$Env:UNITTEST_NUM = "2"
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
@@ -76,12 +74,12 @@ rm $DIR\part10 -Force -ea si
 
 # Try to synchronize replicas
 $FLAGS = "1" # invalid flag
-expect_abnormal_exit $Env:EXE_DIR\libpmempool_sync$Env:EXESUFFIX `
+expect_normal_exit $Env:EXE_DIR\libpmempool_sync$Env:EXESUFFIX `
 	$POOLSET $FLAGS
 cat -Encoding Ascii $LOG | out-file -append -encoding ascii -literalpath $LOG_TEMP
 
 $FLAGS = "1024"
-expect_abnormal_exit $Env:EXE_DIR\libpmempool_sync$Env:EXESUFFIX `
+expect_normal_exit $Env:EXE_DIR\libpmempool_sync$Env:EXESUFFIX `
 	$POOLSET $FLAGS
 cat -Encoding Ascii $LOG | out-file -append -encoding ascii -literalpath $LOG_TEMP
 

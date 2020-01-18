@@ -1,5 +1,5 @@
 #
-# Copyright 2015-2017, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -30,7 +30,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 #
-# src/test/obj_basic_integration/TEST3 -- unit test for
+# src/test/obj_basic_integration/TEST4 -- unit test for
 # pmemobj APIs
 #
 [CmdletBinding(PositionalBinding=$false)]
@@ -38,8 +38,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "obj_basic_integration\TEST4"
-$Env:UNITTEST_NUM = "4"
 
 
 # standard unit test setup

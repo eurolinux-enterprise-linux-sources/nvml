@@ -1,4 +1,4 @@
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -35,28 +35,16 @@
 LIBRARY_NAME = pmemobj
 LIBRARY_SO_VERSION = 1
 LIBRARY_VERSION = 0.0
-SOURCE =\
-	$(COMMON)/file.c\
-	$(COMMON)/file_linux.c\
-	$(COMMON)/mmap.c\
-	$(COMMON)/mmap_linux.c\
-	$(COMMON)/os_linux.c\
-	$(COMMON)/os_thread_linux.c\
-	$(COMMON)/out.c\
-	$(COMMON)/pool_hdr.c\
-	$(COMMON)/pool_hdr_linux.c\
-	$(COMMON)/set.c\
-	$(COMMON)/util.c\
-	$(COMMON)/uuid.c\
-	$(COMMON)/uuid_linux.c\
-	$(COMMON)/util_linux.c\
+
+include ../common/pmemcommon.inc
+
+SOURCE +=\
 	alloc_class.c\
 	bucket.c\
-	container_ctree.c\
+	container_ravl.c\
 	container_seglists.c\
 	ctl.c\
 	ctl_global.c\
-	ctree.c\
 	cuckoo.c\
 	heap.c\
 	lane.c\
@@ -68,14 +56,16 @@ SOURCE =\
 	palloc.c\
 	pmalloc.c\
 	pvector.c\
+	ravl.c\
 	recycler.c\
 	redo.c\
 	ringbuf.c\
 	sync.c\
-	tx.c
+	tx.c\
+	stats.c
 
 include ../Makefile.inc
 
 CFLAGS += -DUSE_LIBDL -D_PMEMOBJ_INTRNL
 
-LIBS += -pthread -lpmem -ldl
+LIBS += -pthread -lpmem $(LIBDL) $(LIBNDCTL)

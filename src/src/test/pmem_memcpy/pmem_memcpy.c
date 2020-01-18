@@ -112,14 +112,14 @@ do_memcpy(int fd, char *dest, int dest_off, char *src, int src_off,
 
 	/* memcmp will validate that what I expect in memory. */
 	if (memcmp(src + src_off, dest + dest_off, bytes / 2))
-		UT_ERR("%s: first %zu bytes do not match",
+		UT_FATAL("%s: first %zu bytes do not match",
 			file_name, bytes / 2);
 
 	/* Now validate the contents of the file */
-	LSEEK(fd, (off_t)dest_off, SEEK_SET);
+	LSEEK(fd, (os_off_t)dest_off, SEEK_SET);
 	if (READ(fd, buf, bytes / 2) == bytes / 2) {
 		if (memcmp(src + src_off, buf, bytes / 2))
-			UT_ERR("%s: first %zu bytes do not match",
+			UT_FATAL("%s: first %zu bytes do not match",
 				file_name, bytes / 2);
 	}
 
@@ -132,12 +132,21 @@ main(int argc, char *argv[])
 	int fd;
 	char *dest;
 	char *src;
+	char *dest_orig;
+	char *src_orig;
 	size_t mapped_len;
-
-	START(argc, argv, "pmem_memcpy");
 
 	if (argc != 5)
 		UT_FATAL("usage: %s file srcoff destoff length", argv[0]);
+
+	const char *thr = getenv("PMEM_MOVNT_THRESHOLD");
+	const char *avx = getenv("PMEM_AVX");
+	const char *avx512f = getenv("PMEM_AVX512F");
+
+	START(argc, argv, "pmem_memcpy %s %s %s %s %savx %savx512f",
+			argv[2], argv[3], argv[4], thr ? thr : "default",
+			avx ? "" : "!",
+			avx512f ? "" : "!");
 
 	fd = OPEN(argv[1], O_RDWR);
 	int dest_off = atoi(argv[2]);
@@ -145,12 +154,12 @@ main(int argc, char *argv[])
 	size_t bytes = strtoul(argv[4], NULL, 0);
 
 	/* src > dst */
-	dest = pmem_map_file(argv[1], 0, 0, 0, &mapped_len, NULL);
+	dest_orig = dest = pmem_map_file(argv[1], 0, 0, 0, &mapped_len, NULL);
 	if (dest == NULL)
 		UT_FATAL("!could not map file: %s", argv[1]);
 
-	src = MMAP(dest + mapped_len, mapped_len, PROT_READ|PROT_WRITE,
-		MAP_SHARED|MAP_ANONYMOUS, -1, 0);
+	src_orig = src = MMAP(dest + mapped_len, mapped_len,
+			PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, -1, 0);
 	/*
 	 * Its very unlikely that src would not be > dest. pmem_map_file
 	 * chooses the first unused address >= 1TB, large
@@ -161,7 +170,7 @@ main(int argc, char *argv[])
 	if (src <= dest) {
 		swap_mappings(&dest, &src, mapped_len, fd);
 		if (src <= dest)
-			UT_ERR("cannot map files in memory order");
+			UT_FATAL("cannot map files in memory order");
 	}
 
 	memset(dest, 0, (2 * bytes));
@@ -173,13 +182,15 @@ main(int argc, char *argv[])
 	/* dest > src */
 	swap_mappings(&dest, &src, mapped_len, fd);
 
-	if (dest <= src) {
-		UT_ERR("cannot map files in memory order");
-	}
+	if (dest <= src)
+		UT_FATAL("cannot map files in memory order");
 
 	do_memcpy(fd, dest, dest_off, src, src_off, bytes, argv[1]);
-	MUNMAP(dest, mapped_len);
-	MUNMAP(src, mapped_len);
+
+	int ret = pmem_unmap(dest_orig, mapped_len);
+	UT_ASSERTeq(ret, 0);
+
+	MUNMAP(src_orig, mapped_len);
 
 	CLOSE(fd);
 

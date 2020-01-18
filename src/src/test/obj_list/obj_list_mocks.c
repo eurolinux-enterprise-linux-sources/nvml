@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,7 +34,9 @@
  * obj_list_mocks.c -- mocks for redo/lane/heap/obj modules
  */
 
+#include "valgrind_internal.h"
 #include "obj_list.h"
+#include "set.h"
 
 /*
  * pmem_drain_nop -- no operation for drain on non-pmem memory
@@ -119,10 +121,19 @@ FUNC_MOCK_RUN_DEFAULT
 
 	Pop = (PMEMobjpool *)addr;
 	Pop->addr = Pop;
-	Pop->size = size;
 	Pop->is_pmem = is_pmem;
 	Pop->rdonly = 0;
 	Pop->uuid_lo = 0x12345678;
+
+	VALGRIND_REMOVE_PMEM_MAPPING(&Pop->mutex_head,
+		sizeof(Pop->mutex_head));
+	VALGRIND_REMOVE_PMEM_MAPPING(&Pop->rwlock_head,
+		sizeof(Pop->rwlock_head));
+	VALGRIND_REMOVE_PMEM_MAPPING(&Pop->cond_head,
+		sizeof(Pop->cond_head));
+	Pop->mutex_head = NULL;
+	Pop->rwlock_head = NULL;
+	Pop->cond_head = NULL;
 
 	if (Pop->is_pmem) {
 		Pop->persist_local = pmem_persist;
@@ -141,7 +152,7 @@ FUNC_MOCK_RUN_DEFAULT
 	struct pmem_ops *p_ops = &Pop->p_ops;
 
 	Pop->heap_offset = HEAP_OFFSET;
-	Pop->heap_size = Pop->size - Pop->heap_offset;
+	Pop->heap_size = size - Pop->heap_offset;
 	uint64_t heap_offset = HEAP_OFFSET;
 
 	Heap_offset = (uint64_t *)((uintptr_t)Pop +
@@ -200,7 +211,8 @@ FUNC_MOCK_END
 FUNC_MOCK(pmemobj_close, void, PMEMobjpool *pop)
 	FUNC_MOCK_RUN_DEFAULT {
 		redo_log_config_delete(Pop->redo);
-		UT_ASSERTeq(pmem_unmap(Pop, Pop->size), 0);
+		UT_ASSERTeq(pmem_unmap(Pop,
+			Pop->heap_size + Pop->heap_offset), 0);
 		Pop = NULL;
 	}
 FUNC_MOCK_END
@@ -289,6 +301,15 @@ FUNC_MOCK(lane_recover_and_section_boot, int, PMEMobjpool *pop)
 		return Section_ops[LANE_SECTION_LIST]->recover(Pop,
 				Lane_section.layout,
 				sizeof(*Lane_section.layout));
+	}
+FUNC_MOCK_END
+
+/*
+ * lane_section_cleanup -- lane_section_cleanup mock
+ */
+FUNC_MOCK(lane_section_cleanup, int, PMEMobjpool *pop)
+	FUNC_MOCK_RUN_DEFAULT {
+		return 0;
 	}
 FUNC_MOCK_END
 

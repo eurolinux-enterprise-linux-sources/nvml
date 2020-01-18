@@ -66,7 +66,7 @@
 #define SIZEOF_TX_RANGE_META_V3 (16)
 #define SIZEOF_REDO_LOG_V3 (16)
 #define SIZEOF_LANE_LIST_LAYOUT_V3 (1024 - 8)
-#define SIZEOF_LANE_ALLOC_LAYOUT_V3 (10 * SIZEOF_REDO_LOG_V3)
+#define SIZEOF_LANE_ALLOC_LAYOUT_V3 (1024 - 16)
 #define SIZEOF_LANE_TX_LAYOUT_V3 (8 + (4 * SIZEOF_PVECTOR_V3))
 
 POBJ_LAYOUT_BEGIN(layout);
@@ -126,7 +126,7 @@ main(int argc, char *argv[])
 	ASSERT_ALIGNED_FIELD(struct heap_header, signature);
 	ASSERT_ALIGNED_FIELD(struct heap_header, major);
 	ASSERT_ALIGNED_FIELD(struct heap_header, minor);
-	ASSERT_ALIGNED_FIELD(struct heap_header, size);
+	ASSERT_ALIGNED_FIELD(struct heap_header, unused);
 	ASSERT_ALIGNED_FIELD(struct heap_header, chunksize);
 	ASSERT_ALIGNED_FIELD(struct heap_header, chunks_per_zone);
 	ASSERT_ALIGNED_FIELD(struct heap_header, reserved);

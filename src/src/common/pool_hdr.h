@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,12 +34,14 @@
  * pool_hdr.h -- internal definitions for pool header module
  */
 
-#ifndef NVML_POOL_HDR_H
-#define NVML_POOL_HDR_H 1
+#ifndef PMDK_POOL_HDR_H
+#define PMDK_POOL_HDR_H 1
 
+#include <stddef.h>
 #include <stdint.h>
+#include <unistd.h>
 #include "uuid.h"
-
+#include "shutdown_state.h"
 /*
  * Number of bits per type in alignment descriptor
  */
@@ -59,13 +61,13 @@
  * - long
  * - long long
  * - size_t
- * - off_t
+ * - os_off_t
  * - float
  * - double
  * - long double
  * - void *
  *
- * The alignment of each type is computer as an offset of field
+ * The alignment of each type is computed as an offset of field
  * of specific type in the following structure:
  * struct {
  *	char byte;
@@ -73,16 +75,33 @@
  * };
  *
  * The value is decremented by 1 and masked by 4 bits.
- * Multiple alignment are stored on consecutive 4 bits of each
- * type in order specified above.
+ * Multiple alignments are stored on consecutive 4 bits of each
+ * type in the order specified above.
+ *
+ * The values used in the machine, and machine_class fields are in
+ * principle independent of operating systems, and object formats.
+ * In practice they happen to match constants used in ELF object headers.
  */
 struct arch_flags {
 	uint64_t alignment_desc;	/* alignment descriptor */
-	uint8_t ei_class;		/* ELF format file class */
-	uint8_t ei_data;		/* ELF format data encoding */
+	uint8_t machine_class;		/* address size -- 64 bit or 32 bit */
+	uint8_t data;			/* data encoding -- LE or BE */
 	uint8_t reserved[4];
-	uint16_t e_machine;		/* required architecture */
+	uint16_t machine;		/* required architecture */
 };
+
+#define POOL_HDR_ARCH_LEN sizeof(struct arch_flags)
+
+/* possible values of the machine class field in the above struct */
+#define PMDK_MACHINE_CLASS_64 2 /* 64 bit pointers, 64 bit size_t */
+
+/* possible values of the machine field in the above struct */
+#define PMDK_MACHINE_X86_64 62
+#define PMDK_MACHINE_AARCH64 183
+
+/* possible values of the data field in the above struct */
+#define PMDK_DATA_LE 1 /* 2's complement, little endian */
+#define PMDK_DATA_BE 2 /* 2's complement, big endian */
 
 /*
  * header used at the beginning of all types of memory pools
@@ -91,6 +110,13 @@ struct arch_flags {
  * below are stored in little-endian byte order.
  */
 #define POOL_HDR_SIG_LEN 8
+
+
+/*
+ * defines the first not checksumed field - all fields after this will be
+ * ignored during checksum calculations
+ */
+#define POOL_HDR_CSUM_END_OFF offsetof(struct pool_hdr, unused2)
 
 struct pool_hdr {
 	char signature[POOL_HDR_SIG_LEN];
@@ -106,7 +132,10 @@ struct pool_hdr {
 	uuid_t next_repl_uuid; /* next replica */
 	uint64_t crtime;		/* when created (seconds since epoch) */
 	struct arch_flags arch_flags;	/* architecture identification flags */
-	unsigned char unused[3944];	/* must be zero */
+	unsigned char unused[1888];	/* must be zero */
+	/* not checksumed */
+	unsigned char unused2[1992];	/* must be zero */
+	struct shutdown_state sds;	/* shutdown status */
 	uint64_t checksum;		/* checksum of above fields */
 };
 
@@ -116,9 +145,8 @@ struct pool_hdr {
 
 void util_convert2le_hdr(struct pool_hdr *hdrp);
 void util_convert2h_hdr_nocheck(struct pool_hdr *hdrp);
-int util_convert_hdr(struct pool_hdr *hdrp);
-int util_convert_hdr_remote(struct pool_hdr *hdrp);
-int util_get_arch_flags(struct arch_flags *arch_flags);
+
+void util_get_arch_flags(struct arch_flags *arch_flags);
 int util_check_arch_flags(const struct arch_flags *arch_flags);
 
 int util_feature_check(struct pool_hdr *hdrp, uint32_t incompat,
@@ -142,5 +170,13 @@ int util_feature_check(struct pool_hdr *hdrp, uint32_t incompat,
 (alignment_desc_of(double)	<<  8 * ALIGNMENT_DESC_BITS) |\
 (alignment_desc_of(long double)	<<  9 * ALIGNMENT_DESC_BITS) |\
 (alignment_desc_of(void *)	<< 10 * ALIGNMENT_DESC_BITS)
+
+/*
+ * incompat features
+ */
+#define POOL_FEAT_SINGLEHDR	0x0001	/* pool header only in the first part */
+#define POOL_FEAT_CKSUM_2K	0x0002	/* only first 2K of hdr checksummed */
+
+#define POOL_FEAT_ALL	(POOL_FEAT_SINGLEHDR | POOL_FEAT_CKSUM_2K)
 
 #endif

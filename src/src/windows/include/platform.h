@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  * Copyright (c) 2016, Microsoft Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -44,23 +44,17 @@
 
 #pragma warning(disable : 4996)
 #pragma warning(disable : 4200) /* allow flexible array member */
+#pragma warning(disable : 4819) /* non unicode characteres */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Prevent NVML compilation for 32-bit platforms */
+/* Prevent PMDK compilation for 32-bit platforms */
 #if defined(_WIN32) && !defined(_WIN64)
-#error "32-bit builds of NVML are not supported!"
+#error "32-bit builds of PMDK are not supported!"
 #endif
 
-/*
- * Define off_t before windows.h is included!
- * XXX - make sure it has no side-effects
- */
-typedef long long off_t;	/* use 64-bit off_t */
-typedef long _off_t;		/* NOTE: _off_t must be defined as 'long'! */
-#define _OFF_T_DEFINED
 #define _CRT_RAND_S		/* rand_s() */
 
 #include <windows.h>
@@ -102,60 +96,6 @@ typedef long _off_t;		/* NOTE: _off_t must be defined as 'long'! */
 #define __builtin_constant_p(cnd) 0
 
 /*
- * atomics
- */
-
-__inline int
-__builtin_clzll(uint64_t val)
-{
-	DWORD lz = 0;
-
-	if (BitScanReverse64(&lz, val))
-		return 63 - (int)lz;
-	else
-		return 64;
-}
-
-__inline int
-__builtin_ffsll(long long val)
-{
-	unsigned long ret;
-	return _BitScanForward64(&ret, val) ? ret + 1 : 0;
-}
-
-#define __builtin_popcountll(val) __popcnt64(val)
-
-__inline uint32_t
-__sync_fetch_and_or(volatile uint32_t *a, uint32_t val)
-{
-	return InterlockedOr((LONG *)a, (LONG)val);
-}
-
-__inline uint64_t
-__sync_fetch_and_and(volatile uint64_t *a, uint64_t val)
-{
-	return InterlockedAnd64((LONG64 *)a, (LONG64)val);
-}
-
-__inline uint32_t
-__sync_fetch_and_add(volatile uint32_t *a, uint32_t val)
-{
-	return InterlockedExchangeAdd(a, val);
-}
-
-__inline uint64_t
-__sync_fetch_and_add64(volatile uint64_t *a, uint64_t val)
-{
-	return InterlockedExchangeAdd64((LONG64 *)a, (LONG64)val);
-}
-
-__inline void
-__sync_synchronize()
-{
-	MemoryBarrier();
-}
-
-/*
  * missing definitions
  */
 
@@ -176,6 +116,7 @@ typedef int mode_t;
 #define setlinebuf(fp) setvbuf(fp, NULL, _IOLBF, BUFSIZ);
 
 /* unistd.h */
+typedef long long os_off_t;
 typedef long long ssize_t;
 
 int setenv(const char *name, const char *value, int overwrite);
@@ -183,7 +124,7 @@ int unsetenv(const char *name);
 int rand_r(unsigned *seedp);
 
 /* fcntl.h */
-int posix_fallocate(int fd, off_t offset, off_t len);
+int posix_fallocate(int fd, os_off_t offset, os_off_t len);
 
 /* string.h */
 #define strtok_r strtok_s
@@ -282,4 +223,5 @@ MSVC_CONSTR(_##func##_reg)
 #ifdef __cplusplus
 }
 #endif
+
 #endif /* PLATFORM_H */

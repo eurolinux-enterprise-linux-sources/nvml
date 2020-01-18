@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,8 +34,8 @@
  * file.h -- internal definitions for file module
  */
 
-#ifndef NVML_FILE_H
-#define NVML_FILE_H 1
+#ifndef PMDK_FILE_H
+#define PMDK_FILE_H 1
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -43,7 +43,8 @@ extern "C" {
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <dirent.h>
-
+#include <limits.h>
+#include "os.h"
 #ifdef _WIN32
 #define NAME_MAX _MAX_FNAME
 #endif
@@ -69,16 +70,17 @@ int util_file_dir_close(struct dir_handle *a);
 int util_file_dir_remove(const char *path);
 int util_file_is_device_dax(const char *path);
 int util_fd_is_device_dax(int fd);
+int util_ddax_region_find(const char *path);
 ssize_t util_file_get_size(const char *path);
 size_t util_file_device_dax_alignment(const char *path);
 void *util_file_map_whole(const char *path);
-int util_file_zero(const char *path, off_t off, size_t len);
+int util_file_zero(const char *path, os_off_t off, size_t len);
 ssize_t util_file_pread(const char *path, void *buffer, size_t size,
-	off_t offset);
+	os_off_t offset);
 ssize_t util_file_pwrite(const char *path, const void *buffer, size_t size,
-	off_t offset);
+	os_off_t offset);
 
-int util_tmpfile(const char *dir, const char *templ);
+int util_tmpfile(const char *dir, const char *templ, int flags);
 int util_is_absolute_path(const char *path);
 
 int util_file_create(const char *path, size_t size, size_t minsize);

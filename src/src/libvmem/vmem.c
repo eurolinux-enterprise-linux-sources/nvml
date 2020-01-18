@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -52,11 +52,15 @@
 #include "file.h"
 #include "vmem.h"
 
+#include "valgrind_internal.h"
+
 /*
  * private to this file...
  */
 static size_t Header_size;
 static os_mutex_t Vmem_init_lock;
+static os_mutex_t Pool_lock; /* guards vmem_create and vmem_delete */
+
 /*
  * print_jemalloc_messages -- custom print function, for jemalloc
  *
@@ -81,12 +85,12 @@ print_jemalloc_stats(void *ignore, const char *s)
 }
 
 /*
- * vmem_init -- initialization for vmem
+ * vmem_construct -- initialization for vmem
  *
  * Called automatically by the run-time loader or on the first use of vmem.
  */
 void
-vmem_init(void)
+vmem_construct(void)
 {
 	static bool initialized = false;
 
@@ -116,16 +120,17 @@ vmem_init(void)
 }
 
 /*
- * vmem_construct -- load-time initialization for vmem
+ * vmem_init -- load-time initialization for vmem
  *
  * Called automatically by the run-time loader.
  */
 ATTR_CONSTRUCTOR
 void
-vmem_construct(void)
+vmem_init(void)
 {
-	os_mutex_init(&Vmem_init_lock);
-	vmem_init();
+	util_mutex_init(&Vmem_init_lock);
+	util_mutex_init(&Pool_lock);
+	vmem_construct();
 }
 
 /*
@@ -138,7 +143,12 @@ void
 vmem_fini(void)
 {
 	LOG(3, NULL);
-	os_mutex_destroy(&Vmem_init_lock);
+	util_mutex_destroy(&Pool_lock);
+	util_mutex_destroy(&Vmem_init_lock);
+
+	/* set up jemalloc messages back to stderr */
+	je_vmem_malloc_message = NULL;
+
 	common_fini();
 }
 
@@ -151,7 +161,7 @@ static inline
 VMEM *
 vmem_createU(const char *dir, size_t size)
 {
-	vmem_init();
+	vmem_construct();
 
 	LOG(3, "dir \"%s\" size %zu", dir, size);
 	if (size < VMEM_MIN_POOL) {
@@ -162,15 +172,22 @@ vmem_createU(const char *dir, size_t size)
 
 	int is_dev_dax = util_file_is_device_dax(dir);
 
+	util_mutex_lock(&Pool_lock);
+
 	/* silently enforce multiple of mapping alignment */
 	size = roundup(size, Mmap_align);
 	void *addr;
 	if (is_dev_dax) {
-		if ((addr = util_file_map_whole(dir)) == NULL)
+		if ((addr = util_file_map_whole(dir)) == NULL) {
+			util_mutex_unlock(&Pool_lock);
 			return NULL;
+		}
 	} else {
-		if ((addr = util_map_tmpfile(dir, size, 4 * MEGABYTE)) == NULL)
+		if ((addr = util_map_tmpfile(dir, size,
+					4 * MEGABYTE)) == NULL) {
+			util_mutex_unlock(&Pool_lock);
 			return NULL;
+		}
 	}
 
 	/* store opaque info at beginning of mapped area */
@@ -184,9 +201,11 @@ vmem_createU(const char *dir, size_t size)
 	/* Prepare pool for jemalloc */
 	if (je_vmem_pool_create((void *)((uintptr_t)addr + Header_size),
 			size - Header_size,
-			/* zeroed if */ !is_dev_dax) == NULL) {
+			/* zeroed if */ !is_dev_dax,
+			/* empty */ 1) == NULL) {
 		ERR("pool creation failed");
 		util_unmap(vmp->addr, vmp->size);
+		util_mutex_unlock(&Pool_lock);
 		return NULL;
 	}
 
@@ -199,9 +218,10 @@ vmem_createU(const char *dir, size_t size)
 	if (!is_dev_dax)
 		util_range_none(addr, sizeof(struct pool_hdr));
 
+	util_mutex_unlock(&Pool_lock);
+
 	LOG(3, "vmp %p", vmp);
 	return vmp;
-
 }
 
 #ifndef _WIN32
@@ -237,7 +257,7 @@ vmem_createW(const wchar_t *dir, size_t size)
 VMEM *
 vmem_create_in_region(void *addr, size_t size)
 {
-	vmem_init();
+	vmem_construct();
 	LOG(3, "addr %p size %zu", addr, size);
 
 	if (((uintptr_t)addr & (Pagesize - 1)) != 0) {
@@ -252,6 +272,13 @@ vmem_create_in_region(void *addr, size_t size)
 		return NULL;
 	}
 
+	/*
+	 * Initially, treat this memory region as undefined.
+	 * Once jemalloc initializes its metadata, it will also mark
+	 * registered free chunks (usable heap space) as unaddressable.
+	 */
+	VALGRIND_DO_MAKE_MEM_UNDEFINED(addr, size);
+
 	/* store opaque info at beginning of mapped area */
 	struct vmem *vmp = addr;
 	memset(&vmp->hdr, '\0', sizeof(vmp->hdr));
@@ -260,10 +287,14 @@ vmem_create_in_region(void *addr, size_t size)
 	vmp->size = size;
 	vmp->caller_mapped = 1;
 
+	util_mutex_lock(&Pool_lock);
+
 	/* Prepare pool for jemalloc */
 	if (je_vmem_pool_create((void *)((uintptr_t)addr + Header_size),
-				size - Header_size, 0) == NULL) {
+				size - Header_size, 0,
+				/* empty */ 1) == NULL) {
 		ERR("pool creation failed");
+		util_mutex_unlock(&Pool_lock);
 		return NULL;
 	}
 
@@ -277,6 +308,8 @@ vmem_create_in_region(void *addr, size_t size)
 	util_range_none(addr, sizeof(struct pool_hdr));
 #endif
 
+	util_mutex_unlock(&Pool_lock);
+
 	LOG(3, "vmp %p", vmp);
 	return vmp;
 }
@@ -289,18 +322,31 @@ vmem_delete(VMEM *vmp)
 {
 	LOG(3, "vmp %p", vmp);
 
+	util_mutex_lock(&Pool_lock);
+
 	int ret = je_vmem_pool_delete((pool_t *)((uintptr_t)vmp + Header_size));
 	if (ret != 0) {
 		ERR("invalid pool handle: 0x%" PRIxPTR, (uintptr_t)vmp);
 		errno = EINVAL;
+		util_mutex_unlock(&Pool_lock);
 		return;
 	}
+
 #ifndef _WIN32
 	util_range_rw(vmp->addr, sizeof(struct pool_hdr));
 #endif
 
-	if (vmp->caller_mapped == 0)
+	if (vmp->caller_mapped == 0) {
 		util_unmap(vmp->addr, vmp->size);
+	} else {
+		/*
+		 * The application cannot do any assumptions about the content
+		 * of this memory region once the pool is destroyed.
+		 */
+		VALGRIND_DO_MAKE_MEM_UNDEFINED(vmp->addr, vmp->size);
+	}
+
+	util_mutex_unlock(&Pool_lock);
 }
 
 /*
@@ -309,10 +355,16 @@ vmem_delete(VMEM *vmp)
 int
 vmem_check(VMEM *vmp)
 {
-	vmem_init();
+	vmem_construct();
 	LOG(3, "vmp %p", vmp);
 
-	return je_vmem_pool_check((pool_t *)((uintptr_t)vmp + Header_size));
+	util_mutex_lock(&Pool_lock);
+
+	int ret = je_vmem_pool_check((pool_t *)((uintptr_t)vmp + Header_size));
+
+	util_mutex_unlock(&Pool_lock);
+
+	return ret;
 }
 
 /*
@@ -433,11 +485,3 @@ vmem_malloc_usable_size(VMEM *vmp, void *ptr)
 	return je_vmem_pool_malloc_usable_size(
 			(pool_t *)((uintptr_t)vmp + Header_size), ptr);
 }
-
-#ifdef _MSC_VER
-/*
- * libvmem constructor/destructor functions
- */
-MSVC_CONSTR(vmem_construct)
-MSVC_DESTR(vmem_fini)
-#endif

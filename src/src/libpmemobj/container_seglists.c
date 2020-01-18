@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,9 +39,9 @@
  */
 
 #include "container_seglists.h"
-#include "ctree.h"
 #include "out.h"
 #include "sys_util.h"
+#include "util.h"
 #include "valgrind_internal.h"
 #include "queue.h"
 
@@ -81,11 +81,7 @@ container_seglists_insert_block(struct block_container *bc,
 	ASSERT(m->size_idx <= SEGLIST_BLOCK_LISTS);
 
 	struct seglist_entry *e = m->m_ops->get_user_data(m);
-#ifdef USE_VG_MEMCHECK
-	if (On_valgrind) {
-		VALGRIND_DO_MAKE_MEM_DEFINED(e, sizeof(*e));
-	}
-#endif
+	VALGRIND_DO_MAKE_MEM_DEFINED(e, sizeof(*e));
 
 	struct seglist_entry **last = c->blocks[m->size_idx - 1].stqh_last;
 
@@ -133,7 +129,7 @@ container_seglists_get_rm_block_bestfit(struct block_container *bc,
 		return ENOMEM;
 
 	/* finds the list that serves the smallest applicable size */
-	i = (uint32_t)__builtin_ffsll((long long)v) - 1;
+	i = util_lssb_index64(v);
 
 	struct seglist_entry *e = STAILQ_FIRST(&c->blocks[i]);
 	VALGRIND_ADD_TO_TX(e, sizeof(*e));
@@ -214,7 +210,7 @@ static struct block_container_ops container_seglists_ops = {
 };
 
 /*
- * container_new_seglists -- allocates and initializes a ctree container
+ * container_new_seglists -- allocates and initializes a seglists container
  */
 struct block_container *
 container_new_seglists(struct palloc_heap *heap)

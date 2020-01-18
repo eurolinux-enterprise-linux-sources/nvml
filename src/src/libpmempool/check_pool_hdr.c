@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -92,7 +92,8 @@ static int
 pool_hdr_valid(struct pool_hdr *hdrp)
 {
 	return !util_is_zeroed((void *)hdrp, sizeof(*hdrp)) &&
-		util_checksum(hdrp, sizeof(*hdrp), &hdrp->checksum, 0);
+		util_checksum(hdrp, sizeof(*hdrp), &hdrp->checksum, 0,
+			POOL_HDR_CSUM_END_OFF);
 }
 
 /*
@@ -105,6 +106,8 @@ pool_supported(enum pool_type type)
 	case POOL_TYPE_LOG:
 		return 1;
 	case POOL_TYPE_BLK:
+		return 1;
+	case POOL_TYPE_CTO:
 		return 1;
 	case POOL_TYPE_OBJ:
 	default:
@@ -168,7 +171,7 @@ pool_hdr_preliminary_check(PMEMpoolcheck *ppc, location *loc)
 	if (!pool_supported(ppc->pool->params.type)) {
 		ppc->result = CHECK_RESULT_CANNOT_REPAIR;
 		return CHECK_ERR(ppc, "the repair of %s pools is not supported",
-			check_get_pool_type_str(ppc->pool->params.type));
+			pool_get_pool_type_str(ppc->pool->params.type));
 	}
 
 	return 0;
@@ -422,7 +425,7 @@ pool_hdr_poolset_uuid_find(PMEMpoolcheck *ppc, location *loc)
 	uuid_t *common_puuid = loc->valid_puuid;
 	for (unsigned r = 0; r < nreplicas; r++) {
 		struct pool_replica *rep = REP(poolset, r);
-		for (unsigned p = 0; p < rep->nparts; p++) {
+		for (unsigned p = 0; p < rep->nhdrs; p++) {
 			struct pool_hdr *hdr = HDR(rep, p);
 
 			/*
@@ -795,7 +798,7 @@ pool_hdr_checksum_fix(PMEMpoolcheck *ppc, location *loc, uint32_t question,
 	switch (question) {
 	case Q_CHECKSUM:
 		util_checksum(&loc->hdr, sizeof(loc->hdr), &loc->hdr.checksum,
-			1);
+			1, POOL_HDR_CSUM_END_OFF);
 		CHECK_INFO(ppc, "%ssetting pool_hdr.checksum to 0x%jx",
 			loc->prefix, le64toh(loc->hdr.checksum));
 		break;
@@ -880,7 +883,7 @@ step_exe(PMEMpoolcheck *ppc, const struct step *steps, location *loc,
 	if (!check_has_answer(ppc->data))
 		return 0;
 
-	if (check_answer_loop(ppc, loc, NULL, step->fix))
+	if (check_answer_loop(ppc, loc, NULL, 1, step->fix))
 		return -1;
 
 	util_convert2le_hdr(&loc->hdr);
@@ -945,7 +948,7 @@ init_location_data(PMEMpoolcheck *ppc, location *loc)
 
 	if (!loc->valid_part_done || loc->valid_part_replica != loc->replica) {
 		loc->valid_part_hdrp = NULL;
-		for (unsigned p = 0; p < rep->nparts; ++p) {
+		for (unsigned p = 0; p < rep->nhdrs; ++p) {
 			if (pool_hdr_valid(HDR(rep, p))) {
 				loc->valid_part_hdrp = HDR(rep, p);
 				break;
@@ -969,7 +972,7 @@ check_pool_hdr(PMEMpoolcheck *ppc)
 
 	for (; loc->replica < nreplicas; loc->replica++) {
 		struct pool_replica *rep = poolset->replica[loc->replica];
-		for (; loc->part < rep->nparts; loc->part++) {
+		for (; loc->part < rep->nhdrs; loc->part++) {
 			init_location_data(ppc, loc);
 
 			/* do all checks */

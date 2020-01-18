@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -70,7 +70,7 @@ validate_args(struct pool_set *set)
 	 * (now replication works only for pmemobj pools)
 	 */
 	if (replica_check_part_sizes(set, PMEMOBJ_MIN_POOL)) {
-		ERR("part sizes check failed");
+		LOG(2, "part sizes check failed");
 		goto err;
 	}
 
@@ -78,7 +78,7 @@ validate_args(struct pool_set *set)
 	 * check if all directories for part files exist
 	 */
 	if (replica_check_part_dirs(set)) {
-		ERR("part directories check failed");
+		LOG(2, "part directories check failed");
 		goto err;
 	}
 
@@ -112,8 +112,7 @@ recreate_broken_parts(struct pool_set *set,
 			/* remove parts from broken replica */
 			if (!is_dry_run(flags)) {
 				if (replica_remove_part(set, r, p)) {
-					ERR("cannot remove part");
-					errno = EINVAL;
+					LOG(2, "cannot remove part");
 					return -1;
 				}
 			}
@@ -121,8 +120,7 @@ recreate_broken_parts(struct pool_set *set,
 			/* create removed part and open it */
 			if (util_part_open(&broken_r->part[p], 0,
 					!is_dry_run(flags))) {
-				ERR("cannot open/create parts");
-				errno = EINVAL;
+				LOG(2, "cannot open/create parts");
 				return -1;
 			}
 		}
@@ -141,7 +139,7 @@ fill_struct_part_uuids(struct pool_set *set, unsigned repn,
 	LOG(3, "set %p, repn %u, set_hs %p", set, repn, set_hs);
 	struct pool_replica *rep = REP(set, repn);
 	struct pool_hdr *hdrp;
-	for (unsigned p = 0; p < rep->nparts; ++p) {
+	for (unsigned p = 0; p < rep->nhdrs; ++p) {
 		/* skip broken parts */
 		if (replica_is_part_broken(repn, p, set_hs))
 			continue;
@@ -177,7 +175,7 @@ fill_struct_broken_part_uuids(struct pool_set *set, unsigned repn,
 			flags);
 	struct pool_replica *rep = REP(set, repn);
 	struct pool_hdr *hdrp;
-	for (unsigned p = 0; p < rep->nparts; ++p) {
+	for (unsigned p = 0; p < rep->nhdrs; ++p) {
 		/* skip unbroken parts */
 		if (!replica_is_part_broken(repn, p, set_hs))
 			continue;
@@ -193,12 +191,14 @@ fill_struct_broken_part_uuids(struct pool_set *set, unsigned repn,
 			continue;
 		}
 
-		if (!replica_is_part_broken(repn, p - 1, set_hs)) {
+		if (!replica_is_part_broken(repn, p - 1, set_hs) &&
+				!(set->options & OPTION_SINGLEHDR)) {
 			/* try to get part uuid from the previous part */
 			hdrp = HDRP(rep, p);
 			memcpy(rep->part[p].uuid, hdrp->next_part_uuid,
 					POOL_HDR_UUID_LEN);
-		} else if (!replica_is_part_broken(repn, p + 1, set_hs)) {
+		} else if (!replica_is_part_broken(repn, p + 1, set_hs) &&
+				!(set->options & OPTION_SINGLEHDR)) {
 			/* try to get part uuid from the next part */
 			hdrp = HDRN(rep, p);
 			memcpy(rep->part[p].uuid, hdrp->prev_part_uuid,
@@ -284,17 +284,14 @@ create_headers_for_broken_parts(struct pool_set *set, unsigned src_replica,
 		if (!replica_is_replica_broken(r, set_hs))
 			continue;
 
-		for (unsigned p = 0; p < set_hs->replica[r]->nparts; p++) {
+		for (unsigned p = 0; p < set_hs->replica[r]->nhdrs; p++) {
 			/* skip unbroken parts */
 			if (!replica_is_part_broken(r, p, set_hs))
 				continue;
 
-			if (util_header_create(set, r, p,
-					src_hdr->signature, src_hdr->major,
-					src_hdr->compat_features,
-					src_hdr->incompat_features,
-					src_hdr->ro_compat_features,
-					NULL, NULL, NULL) != 0) {
+			struct pool_attr attr;
+			util_pool_hdr2attr(&attr, src_hdr);
+			if (util_header_create(set, r, p, &attr, 0) != 0) {
 				LOG(1, "part headers create failed for"
 						" replica %u part %u", r, p);
 				errno = EINVAL;
@@ -353,8 +350,8 @@ copy_data_to_broken_parts(struct pool_set *set, unsigned healthy_replica,
 			void *dst_addr = ADDR_SUM(part->addr, fpoff);
 
 			if (rep->remote) {
-				int ret = Rpmem_persist(rep->remote->rpp,
-						off - POOL_HDR_SIZE, len, 0);
+				int ret = Rpmem_persist(rep->remote->rpp, off,
+						len, 0);
 				if (ret) {
 					LOG(1, "Copying data to remote node "
 						"failed -- '%s' on '%s'",
@@ -364,8 +361,7 @@ copy_data_to_broken_parts(struct pool_set *set, unsigned healthy_replica,
 				}
 			} else if (rep_h->remote) {
 				int ret = Rpmem_read(rep_h->remote->rpp,
-						dst_addr,
-						off - POOL_HDR_SIZE, len, 0);
+						dst_addr, off, len, 0);
 				if (ret) {
 					LOG(1, "Reading data from remote node "
 						"failed -- '%s' on '%s'",
@@ -452,7 +448,7 @@ update_parts_linkage(struct pool_set *set, unsigned repn,
 {
 	LOG(3, "set %p, repn %u, set_hs %p", set, repn, set_hs);
 	struct pool_replica *rep = REP(set, repn);
-	for (unsigned p = 0; p < rep->nparts; ++p) {
+	for (unsigned p = 0; p < rep->nhdrs; ++p) {
 		struct pool_hdr *hdrp = HDR(rep, p);
 		struct pool_hdr *prev_hdrp = HDRP(rep, p);
 		struct pool_hdr *next_hdrp = HDRN(rep, p);
@@ -462,19 +458,20 @@ update_parts_linkage(struct pool_set *set, unsigned repn,
 				POOL_HDR_UUID_LEN);
 		memcpy(hdrp->next_part_uuid, PARTN(rep, p).uuid,
 				POOL_HDR_UUID_LEN);
-		util_checksum(hdrp, sizeof(*hdrp), &hdrp->checksum, 1);
+		util_checksum(hdrp, sizeof(*hdrp), &hdrp->checksum,
+			1, POOL_HDR_CSUM_END_OFF);
 
 		/* set uuids in the previous part */
 		memcpy(prev_hdrp->next_part_uuid, PART(rep, p).uuid,
 				POOL_HDR_UUID_LEN);
 		util_checksum(prev_hdrp, sizeof(*prev_hdrp),
-				&prev_hdrp->checksum, 1);
+			&prev_hdrp->checksum, 1, POOL_HDR_CSUM_END_OFF);
 
 		/* set uuids in the next part */
 		memcpy(next_hdrp->prev_part_uuid, PART(rep, p).uuid,
 				POOL_HDR_UUID_LEN);
 		util_checksum(next_hdrp, sizeof(*next_hdrp),
-				&next_hdrp->checksum, 1);
+			&next_hdrp->checksum, 1, POOL_HDR_CSUM_END_OFF);
 
 		/* store pool's header */
 		util_persist(PART(rep, p).is_dev_dax, hdrp, sizeof(*hdrp));
@@ -503,25 +500,26 @@ update_replicas_linkage(struct pool_set *set, unsigned repn)
 	ASSERT(next_r->nparts > 0);
 
 	/* set uuids in the current replica */
-	for (unsigned p = 0; p < rep->nparts; ++p) {
+	for (unsigned p = 0; p < rep->nhdrs; ++p) {
 		struct pool_hdr *hdrp = HDR(rep, p);
 		memcpy(hdrp->prev_repl_uuid, PART(prev_r, 0).uuid,
 				POOL_HDR_UUID_LEN);
 		memcpy(hdrp->next_repl_uuid, PART(next_r, 0).uuid,
 				POOL_HDR_UUID_LEN);
-		util_checksum(hdrp, sizeof(*hdrp), &hdrp->checksum, 1);
+		util_checksum(hdrp, sizeof(*hdrp), &hdrp->checksum,
+			1, POOL_HDR_CSUM_END_OFF);
 
 		/* store pool's header */
 		util_persist(PART(rep, p).is_dev_dax, hdrp, sizeof(*hdrp));
 	}
 
 	/* set uuids in the previous replica */
-	for (unsigned p = 0; p < prev_r->nparts; ++p) {
+	for (unsigned p = 0; p < prev_r->nhdrs; ++p) {
 		struct pool_hdr *prev_hdrp = HDR(prev_r, p);
 		memcpy(prev_hdrp->next_repl_uuid, PART(rep, 0).uuid,
 				POOL_HDR_UUID_LEN);
 		util_checksum(prev_hdrp, sizeof(*prev_hdrp),
-				&prev_hdrp->checksum, 1);
+			&prev_hdrp->checksum, 1, POOL_HDR_CSUM_END_OFF);
 
 		/* store pool's header */
 		util_persist(PART(prev_r, p).is_dev_dax, prev_hdrp,
@@ -529,13 +527,13 @@ update_replicas_linkage(struct pool_set *set, unsigned repn)
 	}
 
 	/* set uuids in the next replica */
-	for (unsigned p = 0; p < next_r->nparts; ++p) {
+	for (unsigned p = 0; p < next_r->nhdrs; ++p) {
 		struct pool_hdr *next_hdrp = HDR(next_r, p);
 
 		memcpy(next_hdrp->prev_repl_uuid, PART(rep, 0).uuid,
 				POOL_HDR_UUID_LEN);
 		util_checksum(next_hdrp, sizeof(*next_hdrp),
-				&next_hdrp->checksum, 1);
+			&next_hdrp->checksum, 1, POOL_HDR_CSUM_END_OFF);
 
 		/* store pool's header */
 		util_persist(PART(next_r, p).is_dev_dax, next_hdrp,
@@ -554,10 +552,11 @@ update_poolset_uuids(struct pool_set *set, unsigned repn,
 {
 	LOG(3, "set %p, repn %u, set_hs %p", set, repn, set_hs);
 	struct pool_replica *rep = REP(set, repn);
-	for (unsigned p = 0; p < rep->nparts; ++p) {
+	for (unsigned p = 0; p < rep->nhdrs; ++p) {
 		struct pool_hdr *hdrp = HDR(rep, p);
 		memcpy(hdrp->poolset_uuid, set->uuid, POOL_HDR_UUID_LEN);
-		util_checksum(hdrp, sizeof(*hdrp), &hdrp->checksum, 1);
+		util_checksum(hdrp, sizeof(*hdrp), &hdrp->checksum,
+			1, POOL_HDR_CSUM_END_OFF);
 
 		/* store pool's header */
 		util_persist(PART(rep, p).is_dev_dax, hdrp, sizeof(*hdrp));
@@ -749,6 +748,7 @@ replica_sync(struct pool_set *set, struct poolset_health_status *s_hs,
 	unsigned healthy_replica = replica_find_healthy_replica(set_hs);
 	if (healthy_replica == UNDEF_REPLICA) {
 		ERR("no healthy replica found");
+		errno = EINVAL;
 		ret = -1;
 		goto out;
 	}

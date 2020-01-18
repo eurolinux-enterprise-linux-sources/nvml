@@ -45,7 +45,7 @@
 
 #define LAYOUT "cpp"
 
-namespace nvobj = nvml::obj;
+namespace nvobj = pmem::obj;
 
 namespace
 {
@@ -167,7 +167,7 @@ mutex_test(nvobj::pool<root> &pop, Worker writer, Worker reader)
 	}
 
 	for (int i = 0; i < total_threads; ++i)
-		PTHREAD_JOIN(threads[i], nullptr);
+		PTHREAD_JOIN(&threads[i], nullptr);
 }
 }
 
@@ -186,7 +186,7 @@ main(int argc, char *argv[])
 	try {
 		pop = nvobj::pool<root>::create(path, LAYOUT, PMEMOBJ_MIN_POOL,
 						S_IWUSR | S_IRUSR);
-	} catch (nvml::pool_error &pe) {
+	} catch (pmem::pool_error &pe) {
 		UT_FATAL("!pool::create: %s %s", pe.what(), path);
 	}
 

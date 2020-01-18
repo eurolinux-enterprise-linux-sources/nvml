@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -34,20 +34,17 @@
 #
 # src/test/out_err_mt/TEST0 -- unit test for error messages
 #
-export UNITTEST_NAME=out_err_mt/TEST0
-export UNITTEST_NUM=0
 
 # standard unit test setup
 . ../unittest/unittest.sh
 
 require_test_type medium
-
 require_fs_type any
 
 setup
 
 expect_normal_exit ./out_err_mt$EXESUFFIX \
-	$DIR/testfile1 $DIR/testfile2 $DIR/testfile3 $DIR
+	$DIR/testfile1 $DIR/testfile2 $DIR/testfile3 $DIR/testfile4 $DIR
 
 check
 

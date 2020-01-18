@@ -1,4 +1,4 @@
-# Copyright 2016-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -37,8 +37,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "vmem_delete/TEST0"
-$Env:UNITTEST_NUM = "0"
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
@@ -47,10 +45,6 @@ require_test_type medium
 require_fs_type none
 
 setup
-
-# this test invokes sigsegvs by design
-# XXX - AddressSanitizer detector not supported on Windows
-#$Env:ASAN_OPTIONS="handle_segv=0"
 
 expect_normal_exit $Env:EXE_DIR\vmem_delete$Env:EXESUFFIX h f m c r a s d
 

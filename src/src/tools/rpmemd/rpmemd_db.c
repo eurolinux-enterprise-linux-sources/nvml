@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -128,8 +128,8 @@ rpmemd_db_concat(const char *path1, const char *path2)
 	if (path2[0] == '/') {
 		RPMEMD_LOG(ERR, "the second path is not a relative one -- '%s'",
 				path2);
-		/* set to EBADR to distinguish this case from other errors */
-		errno = EBADR;
+		/* set to EBADF to distinguish this case from other errors */
+		errno = EBADF;
 		return NULL;
 	}
 
@@ -177,7 +177,8 @@ rpmemd_db_pool_madvise(struct pool_set *set)
 	 */
 	const struct pool_set_part *part = &set->replica[0]->part[0];
 	if (part->is_dev_dax) {
-		int ret = madvise(part->addr, part->filesize, MADV_DONTFORK);
+		int ret = os_madvise(part->addr, part->filesize,
+			MADV_DONTFORK);
 		if (ret) {
 			ERR("!madvise");
 			return -1;
@@ -187,14 +188,32 @@ rpmemd_db_pool_madvise(struct pool_set *set)
 }
 
 /*
+ * rpmemd_get_attr -- (internal) get pool attributes from remote pool attributes
+ */
+static void
+rpmemd_get_attr(struct pool_attr *attr, const struct rpmem_pool_attr *rattr)
+{
+	LOG(3, "attr %p, rattr %p", attr, rattr);
+	memcpy(attr->signature, rattr->signature, POOL_HDR_SIG_LEN);
+	attr->major = rattr->major;
+	attr->compat_features = rattr->compat_features;
+	attr->incompat_features = rattr->incompat_features;
+	attr->ro_compat_features = rattr->ro_compat_features;
+	memcpy(attr->poolset_uuid, rattr->poolset_uuid, POOL_HDR_UUID_LEN);
+	memcpy(attr->first_part_uuid, rattr->uuid, POOL_HDR_UUID_LEN);
+	memcpy(attr->prev_repl_uuid, rattr->prev_uuid, POOL_HDR_UUID_LEN);
+	memcpy(attr->next_repl_uuid, rattr->next_uuid, POOL_HDR_UUID_LEN);
+	memcpy(attr->arch_flags, rattr->user_flags, POOL_HDR_ARCH_LEN);
+}
+
+/*
  * rpmemd_db_pool_create -- create a new pool set
  */
 struct rpmemd_db_pool *
 rpmemd_db_pool_create(struct rpmemd_db *db, const char *pool_desc,
-			size_t pool_size, const struct rpmem_pool_attr *attr)
+			size_t pool_size, const struct rpmem_pool_attr *rattr)
 {
 	RPMEMD_ASSERT(db != NULL);
-	RPMEMD_ASSERT(attr != NULL);
 
 	util_mutex_lock(&db->lock);
 
@@ -214,24 +233,16 @@ rpmemd_db_pool_create(struct rpmemd_db *db, const char *pool_desc,
 		goto err_free_prp;
 	}
 
-	struct pool_attr pattr;
-	pattr.poolset_uuid = attr->poolset_uuid;
-	pattr.first_part_uuid = attr->uuid;
-	pattr.prev_repl_uuid = attr->prev_uuid;
-	pattr.next_repl_uuid = attr->next_uuid;
-	pattr.user_flags = attr->user_flags;
+	struct pool_attr attr;
+	struct pool_attr *pattr = NULL;
+	if (rattr != NULL) {
+		rpmemd_get_attr(&attr, rattr);
+		pattr = &attr;
+	}
 
-	ret = util_pool_create_uuids(&set, path,
-					0, RPMEM_MIN_PART,
-					attr->signature,
-					attr->major,
-					attr->compat_features,
-					attr->incompat_features,
-					attr->ro_compat_features,
-					NULL,
-					REPLICAS_DISABLED,
-					POOL_REMOTE,
-					&pattr);
+	ret = util_pool_create_uuids(&set, path, 0, RPMEM_MIN_POOL,
+			RPMEM_MIN_PART, pattr, NULL, REPLICAS_DISABLED,
+			POOL_REMOTE);
 	if (ret) {
 		RPMEMD_LOG(ERR, "!cannot create pool set -- '%s'", path);
 		goto err_free_path;
@@ -272,10 +283,10 @@ err_unlock:
  */
 struct rpmemd_db_pool *
 rpmemd_db_pool_open(struct rpmemd_db *db, const char *pool_desc,
-			size_t pool_size, struct rpmem_pool_attr *attr)
+			size_t pool_size, struct rpmem_pool_attr *rattr)
 {
 	RPMEMD_ASSERT(db != NULL);
-	RPMEMD_ASSERT(attr != NULL);
+	RPMEMD_ASSERT(rattr != NULL);
 
 	util_mutex_lock(&db->lock);
 
@@ -295,17 +306,7 @@ rpmemd_db_pool_open(struct rpmemd_db *db, const char *pool_desc,
 		goto err_free_prp;
 	}
 
-	ret = util_pool_open_remote(&set, path, 0, RPMEM_MIN_PART,
-					attr->signature,
-					&attr->major,
-					&attr->compat_features,
-					&attr->incompat_features,
-					&attr->ro_compat_features,
-					attr->poolset_uuid,
-					attr->uuid,
-					attr->prev_uuid,
-					attr->next_uuid,
-					attr->user_flags);
+	ret = util_pool_open_remote(&set, path, 0, RPMEM_MIN_PART, rattr);
 	if (ret) {
 		RPMEMD_LOG(ERR, "!cannot open pool set -- '%s'", path);
 		goto err_free_path;
@@ -356,24 +357,19 @@ rpmemd_db_pool_close(struct rpmemd_db *db, struct rpmemd_db_pool *prp)
  */
 int
 rpmemd_db_pool_set_attr(struct rpmemd_db_pool *prp,
-	const struct rpmem_pool_attr *attr)
+	const struct rpmem_pool_attr *rattr)
 {
 	RPMEMD_ASSERT(prp != NULL);
 	RPMEMD_ASSERT(prp->set != NULL);
 	RPMEMD_ASSERT(prp->set->nreplicas == 1);
 
-	return util_replica_set_attr(prp->set->replica[0],
-		attr->signature,
-		attr->major,
-		attr->compat_features,
-		attr->incompat_features,
-		attr->ro_compat_features,
-		attr->poolset_uuid,
-		attr->uuid,
-		attr->next_uuid,
-		attr->prev_uuid,
-		attr->user_flags);
+	return util_replica_set_attr(prp->set->replica[0], rattr);
 }
+
+struct rm_cb_args {
+	int force;
+	int ret;
+};
 
 /*
  * rm_poolset_cb -- (internal) callback for removing part files
@@ -381,12 +377,18 @@ rpmemd_db_pool_set_attr(struct rpmemd_db_pool *prp,
 static int
 rm_poolset_cb(struct part_file *pf, void *arg)
 {
+	struct rm_cb_args *args = (struct rm_cb_args *)arg;
 	if (pf->is_remote) {
 		RPMEMD_LOG(ERR, "removing remote replica not supported");
 		return -1;
 	}
 
-	util_unlink(pf->path);
+	int ret = util_unlink(pf->path);
+	if (!args->force && ret) {
+		RPMEMD_LOG(ERR, "!unlink -- '%s'", pf->path);
+		args->ret = ret;
+	}
+
 	return 0;
 }
 
@@ -402,55 +404,22 @@ rpmemd_db_pool_remove(struct rpmemd_db *db, const char *pool_desc,
 
 	util_mutex_lock(&db->lock);
 
-	struct pool_set *set;
+	struct rm_cb_args args;
+	args.force = force;
+	args.ret = 0;
 	char *path;
-	int ret = 0;
 
 	path = rpmemd_db_get_path(db, pool_desc);
 	if (!path) {
-		ret = -1;
+		args.ret = -1;
 		goto err_unlock;
 	}
 
-	if (force) {
-		ret = util_poolset_foreach_part(path, rm_poolset_cb, NULL);
-		if (ret) {
-			RPMEMD_LOG(ERR, "!removing '%s' failed", path);
-			goto err_free_path;
-		}
-	} else {
-		struct rpmem_pool_attr attr;
-		ret = util_pool_open_remote(&set, path, 0,
-				RPMEM_MIN_PART,
-				attr.signature,
-				&attr.major,
-				&attr.compat_features,
-				&attr.incompat_features,
-				&attr.ro_compat_features,
-				attr.poolset_uuid,
-				attr.uuid,
-				attr.prev_uuid,
-				attr.next_uuid,
-				attr.user_flags);
-		if (ret) {
-			RPMEMD_LOG(ERR, "!removing '%s' failed", path);
-			goto err_free_path;
-		}
-
-		for (unsigned r = 0; r < set->nreplicas; r++) {
-			for (unsigned p = 0; p < set->replica[r]->nparts; p++) {
-				const char *part_file =
-					set->replica[r]->part[p].path;
-				ret = util_unlink(part_file);
-				if (ret) {
-					RPMEMD_LOG(ERR, "!unlink -- '%s'",
-							part_file);
-				}
-			}
-		}
-
-		util_poolset_close(set, DO_NOT_DELETE_PARTS);
-
+	int ret = util_poolset_foreach_part(path, rm_poolset_cb, &args);
+	if (!force && ret) {
+		RPMEMD_LOG(ERR, "!removing '%s' failed", path);
+		args.ret = ret;
+		goto err_free_path;
 	}
 
 	if (pool_set)
@@ -460,7 +429,7 @@ err_free_path:
 	free(path);
 err_unlock:
 	util_mutex_unlock(&db->lock);
-	return ret;
+	return args.ret;
 }
 
 /*

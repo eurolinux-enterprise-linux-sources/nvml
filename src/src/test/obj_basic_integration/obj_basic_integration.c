@@ -480,7 +480,7 @@ test_tx_api(PMEMobjpool *pop)
 	TX_BEGIN_PARAM(pop, TX_PARAM_MUTEX, &D_RW(root)->lock) {
 		TX_ADD(root);
 		D_RW(root)->node = TX_ZNEW(struct dummy_node);
-		TX_REALLOC(D_RO(root)->node, SIZE_MAX);
+		D_RW(root)->node = TX_REALLOC(D_RO(root)->node, SIZE_MAX);
 		UT_ASSERT(0); /* should not get to this point */
 	} TX_ONABORT {
 		UT_ASSERTeq(errno, ENOMEM);
@@ -491,7 +491,8 @@ test_tx_api(PMEMobjpool *pop)
 	TX_BEGIN_PARAM(pop, TX_PARAM_MUTEX, &D_RW(root)->lock) {
 		TX_ADD(root);
 		D_RW(root)->node = TX_ZNEW(struct dummy_node);
-		TX_REALLOC(D_RO(root)->node, PMEMOBJ_MAX_ALLOC_SIZE + 1);
+		D_RW(root)->node = TX_REALLOC(D_RO(root)->node,
+				PMEMOBJ_MAX_ALLOC_SIZE + 1);
 		UT_ASSERT(0); /* should not get to this point */
 	} TX_ONABORT {
 		UT_ASSERTeq(errno, ENOMEM);
@@ -545,6 +546,51 @@ test_tx_api(PMEMobjpool *pop)
 }
 
 static void
+test_action_api(PMEMobjpool *pop)
+{
+	struct pobj_action act[2];
+
+	uint64_t dest_value = 0;
+	PMEMoid oid = pmemobj_reserve(pop, &act[0], 1, 1);
+	pmemobj_set_value(pop, &act[1], &dest_value, 1);
+	pmemobj_publish(pop, act, 2);
+	UT_ASSERTeq(dest_value, 1);
+	pmemobj_free(&oid);
+	UT_ASSERT(OID_IS_NULL(oid));
+
+	oid = pmemobj_reserve(pop, &act[0], 1, 1);
+	TX_BEGIN(pop) {
+		pmemobj_tx_publish(act, 1);
+	} TX_ONABORT {
+		UT_ASSERT(0);
+	} TX_END
+
+	pmemobj_free(&oid);
+	UT_ASSERT(OID_IS_NULL(oid));
+
+	dest_value = 0;
+	oid = pmemobj_reserve(pop, &act[0], 1, 1);
+	pmemobj_set_value(pop, &act[1], &dest_value, 1);
+	pmemobj_cancel(pop, act, 2);
+
+	UT_ASSERTeq(dest_value, 0);
+
+	TOID(struct dummy_node) n =
+		POBJ_RESERVE_NEW(pop, struct dummy_node, &act[0]);
+	TOID(struct dummy_node_c) c =
+		POBJ_RESERVE_ALLOC(pop, struct dummy_node_c,
+			sizeof(struct dummy_node_c), &act[1]);
+
+	pmemobj_publish(pop, act, 2);
+
+	/* valgrind would warn in case they were not allocated */
+	D_RW(n)->value = 1;
+	D_RW(c)->value = 1;
+	pmemobj_persist(pop, D_RW(n), sizeof(struct dummy_node));
+	pmemobj_persist(pop, D_RW(c), sizeof(struct dummy_node_c));
+}
+
+static void
 test_offsetof(void)
 {
 	TOID(struct dummy_root) r;
@@ -594,6 +640,7 @@ main(int argc, char *argv[])
 	test_realloc_api(pop);
 	test_list_api(pop);
 	test_tx_api(pop);
+	test_action_api(pop);
 	test_offsetof();
 
 	pmemobj_close(pop);

@@ -1,4 +1,4 @@
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -28,7 +28,7 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
-# src/Makefile.inc -- common Makefile rules for NVM library
+# src/Makefile.inc -- common Makefile rules for PMDK
 #
 
 TOP := $(dir $(lastword $(MAKEFILE_LIST)))..
@@ -43,46 +43,86 @@ vpath %.c $(RPMEM_COMMON)
 COMMON = $(TOP)/src/common
 vpath %.c $(COMMON)
 
-INCS += -I../include -I../common/
+INCS += -I../include -I../common/ $(OS_INCS)
 
-CFLAGS += -std=gnu99
-CFLAGS += -Wall
-CFLAGS += -Werror
-CFLAGS += -Wmissing-prototypes
-CFLAGS += -Wpointer-arith
-CFLAGS += -Wunused-macros
-CFLAGS += -Wmissing-field-initializers
-CFLAGS += -Wsign-conversion
-CFLAGS += -Wsign-compare
+# default CFLAGS
+DEFAULT_CFLAGS += -std=gnu99
+DEFAULT_CFLAGS += -Wall
+DEFAULT_CFLAGS += -Werror
+DEFAULT_CFLAGS += -Wmissing-prototypes
+DEFAULT_CFLAGS += -Wpointer-arith
+DEFAULT_CFLAGS += -Wsign-conversion
+DEFAULT_CFLAGS += -Wsign-compare
 ifeq ($(call check_Wconversion), y)
-CFLAGS += -Wconversion
+DEFAULT_CFLAGS += -Wconversion
 endif
-CFLAGS += -pthread
-CFLAGS += -fno-common
-CFLAGS += -DSRCVERSION=\"$(SRCVERSION)\"
+
+ifeq ($(call check_compiler, icc), n)
+DEFAULT_CFLAGS += -Wunused-macros
+DEFAULT_CFLAGS += -Wmissing-field-initializers
 ifeq ($(call check_flag, -Wunreachable-code-return), y)
-CFLAGS += -Wunreachable-code-return
+DEFAULT_CFLAGS += -Wunreachable-code-return
 endif
 ifeq ($(call check_flag, -Wmissing-variable-declarations), y)
-CFLAGS += -Wmissing-variable-declarations
+DEFAULT_CFLAGS += -Wmissing-variable-declarations
+endif
 endif
 
 ifeq ($(DEBUG),1)
-CFLAGS += -O0 -ggdb -DDEBUG $(EXTRA_CFLAGS_DEBUG)
-LIB_SUBDIR = /nvml_debug
+# Undefine _FORTIFY_SOURCE in case it's set in system-default or
+# user-defined CFLAGS as it conflicts with -O0.
+DEBUG_CFLAGS += -Wp,-U_FORTIFY_SOURCE
+DEBUG_CFLAGS += -O0 -ggdb -DDEBUG
+LIB_SUBDIR = /pmdk_debug
 OBJDIR = debug
 else
-CFLAGS += -O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 $(EXTRA_CFLAGS_RELEASE)
+DEFAULT_CFLAGS += -O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2
 LIB_SUBDIR =
 OBJDIR = nondebug
 endif
+
+# use defaults, if system or user-defined CFLAGS are not specified
+CFLAGS ?= $(DEFAULT_CFLAGS)
+
+CFLAGS += -std=gnu99
+CFLAGS += -fno-common
+CFLAGS += -pthread
+CFLAGS += -DSRCVERSION=\"$(SRCVERSION)\"
+
 ifeq ($(COVERAGE),1)
 CFLAGS += $(GCOV_CFLAGS)
 LDFLAGS += $(GCOV_LDFLAGS)
 LIBS += $(GCOV_LIBS)
 endif
 
+ifeq ($(VALGRIND),0)
+CFLAGS += -DVALGRIND_ENABLED=0
+CXXFLAGS += -DVALGRIND_ENABLED=0
+endif
+
+# On FreeBSD libvmmalloc defines pthread_create, which conflicts with asan
+tsanitize := $(SANITIZE)
+ifeq ($(shell uname -s),FreeBSD)
+ifeq ($(JEMALLOC_PMDKDIR),libvmmalloc)
+hasaddrcomma := address,
+tsanitize := $(subst address,,$(subst $(hasaddrcomma),,$(SANITIZE)))
+ifneq ($(tsanitize),$(SANITIZE))
+$(info SANITIZE=address not supported for libvmmalloc, ignored)
+endif
+endif
+endif
+ifneq ($(tsanitize),)
+CFLAGS += -fsanitize=$(tsanitize)
+LDFLAGS += -fsanitize=$(tsanitize)
+endif
+
 CFLAGS += $(EXTRA_CFLAGS)
+
+ifeq ($(DEBUG),1)
+CFLAGS += $(EXTRA_CFLAGS_DEBUG) $(DEBUG_CFLAGS)
+else
+CFLAGS += $(EXTRA_CFLAGS_RELEASE)
+endif
 
 LDFLAGS += -Wl,-z,relro -Wl,--fatal-warnings -Wl,--warn-common $(EXTRA_LDFLAGS)
 
@@ -100,7 +140,7 @@ endif
 define arch32_error_msg
 
 ##################################################
-###  32-bit builds of NVML are not supported!  ###
+###  32-bit builds of PMDK are not supported!  ###
 ###  Please, use 64-bit platform/compiler.     ###
 ##################################################
 
@@ -110,6 +150,13 @@ TESTCMD := $(CC) $(CFLAGS) -dM -E -x c /dev/null -o /dev/null
 TESTBUILD := $(shell $(TESTCMD) && echo 1 || echo 0)
 ifneq ($(TESTBUILD), 1)
 $(error "$(TESTCMD)" failed)
+endif
+
+ARCH := $(call get_arch)
+ifneq ($(ARCH), x86_64)
+ifneq ($(ARCH), aarch64)
+$(error unsupported architecture: $(ARCH))
+endif
 endif
 
 LP64 := $(shell $(CC) $(CFLAGS) -dM -E -x c /dev/null | grep -Ec "__SIZEOF_LONG__.+8|__SIZEOF_POINTER__.+8" )

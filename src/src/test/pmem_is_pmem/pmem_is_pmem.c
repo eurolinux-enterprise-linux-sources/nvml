@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  * Copyright (c) 2016, Microsoft Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -66,16 +66,8 @@ main(int argc, char *argv[])
 	if (argc == 3)
 		UT_ASSERTeq(os_setenv("PMEM_IS_PMEM_FORCE", argv[2], 1), 0);
 
-	int fd = OPEN(argv[1], O_RDWR);
-
-	os_stat_t stbuf;
-	FSTAT(fd, &stbuf);
-
-	Size = stbuf.st_size;
-	Addr = MMAP(NULL, stbuf.st_size, PROT_READ|PROT_WRITE, MAP_SHARED, fd,
-		0);
-
-	CLOSE(fd);
+	Addr = pmem_map_file(argv[1], 0, 0, 0, &Size, NULL);
+	UT_ASSERTne(Addr, NULL);
 
 	os_thread_t threads[NTHREAD];
 	int ret[NTHREAD];
@@ -86,7 +78,7 @@ main(int argc, char *argv[])
 
 	/* wait for all the threads to complete */
 	for (int i = 0; i < NTHREAD; i++)
-		PTHREAD_JOIN(threads[i], NULL);
+		PTHREAD_JOIN(&threads[i], NULL);
 
 	/* verify that all the threads return the same value */
 	for (int i = 1; i < NTHREAD; i++)

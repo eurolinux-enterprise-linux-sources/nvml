@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -34,10 +34,10 @@
 # src/test/pmem_map_file/Makefile -- build pmem_map_file() unit test
 #
 TARGET = pmem_map_file
-OBJS = pmem_map_file.o mocks_linux.o
+OBJS = pmem_map_file.o mocks_posix.o
 
 LIBPMEM=y
 
 include ../Makefile.inc
 
-LIBS += -ldl
+LIBS += $(LIBDL)

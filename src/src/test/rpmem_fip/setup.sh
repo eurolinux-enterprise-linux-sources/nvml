@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2016, Intel Corporation
+# Copyright 2016-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -34,6 +34,7 @@
 #
 # src/test/rpmem_fip/setup.sh -- common setup for rpmem_fip tests
 #
+set -e
 
 require_nodes 2
 require_node_libfabric 0 $RPMEM_PROVIDER
@@ -48,3 +49,7 @@ RPMEM_CMD="\"cd ${NODE_TEST_DIR[0]} && RPMEMD_LOG_LEVEL=\$RPMEMD_LOG_LEVEL RPMEM
 	./rpmem_fip$EXESUFFIX\""
 
 export_vars_node 1 RPMEM_CMD
+
+if [ -n ${RPMEM_MAX_NLANES+x} ]; then
+	export_vars_node 1 RPMEM_MAX_NLANES
+fi

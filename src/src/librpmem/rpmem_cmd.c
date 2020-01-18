@@ -42,6 +42,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
+#include <signal.h>
 
 #include "util.h"
 #include "out.h"
@@ -238,7 +239,7 @@ err_pipe_in:
 int
 rpmem_cmd_wait(struct rpmem_cmd *cmd, int *status)
 {
-	if (!cmd->pid)
+	if (cmd->pid <= 0)
 		return -1;
 
 	if (waitpid(cmd->pid, status, 0) != cmd->pid)
@@ -257,5 +258,6 @@ rpmem_cmd_term(struct rpmem_cmd *cmd)
 	os_close(cmd->fd_out);
 	os_close(cmd->fd_err);
 
+	RPMEM_ASSERT(cmd->pid > 0);
 	return kill(cmd->pid, SIGINT);
 }

@@ -31,7 +31,7 @@
 #
 
 #
-# examples/Makefile.inc -- build the NVM Library examples
+# examples/Makefile.inc -- build the Persistent Memory Development Kit examples
 #
 TOP_SRC := $(dir $(lastword $(MAKEFILE_LIST)))..
 TOP := $(TOP_SRC)/..
@@ -42,10 +42,18 @@ LIBDIR = $(TOP_SRC)/debug
 
 include $(TOP)/src/common.inc
 
-CXXFLAGS = -std=c++11 -ggdb -Wall -Werror $(EXTRA_CXXFLAGS)
+CXXFLAGS = -std=c++11 -ggdb -Wall -Werror
+CXXFLAGS += $(GLIBC_CXXFLAGS)
+CXXFLAGS +=  $(EXTRA_CXXFLAGS)
 CFLAGS = -std=gnu99 -ggdb -Wall -Werror -Wmissing-prototypes $(EXTRA_CFLAGS)
 LDFLAGS = -Wl,-rpath=$(LIBDIR) -L$(LIBDIR) $(EXTRA_LDFLAGS)
-INCS = -I$(INCDIR) -I. -I$(TOP_SRC)/examples
+ifneq ($(SANITIZE),)
+CFLAGS += -fsanitize=$(SANITIZE)
+CXXFLAGS += -fsanitize=$(SANITIZE)
+LDFLAGS += -fsanitize=$(SANITIZE)
+endif
+INCS = -I$(INCDIR) -I. -I$(TOP_SRC)/examples $(OS_INCS)
+LIBS += $(OS_LIBS) $(LIBUUID)
 
 LINKER=$(CC)
 ifeq ($(COMPILE_LANG), cpp)

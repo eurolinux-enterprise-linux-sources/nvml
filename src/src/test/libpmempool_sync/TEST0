@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2016-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -33,8 +33,6 @@
 #
 # libpmempool_sync/TEST0 -- test for checking replica sync
 #
-export UNITTEST_NAME=libpmempool_sync/TEST0
-export UNITTEST_NUM=0
 
 . ../unittest/unittest.sh
 
@@ -97,16 +95,16 @@ expect_normal_exit $PMEMOBJCLI$EXESUFFIX -s $READ_SCRIPT $POOLSET >> $LOG_TEMP
 TMP_FILE=$DIR/obj_info
 expect_normal_exit $PMEMPOOL$EXESUFFIX info -f obj -o $DIR/testfile1 \
 	> $TMP_FILE
-ROOT_ADDR="$(cat $TMP_FILE | grep "Root offset" | \
+ROOT_ADDR="$(cat $TMP_FILE | $GREP "Root offset" | \
 	sed 's/^Root offset[ \t]*: 0x\([0-9][0-9]*\)/\1/')"
 ROOT_ADDR=$((16#$ROOT_ADDR))
 
 # Calculate offsets from the root object start to hit each part file
-PART1_FILE_SIZE=$(stat -c%s "$DIR/testfile1")
+PART1_FILE_SIZE=$(stat $STAT_SIZE "$DIR/testfile1")
 PART1_SIZE=$(( ($PART1_FILE_SIZE & $ADDR_MASK) - $ROOT_ADDR ))
 PART2_OFFSET=$(( $M20 - $PART1_SIZE + $POOL_HEADER_OFFSET ))
 
-PART2_FILE_SIZE=$(stat -c%s "$DIR/testfile2")
+PART2_FILE_SIZE=$(stat $STAT_SIZE "$DIR/testfile2")
 PART2_SIZE=$(( ($PART2_FILE_SIZE & $ADDR_MASK) - $POOL_HEADER_OFFSET ))
 PART3_OFFSET=$(( $M40 - ($PART1_SIZE + $PART2_SIZE)\
 	+ $POOL_HEADER_OFFSET ))

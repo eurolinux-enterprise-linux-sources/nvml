@@ -139,6 +139,14 @@ do_appendv(PMEMlogpool *plp)
 		UT_OUT("!appendv: wrong return value");
 		break;
 	}
+
+	rv = pmemlog_appendv(plp, iov, 0);
+	UT_ASSERTeq(rv, 0);
+
+	errno = 0;
+	rv = pmemlog_appendv(plp, iov, -3);
+	UT_ASSERTeq(errno, EINVAL);
+	UT_ASSERTeq(rv, -1);
 }
 
 /*
@@ -147,7 +155,7 @@ do_appendv(PMEMlogpool *plp)
 static void
 do_tell(PMEMlogpool *plp)
 {
-	off_t tell = pmemlog_tell(plp);
+	os_off_t tell = pmemlog_tell(plp);
 	UT_OUT("tell %zu", tell);
 }
 

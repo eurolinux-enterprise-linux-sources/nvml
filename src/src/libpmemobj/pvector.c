@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -140,15 +140,6 @@ pvector_reinit(struct pvector_context *ctx)
 }
 
 /*
- * find_highest_bit -- (internal) searches for the highest set bit
- */
-static unsigned
-find_highest_bit(uint64_t value)
-{
-	return 64 - (unsigned)__builtin_clzll(value) - 1;
-}
-
-/*
  * A small helper structure that defines the position of a value in the array
  * of arrays.
  */
@@ -176,7 +167,7 @@ pvector_get_array_spec(uint64_t idx)
 	 * the bit position from which the algorithm starts.
 	 */
 	uint64_t pos = idx + PVECTOR_INIT_SIZE;
-	unsigned hbit = find_highest_bit(pos);
+	unsigned hbit = util_mssb_index64(pos);
 	s.idx = (size_t)(hbit - PVECTOR_INIT_SHIFT);
 
 	/*
@@ -256,7 +247,7 @@ pvector_push_back(struct pvector_context *ctx)
 			if (pmalloc_construct(pop,
 				&ctx->vec->arrays[s.idx],
 				arr_size, pvector_array_constr, NULL,
-				0, OBJ_INTERNAL_OBJECT_MASK) != 0)
+				0, OBJ_INTERNAL_OBJECT_MASK, 0) != 0)
 					return NULL;
 		}
 	}
@@ -303,10 +294,10 @@ pvector_pop_back(struct pvector_context *ctx, entry_op_callback cb)
 }
 
 /*
- * pvector_nvalues -- returns the number of values present in the vector
+ * pvector_size -- returns the number of values present in the vector
  */
 uint64_t
-pvector_nvalues(struct pvector_context *ctx)
+pvector_size(struct pvector_context *ctx)
 {
 	return ctx->nvalues;
 }

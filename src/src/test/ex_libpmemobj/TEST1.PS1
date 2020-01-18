@@ -1,5 +1,5 @@
 #
-# Copyright 2015-2017, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -38,8 +38,6 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "ex_libpmemobj/TEST1"
-$Env:UNITTEST_NUM = "1"
 
 # standard unit test setup
 . ../unittest/unittest.PS1
@@ -50,13 +48,12 @@ require_no_unicode
 
 setup
 
-
-expect_normal_exit $Env:EXE_DIR\btree $DIR\testfile1 i 1234 foo > out$Env:UNITTEST_NUM.log 2>&1
-expect_normal_exit $Env:EXE_DIR\btree $DIR\testfile1 i 4321 bar >> out$Env:UNITTEST_NUM.log 2>&1
-expect_normal_exit $Env:EXE_DIR\btree $DIR\testfile1 i 1 Hello >> out$Env:UNITTEST_NUM.log 2>&1
-expect_normal_exit $Env:EXE_DIR\btree $DIR\testfile1 i 2 World! >> out$Env:UNITTEST_NUM.log 2>&1
-expect_normal_exit $Env:EXE_DIR\btree $DIR\testfile1 p >> out$Env:UNITTEST_NUM.log 2>&1
-expect_normal_exit $Env:EXE_DIR\btree $DIR\testfile1 f 4321 >> out$Env:UNITTEST_NUM.log 2>&1
+expect_normal_exit $Env:EXE_DIR\ex_pmemobj_btree $DIR\testfile1 i 1234 foo > out$Env:UNITTEST_NUM.log 2>&1
+expect_normal_exit $Env:EXE_DIR\ex_pmemobj_btree $DIR\testfile1 i 4321 bar >> out$Env:UNITTEST_NUM.log 2>&1
+expect_normal_exit $Env:EXE_DIR\ex_pmemobj_btree $DIR\testfile1 i 1 Hello >> out$Env:UNITTEST_NUM.log 2>&1
+expect_normal_exit $Env:EXE_DIR\ex_pmemobj_btree $DIR\testfile1 i 2 World! >> out$Env:UNITTEST_NUM.log 2>&1
+expect_normal_exit $Env:EXE_DIR\ex_pmemobj_btree $DIR\testfile1 p >> out$Env:UNITTEST_NUM.log 2>&1
+expect_normal_exit $Env:EXE_DIR\ex_pmemobj_btree $DIR\testfile1 f 4321 >> out$Env:UNITTEST_NUM.log 2>&1
 
 check
 

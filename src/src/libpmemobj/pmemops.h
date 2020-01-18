@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,6 +35,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "util.h"
 
 typedef void (*persist_fn)(void *base, const void *, size_t);
 typedef void (*flush_fn)(void *base, const void *, size_t);
@@ -52,9 +53,7 @@ struct pmem_ops {
 	drain_fn drain;		/* drain function */
 	memcpy_fn memcpy_persist; /* persistent memcpy function */
 	memset_fn memset_persist; /* persistent memset function */
-
 	void *base;
-	size_t pool_size;
 
 	struct remote_ops {
 		remote_read_fn read;
@@ -63,12 +62,6 @@ struct pmem_ops {
 		uintptr_t base;
 	} remote;
 };
-
-#ifdef _MSC_VER
-#define force_inline inline
-#else
-#define force_inline __attribute__((always_inline)) inline
-#endif
 
 static force_inline void
 pmemops_persist(const struct pmem_ops *p_ops, const void *d, size_t s)

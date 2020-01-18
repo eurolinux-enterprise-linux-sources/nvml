@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2015-2017, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -34,8 +34,6 @@
 #
 # src/test/obj_convert/TEST18 -- unit test for pool conversion
 #
-export UNITTEST_NAME=obj_convert/TEST18
-export UNITTEST_NUM=18
 
 # standard unit test setup
 . ../unittest/unittest.sh
@@ -57,7 +55,7 @@ setup
 # set this to enable runtime creation of pools based on the old version of
 # the library. If not set the pools to convert and verify are extracted from
 # a prebuilt archive.
-#PATH_TO_1_0_DBG=/path/to/nvml_1.0/debug
+#PATH_TO_1_0_DBG=/path/to/pmdk_1.0/debug
 
 run_scenarios 8
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,14 +34,12 @@
  * sys/mman.h -- memory-mapped files for Windows
  */
 
-/*
- * XXX - see mmap_windows.c for details
- */
+#ifndef SYS_MMAN_H
+#define SYS_MMAN_H 1
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-#ifndef SYS_MMAN_H
-#define SYS_MMAN_H 1
 
 #define PROT_NONE	0x0
 #define PROT_READ	0x1
@@ -63,8 +61,8 @@ extern "C" {
 
 #define MAP_FAILED ((void *)(-1))
 
-
-void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset);
+void *mmap(void *addr, size_t len, int prot, int flags,
+	int fd, os_off_t offset);
 int munmap(void *addr, size_t len);
 int msync(void *addr, size_t len, int flags);
 
@@ -73,4 +71,5 @@ int mprotect(void *addr, size_t len, int prot);
 #ifdef __cplusplus
 }
 #endif
+
 #endif /* SYS_MMAN_H */

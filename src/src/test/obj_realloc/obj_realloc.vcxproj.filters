@@ -21,7 +21,7 @@
     <ClCompile Include="..\..\libpmemobj\bucket.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\libpmemobj\ctree.c">
+    <ClCompile Include="..\..\libpmemobj\ravl.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\libpmemobj\cuckoo.c">
@@ -69,7 +69,7 @@
     <ClCompile Include="..\..\libpmemobj\recycler.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\libpmemobj\container_ctree.c">
+    <ClCompile Include="..\..\libpmemobj\container_ravl.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\libpmemobj\container_seglists.c">
@@ -90,6 +90,9 @@
     <ClCompile Include="..\..\libpmemobj\ringbuf.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\libpmemobj\stats.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="TEST0.PS1">
@@ -97,12 +100,6 @@
     </None>
     <None Include="out0.log.match">
       <Filter>Match Files</Filter>
-    </None>
-    <None Include="out1.log.match">
-      <Filter>Match Files</Filter>
-    </None>
-    <None Include="TEST1.PS1">
-      <Filter>Test Scripts</Filter>
     </None>
   </ItemGroup>
 </Project>

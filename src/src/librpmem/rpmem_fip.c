@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -52,6 +52,8 @@
 
 #include "out.h"
 #include "util.h"
+#include "os_thread.h"
+#include "os.h"
 #include "rpmem_common.h"
 #include "rpmem_fip_common.h"
 #include "rpmem_proto.h"
@@ -73,20 +75,28 @@
 	ret;\
 })
 
-#define LANE_UNION_ALIGN_SIZE 64
-#define LANE_UNION_ALIGN __attribute__((aligned(LANE_UNION_ALIGN_SIZE)))
+#define LANE_ALIGN_SIZE 64
+#define LANE_ALIGN __attribute__((aligned(LANE_ALIGN_SIZE)))
 
 #define RPMEM_RAW_BUFF_SIZE 4096
 #define RPMEM_RAW_SIZE 8
 
 typedef int (*rpmem_fip_persist_fn)(struct rpmem_fip *fip, size_t offset,
-		size_t len, unsigned lane);
+		size_t len, unsigned lane, unsigned flags);
 
 typedef int (*rpmem_fip_process_fn)(struct rpmem_fip *fip,
 		void *context, uint64_t flags);
 
 typedef int (*rpmem_fip_init_fn)(struct rpmem_fip *fip);
 typedef void (*rpmem_fip_fini_fn)(struct rpmem_fip *fip);
+
+typedef ssize_t (*cq_read_fn)(struct fid_cq *cq, void *buf, size_t count);
+
+static ssize_t
+cq_read_infinite(struct fid_cq *cq, void *buf, size_t count)
+{
+	return fi_cq_sread(cq, buf, count, NULL, -1);
+}
 
 /*
  * rpmem_fip_ops -- operations specific for persistency method
@@ -95,6 +105,7 @@ struct rpmem_fip_ops {
 	rpmem_fip_persist_fn persist;
 	rpmem_fip_process_fn process;
 	rpmem_fip_init_fn lanes_init;
+	rpmem_fip_init_fn lanes_init_mem;
 	rpmem_fip_fini_fn lanes_fini;
 	rpmem_fip_init_fn lanes_post;
 };
@@ -109,24 +120,15 @@ struct rpmem_fip_lane {
 };
 
 /*
- * rpmem_fip_plane_apm -- persist operation's lane for APM
+ * rpmem_fip_plane -- persist operation's lane
  */
-struct rpmem_fip_plane_apm {
+struct rpmem_fip_plane {
 	struct rpmem_fip_lane base;	/* base lane structure */
 	struct rpmem_fip_rma write;	/* WRITE message */
 	struct rpmem_fip_rma read;	/* READ message */
-};
-
-/*
- * rpmem_fip_plane_gpspm -- persist operation's lane for GPSPM
- */
-struct rpmem_fip_plane_gpspm {
-	struct rpmem_fip_lane base;	/* base lane structure */
-	struct rpmem_fip_rma write;	/* WRITE message */
 	struct rpmem_fip_msg send;	/* SEND message */
 	struct rpmem_fip_msg recv;	/* RECV message */
-
-};
+} LANE_ALIGN;
 
 /*
  * rpmem_fip_rlane -- read operation's lane
@@ -142,7 +144,7 @@ struct rpmem_fip {
 	struct fid_domain *domain; /* fabric protection domain */
 	struct fid_eq *eq; /* event queue */
 
-	volatile int closing; /* closing connections in progress */
+	int closing; /* closing connections in progress */
 
 	size_t cq_size;	/* completion queue size */
 
@@ -157,12 +159,9 @@ struct rpmem_fip {
 	struct rpmem_fip_ops *ops;
 
 	unsigned nlanes;
-	union {
-		struct rpmem_fip_lane base;
-		struct rpmem_fip_plane_apm apm;
-		struct rpmem_fip_plane_gpspm gpspm;
-	} LANE_UNION_ALIGN *lanes;
+	struct rpmem_fip_plane *lanes;
 
+	os_thread_t monitor;
 
 	struct rpmem_msg_persist *pmsg;	/* persist message buffer */
 	struct fid_mr *pmsg_mr;		/* persist message memory region */
@@ -175,7 +174,34 @@ struct rpmem_fip {
 	void *raw_buff;			/* READ-after-WRITE buffer */
 	struct fid_mr *raw_mr;		/* RAW memory region */
 	void *raw_mr_desc;		/* RAW memory descriptor */
+
+	cq_read_fn cq_read;		/* CQ read function */
 };
+
+/*
+ * rpmem_fip_is_closing -- (internal) atomically reads and returns the
+ * closing flag
+ */
+static inline int
+rpmem_fip_is_closing(struct rpmem_fip *fip)
+{
+	int ret;
+	util_atomic_load_explicit32(&fip->closing, &ret, memory_order_acquire);
+	return ret;
+}
+
+/*
+ * rpmem_fip_set_closing -- (internal) atomically set the closing flag
+ */
+static inline void
+rpmem_fip_set_closing(struct rpmem_fip *fip)
+{
+	/*
+	 * load and store without barriers should be good enough here.
+	 * fetch_and_or are used as workaround for helgrind issue.
+	 */
+	util_fetch_and_or32(&fip->closing, 1);
+}
 
 /*
  * rpmem_fip_lane_begin -- (internal) intialize list of events for lane
@@ -301,10 +327,11 @@ rpmem_fip_lane_wait(struct rpmem_fip *fip, struct rpmem_fip_lane *lanep,
 	int ret = 0;
 	struct fi_cq_msg_entry cq_entry;
 
-	while (!fip->closing && (lanep->event & e)) {
-		sret = fi_cq_sread(lanep->cq, &cq_entry, 1, NULL, -1);
-		if (unlikely(fip->closing))
-			return 0;
+	while (lanep->event & e) {
+		if (unlikely(rpmem_fip_is_closing(fip)))
+			return ECONNRESET;
+
+		sret = fip->cq_read(lanep->cq, &cq_entry, 1);
 
 		if (unlikely(sret == -FI_EAGAIN) || sret == 0)
 			continue;
@@ -329,6 +356,9 @@ err_cq_read:
 	str_err = fi_cq_strerror(lanep->cq, err.prov_errno, NULL, NULL, 0);
 	RPMEM_LOG(ERR, "error reading from completion queue: %s", str_err);
 err:
+	if (unlikely(rpmem_fip_is_closing(fip)))
+		return ECONNRESET; /* it will be passed to errno */
+
 	return ret;
 }
 
@@ -351,7 +381,7 @@ static int
 rpmem_fip_getinfo(struct rpmem_fip *fip, const char *node, const char *service,
 	enum rpmem_provider provider, enum rpmem_persist_method pm)
 {
-	int ret = 0;
+	int ret = -1;
 	struct fi_info *hints = rpmem_fip_get_hints(provider);
 	if (!hints) {
 		RPMEM_LOG(ERR, "!getting fabric interface information hints");
@@ -579,166 +609,92 @@ rpmem_fip_lanes_connect(struct rpmem_fip *fip)
 }
 
 /*
- * rpmem_fip_init_lanes_apm -- (internal) initialize lanes for APM
+ * rpmem_fip_lanes_shutdown -- shutdown all endpoints
  */
 static int
-rpmem_fip_init_lanes_apm(struct rpmem_fip *fip)
+rpmem_fip_lanes_shutdown(struct rpmem_fip *fip)
 {
-	ASSERTne(Pagesize, 0);
+	int ret;
+	int lret = 0;
+
+	for (unsigned i = 0; i < fip->nlanes; i++) {
+		ret = fi_shutdown(fip->lanes[i].base.ep, 0);
+		if (ret) {
+			RPMEM_FI_ERR(ret, "disconnecting endpoint");
+			lret = ret;
+		}
+	}
+
+	return lret;
+}
+
+
+/*
+ * rpmem_fip_monitor_thread -- (internal) monitor in-band connection
+ */
+static void *
+rpmem_fip_monitor_thread(void *arg)
+{
+	struct rpmem_fip *fip = (struct rpmem_fip *)arg;
+	struct fi_eq_cm_entry entry;
+	uint32_t event;
 	int ret;
 
-	ASSERT(IS_PAGE_ALIGNED(RPMEM_RAW_BUFF_SIZE));
-	errno = posix_memalign((void **)&fip->raw_buff, Pagesize,
-			RPMEM_RAW_BUFF_SIZE);
+	while (!rpmem_fip_is_closing(fip)) {
+		ret = rpmem_fip_read_eq(fip->eq, &entry, &event,
+				RPMEM_MONITOR_TIMEOUT);
+		if (unlikely(ret == 0) && event == FI_SHUTDOWN) {
+			RPMEM_LOG(ERR, "event queue got FI_SHUTDOWN");
+
+			/* mark in-band connection as closing */
+			rpmem_fip_set_closing(fip);
+
+			for (unsigned i = 0; i < fip->nlanes; i++) {
+				fi_cq_signal(fip->lanes[i].base.cq);
+			}
+		}
+	}
+
+	return NULL;
+}
+
+/*
+ * rpmem_fip_monitor_init -- (internal) initialize in-band monitor
+ */
+static int
+rpmem_fip_monitor_init(struct rpmem_fip *fip)
+{
+	errno = os_thread_create(&fip->monitor, NULL, rpmem_fip_monitor_thread,
+			fip);
 	if (errno) {
-		RPMEM_LOG(ERR, "!allocating APM RAW buffer");
-		goto err_malloc_raw;
+		RPMEM_LOG(ERR, "!connenction monitor thread");
+		return -1;
 	}
 
-	/* register read-after-write buffer */
-	ret = fi_mr_reg(fip->domain, fip->raw_buff, RPMEM_RAW_BUFF_SIZE,
-			FI_REMOTE_WRITE, 0, 0, 0, &fip->raw_mr, NULL);
+	return 0;
+}
+
+/*
+ * rpmem_fip_monitor_fini -- (internal) finalize in-band monitor
+ */
+static int
+rpmem_fip_monitor_fini(struct rpmem_fip *fip)
+{
+	rpmem_fip_set_closing(fip);
+
+	int ret = os_thread_join(&fip->monitor, NULL);
 	if (ret) {
-		RPMEM_FI_ERR(ret, "registering APM read buffer");
-		goto err_fi_raw_mr;
-	}
-
-	/* get read-after-write buffer local descriptor */
-	fip->raw_mr_desc = fi_mr_desc(fip->raw_mr);
-
-	/*
-	 * Initialize all required structures for:
-	 * WRITE and READ operations.
-	 *
-	 * If the completion is required the FI_COMPLETION flag and
-	 * appropriate context should be used.
-	 *
-	 * In APM only the READ completion is required.
-	 * The context is a lane structure.
-	 */
-	for (unsigned i = 0; i < fip->nlanes; i++) {
-
-		/* WRITE */
-		rpmem_fip_rma_init(&fip->lanes[i].apm.write,
-				fip->mr_desc, 0,
-				fip->rkey,
-				&fip->lanes[i].apm,
-				0);
-
-		/* READ */
-		rpmem_fip_rma_init(&fip->lanes[i].apm.read,
-				fip->raw_mr_desc, 0,
-				fip->rkey,
-				&fip->lanes[i].apm,
-				FI_COMPLETION);
-	}
-
-	return 0;
-err_fi_raw_mr:
-	free(fip->raw_buff);
-err_malloc_raw:
-	return -1;
-}
-
-/*
- * rpmem_fip_fini_lanes_apm -- (internal) deinitialize lanes for APM
- */
-static void
-rpmem_fip_fini_lanes_apm(struct rpmem_fip *fip)
-{
-	RPMEM_FI_CLOSE(fip->raw_mr, "unregistering APM read buffer");
-	free(fip->raw_buff);
-}
-
-/*
- * rpmem_fip_post_lanes_apm -- (internal) post APM-related buffers
- */
-static int
-rpmem_fip_post_lanes_apm(struct rpmem_fip *fip)
-{
-	/* nothing to do */
-	return 0;
-}
-
-/*
- * rpmem_fip_persist_apm -- (internal) perform persist operation for APM
- */
-static int
-rpmem_fip_persist_apm(struct rpmem_fip *fip, size_t offset,
-	size_t len, unsigned lane)
-{
-	struct rpmem_fip_plane_apm *lanep = &fip->lanes[lane].apm;
-
-	int ret;
-	void *laddr = (void *)((uintptr_t)fip->laddr + offset);
-	uint64_t raddr = fip->raddr + offset;
-
-	rpmem_fip_lane_begin(&lanep->base, FI_READ);
-
-	/* WRITE for requested memory region */
-	ret = rpmem_fip_writemsg(lanep->base.ep,
-			&lanep->write, laddr, len, raddr);
-	if (unlikely(ret)) {
-		RPMEM_FI_ERR(ret, "RMA write");
-		return ret;
-	}
-
-	/* READ to read-after-write buffer */
-	ret = rpmem_fip_readmsg(lanep->base.ep, &lanep->read, fip->raw_buff,
-			RPMEM_RAW_SIZE, raddr);
-	if (unlikely(ret)) {
-		RPMEM_FI_ERR(ret, "RMA read");
-		return ret;
-	}
-
-	/* wait for READ completion */
-	ret = rpmem_fip_lane_wait(fip, &lanep->base, FI_READ);
-	if (unlikely(ret)) {
-		ERR("waiting for READ completion failed");
-		return ret;
+		RPMEM_LOG(ERR, "joining monitor thread failed");
 	}
 
 	return ret;
 }
 
 /*
- * rpmem_fip_gpspm_post_resp -- (internal) post persist response message buffer
- */
-static inline int
-rpmem_fip_gpspm_post_resp(struct rpmem_fip *fip,
-	struct rpmem_fip_plane_gpspm *lanep)
-{
-	int ret = rpmem_fip_recvmsg(lanep->base.ep, &lanep->recv);
-	if (unlikely(ret)) {
-		RPMEM_FI_ERR(ret, "posting GPSPM recv buffer");
-		return ret;
-	}
-
-	return 0;
-}
-
-/*
- * rpmem_fip_post_lanes_gpspm -- (internal) post all persist response message
- * buffers
+ * rpmem_fip_init_lanes_common -- (internal) initialize lanes
  */
 static int
-rpmem_fip_post_lanes_gpspm(struct rpmem_fip *fip)
-{
-	int ret = 0;
-	for (unsigned i = 0; i < fip->nlanes; i++) {
-		ret = rpmem_fip_gpspm_post_resp(fip, &fip->lanes[i].gpspm);
-		if (ret)
-			break;
-	}
-
-	return ret;
-}
-
-/*
- * rpmem_fip_init_lanes_gpspm -- (internal) initialize lanes for GPSPM
- */
-static int
-rpmem_fip_init_lanes_gpspm(struct rpmem_fip *fip)
+rpmem_fip_init_lanes_common(struct rpmem_fip *fip)
 {
 	ASSERTne(Pagesize, 0);
 
@@ -793,6 +749,23 @@ rpmem_fip_init_lanes_gpspm(struct rpmem_fip *fip)
 	/* get persist response messages buffer local descriptor */
 	fip->pres_mr_desc = fi_mr_desc(fip->pres_mr);
 
+	return 0;
+err_fi_mr_reg_pres:
+	free(fip->pres);
+err_malloc_pres:
+	RPMEM_FI_CLOSE(fip->pmsg_mr, "unregistering messages buffer");
+err_fi_mr_reg_pmsg:
+	free(fip->pmsg);
+err_malloc_pmsg:
+	return ret;
+}
+
+/*
+ * rpmem_fip_init_mem_lanes_gpspm -- initialize lanes rma structures
+ */
+static int
+rpmem_fip_init_mem_lanes_gpspm(struct rpmem_fip *fip)
+{
 	/*
 	 * Initialize all required structures for:
 	 * WRITE, SEND and RECV operations.
@@ -814,45 +787,37 @@ rpmem_fip_init_lanes_gpspm(struct rpmem_fip *fip)
 	unsigned i;
 	for (i = 0; i < fip->nlanes; i++) {
 		/* WRITE */
-		rpmem_fip_rma_init(&fip->lanes[i].gpspm.write,
+		rpmem_fip_rma_init(&fip->lanes[i].write,
 				fip->mr_desc, 0,
 				fip->rkey,
-				&fip->lanes[i].gpspm,
+				&fip->lanes[i],
 				0);
 
 		/* SEND */
-		rpmem_fip_msg_init(&fip->lanes[i].gpspm.send,
+		rpmem_fip_msg_init(&fip->lanes[i].send,
 				fip->pmsg_mr_desc, 0,
-				&fip->lanes[i].gpspm,
+				&fip->lanes[i],
 				&fip->pmsg[i],
 				sizeof(fip->pmsg[i]),
 				FI_COMPLETION);
 
 		/* RECV */
-		rpmem_fip_msg_init(&fip->lanes[i].gpspm.recv,
+		rpmem_fip_msg_init(&fip->lanes[i].recv,
 				fip->pres_mr_desc, 0,
-				&fip->lanes[i].gpspm.recv,
+				&fip->lanes[i].recv,
 				&fip->pres[i],
 				sizeof(fip->pres[i]),
 				FI_COMPLETION);
 	}
 
 	return 0;
-err_fi_mr_reg_pres:
-	free(fip->pres);
-err_malloc_pres:
-	RPMEM_FI_CLOSE(fip->pmsg_mr, "unregistering messages buffer");
-err_fi_mr_reg_pmsg:
-	free(fip->pmsg);
-err_malloc_pmsg:
-	return ret;
 }
 
 /*
- * rpmem_fip_fini_lanes_gpspm -- (internal) deinitialize lanes for GPSPM
+ * rpmem_fip_fini_lanes_common -- (internal) deinitialize lanes for GPSPM
  */
 static void
-rpmem_fip_fini_lanes_gpspm(struct rpmem_fip *fip)
+rpmem_fip_fini_lanes_common(struct rpmem_fip *fip)
 {
 	RPMEM_FI_CLOSE(fip->pmsg_mr, "unregistering messages buffer");
 	RPMEM_FI_CLOSE(fip->pres_mr, "unregistering messages "
@@ -861,18 +826,182 @@ rpmem_fip_fini_lanes_gpspm(struct rpmem_fip *fip)
 	free(fip->pres);
 }
 
+
 /*
- * rpmem_fip_persist_gpspm -- (internal) perform persist operation for GPSPM
+ * rpmem_fip_init_lanes_apm -- (internal) initialize lanes for APM
  */
 static int
-rpmem_fip_persist_gpspm(struct rpmem_fip *fip, size_t offset,
+rpmem_fip_init_lanes_apm(struct rpmem_fip *fip)
+{
+	ASSERTne(Pagesize, 0);
+	int ret;
+
+	ret = rpmem_fip_init_lanes_common(fip);
+	if (ret)
+		goto err_init_lanes_common;
+
+	ASSERT(IS_PAGE_ALIGNED(RPMEM_RAW_BUFF_SIZE));
+	errno = posix_memalign((void **)&fip->raw_buff, Pagesize,
+			RPMEM_RAW_BUFF_SIZE);
+	if (errno) {
+		RPMEM_LOG(ERR, "!allocating APM RAW buffer");
+		goto err_malloc_raw;
+	}
+
+	/* register read-after-write buffer */
+	ret = fi_mr_reg(fip->domain, fip->raw_buff, RPMEM_RAW_BUFF_SIZE,
+			FI_REMOTE_WRITE, 0, 0, 0, &fip->raw_mr, NULL);
+	if (ret) {
+		RPMEM_FI_ERR(ret, "registering APM read buffer");
+		goto err_fi_raw_mr;
+	}
+
+	/* get read-after-write buffer local descriptor */
+	fip->raw_mr_desc = fi_mr_desc(fip->raw_mr);
+
+	return 0;
+err_fi_raw_mr:
+	free(fip->raw_buff);
+err_malloc_raw:
+	rpmem_fip_fini_lanes_common(fip);
+err_init_lanes_common:
+	return -1;
+}
+
+/*
+ * rpmem_fip_init_mem_lanes_apm -- initialize lanes rma structures
+ */
+static int
+rpmem_fip_init_mem_lanes_apm(struct rpmem_fip *fip)
+{
+	/*
+	 * Initialize all required structures for:
+	 * WRITE and READ operations.
+	 *
+	 * If the completion is required the FI_COMPLETION flag and
+	 * appropriate context should be used.
+	 *
+	 * In APM only the READ completion is required.
+	 * The context is a lane structure.
+	 */
+	for (unsigned i = 0; i < fip->nlanes; i++) {
+
+		/* WRITE */
+		rpmem_fip_rma_init(&fip->lanes[i].write,
+				fip->mr_desc, 0,
+				fip->rkey,
+				&fip->lanes[i],
+				0);
+
+		/* READ */
+		rpmem_fip_rma_init(&fip->lanes[i].read,
+				fip->raw_mr_desc, 0,
+				fip->rkey,
+				&fip->lanes[i],
+				FI_COMPLETION);
+
+		/* SEND */
+		rpmem_fip_msg_init(&fip->lanes[i].send,
+				fip->pmsg_mr_desc, 0,
+				&fip->lanes[i],
+				&fip->pmsg[i],
+				sizeof(fip->pmsg[i]),
+				FI_COMPLETION);
+
+		/* RECV */
+		rpmem_fip_msg_init(&fip->lanes[i].recv,
+				fip->pres_mr_desc, 0,
+				&fip->lanes[i].recv,
+				&fip->pres[i],
+				sizeof(fip->pres[i]),
+				FI_COMPLETION);
+	}
+
+	return 0;
+}
+
+/*
+ * rpmem_fip_fini_lanes_apm -- (internal) deinitialize lanes for APM
+ */
+static void
+rpmem_fip_fini_lanes_apm(struct rpmem_fip *fip)
+{
+	RPMEM_FI_CLOSE(fip->raw_mr, "unregistering APM read buffer");
+	free(fip->raw_buff);
+
+	rpmem_fip_fini_lanes_common(fip);
+}
+
+/*
+ * rpmem_fip_persist_raw -- (internal) perform persist operation using
+ * READ after WRITE mechanism
+ */
+static int
+rpmem_fip_persist_raw(struct rpmem_fip *fip, size_t offset,
 	size_t len, unsigned lane)
 {
-	struct rpmem_fip_plane_gpspm *lanep = &fip->lanes[lane].gpspm;
+	struct rpmem_fip_plane *lanep = &fip->lanes[lane];
+
+	int ret;
+	void *laddr = (void *)((uintptr_t)fip->laddr + offset);
+	uint64_t raddr = fip->raddr + offset;
+
+	rpmem_fip_lane_begin(&lanep->base, FI_READ);
+
+	/* WRITE for requested memory region */
+	ret = rpmem_fip_writemsg(lanep->base.ep,
+			&lanep->write, laddr, len, raddr);
+	if (unlikely(ret)) {
+		RPMEM_FI_ERR(ret, "RMA write");
+		return ret;
+	}
+
+	/* READ to read-after-write buffer */
+	ret = rpmem_fip_readmsg(lanep->base.ep, &lanep->read, fip->raw_buff,
+			RPMEM_RAW_SIZE, fip->raddr);
+	if (unlikely(ret)) {
+		RPMEM_FI_ERR(ret, "RMA read");
+		return ret;
+	}
+
+	/* wait for READ completion */
+	ret = rpmem_fip_lane_wait(fip, &lanep->base, FI_READ);
+	if (unlikely(ret)) {
+		ERR("waiting for READ completion failed");
+		return ret;
+	}
+
+	return ret;
+}
+
+/*
+ * rpmem_fip_post_resp -- (internal) post persist response message buffer
+ */
+static inline int
+rpmem_fip_post_resp(struct rpmem_fip *fip,
+	struct rpmem_fip_plane *lanep)
+{
+	int ret = rpmem_fip_recvmsg(lanep->base.ep, &lanep->recv);
+	if (unlikely(ret)) {
+		RPMEM_FI_ERR(ret, "posting recv buffer");
+		return ret;
+	}
+
+	return 0;
+}
+
+/*
+ * rpmem_fip_persist_saw -- (internal) perform persist operation using
+ * SEND after WRITE mechanism
+ */
+static int
+rpmem_fip_persist_saw(struct rpmem_fip *fip, size_t offset,
+	size_t len, unsigned lane, unsigned flags)
+{
+	struct rpmem_fip_plane *lanep = &fip->lanes[lane];
 	void *laddr = (void *)((uintptr_t)fip->laddr + offset);
 	uint64_t raddr = fip->raddr + offset;
 	struct rpmem_msg_persist *msg;
-	struct rpmem_fip_plane_gpspm *gpspm = (void *)lanep;
 	int ret;
 
 	ret = rpmem_fip_lane_wait(fip, &lanep->base, FI_SEND);
@@ -885,19 +1014,20 @@ rpmem_fip_persist_gpspm(struct rpmem_fip *fip, size_t offset,
 
 	/* WRITE for requested memory region */
 	ret = rpmem_fip_writemsg(lanep->base.ep,
-			&gpspm->write, laddr, len, raddr);
+			&lanep->write, laddr, len, raddr);
 	if (unlikely(ret)) {
 		RPMEM_FI_ERR((int)ret, "RMA write");
 		return ret;
 	}
 
 	/* SEND persist message */
-	msg = rpmem_fip_msg_get_pmsg(&gpspm->send);
+	msg = rpmem_fip_msg_get_pmsg(&lanep->send);
+	msg->flags = flags;
 	msg->lane = lane;
 	msg->addr = raddr;
 	msg->size = len;
 
-	ret = rpmem_fip_sendmsg(lanep->base.ep, &gpspm->send);
+	ret = rpmem_fip_sendmsg(lanep->base.ep, &lanep->send);
 	if (unlikely(ret)) {
 		RPMEM_FI_ERR(ret, "MSG send");
 		return ret;
@@ -910,7 +1040,7 @@ rpmem_fip_persist_gpspm(struct rpmem_fip *fip, size_t offset,
 		return ret;
 	}
 
-	ret = rpmem_fip_gpspm_post_resp(fip, lanep);
+	ret = rpmem_fip_post_resp(fip, lanep);
 	if (unlikely(ret)) {
 		ERR("posting RECV buffer failed");
 		return ret;
@@ -920,20 +1050,52 @@ rpmem_fip_persist_gpspm(struct rpmem_fip *fip, size_t offset,
 }
 
 /*
+ * rpmem_fip_persist_apm -- (internal) perform persist operation for APM
+ */
+static int
+rpmem_fip_persist_apm(struct rpmem_fip *fip, size_t offset,
+	size_t len, unsigned lane, unsigned flags)
+{
+	if (unlikely(flags & RPMEM_DEEP_PERSIST))
+		return rpmem_fip_persist_saw(fip, offset, len, lane, flags);
+
+	return rpmem_fip_persist_raw(fip, offset, len, lane);
+}
+
+/*
+ * rpmem_fip_post_lanes_common -- (internal) post all persist response message
+ * buffers
+ */
+static int
+rpmem_fip_post_lanes_common(struct rpmem_fip *fip)
+{
+	int ret = 0;
+	for (unsigned i = 0; i < fip->nlanes; i++) {
+		ret = rpmem_fip_post_resp(fip, &fip->lanes[i]);
+		if (ret)
+			break;
+	}
+
+	return ret;
+}
+
+/*
  * rpmem_fip_ops -- some operations specific for persistency method used
  */
 static struct rpmem_fip_ops rpmem_fip_ops[MAX_RPMEM_PM] = {
 	[RPMEM_PM_GPSPM] = {
-		.persist = rpmem_fip_persist_gpspm,
-		.lanes_init = rpmem_fip_init_lanes_gpspm,
-		.lanes_fini = rpmem_fip_fini_lanes_gpspm,
-		.lanes_post = rpmem_fip_post_lanes_gpspm,
+		.persist = rpmem_fip_persist_saw,
+		.lanes_init = rpmem_fip_init_lanes_common,
+		.lanes_init_mem = rpmem_fip_init_mem_lanes_gpspm,
+		.lanes_fini = rpmem_fip_fini_lanes_common,
+		.lanes_post = rpmem_fip_post_lanes_common,
 	},
 	[RPMEM_PM_APM] = {
 		.persist = rpmem_fip_persist_apm,
 		.lanes_init = rpmem_fip_init_lanes_apm,
+		.lanes_init_mem = rpmem_fip_init_mem_lanes_apm,
 		.lanes_fini = rpmem_fip_fini_lanes_apm,
-		.lanes_post = rpmem_fip_post_lanes_apm,
+		.lanes_post = rpmem_fip_post_lanes_common,
 	},
 };
 
@@ -978,6 +1140,9 @@ rpmem_fip_init(const char *node, const char *service,
 	if (ret)
 		goto err_getinfo;
 
+	fip->cq_read = attr->provider == RPMEM_PROV_LIBFABRIC_VERBS ?
+		fi_cq_read : cq_read_infinite;
+
 	rpmem_fip_set_attr(fip, attr);
 
 	*nlanes = fip->nlanes;
@@ -986,18 +1151,12 @@ rpmem_fip_init(const char *node, const char *service,
 	if (ret)
 		goto err_init_fabric_res;
 
-	ret = rpmem_fip_init_memory(fip);
-	if (ret)
-		goto err_init_memory;
-
 	ret = rpmem_fip_lanes_init(fip);
 	if (ret)
 		goto err_init_lanes;
 
 	return fip;
 err_init_lanes:
-	rpmem_fip_fini_memory(fip);
-err_init_memory:
 	rpmem_fip_fini_fabric_res(fip);
 err_init_fabric_res:
 	fi_freeinfo(fip->fi);
@@ -1014,7 +1173,6 @@ rpmem_fip_fini(struct rpmem_fip *fip)
 {
 	fip->ops->lanes_fini(fip);
 	rpmem_fip_lanes_fini_common(fip);
-	rpmem_fip_fini_memory(fip);
 	rpmem_fip_fini_fabric_res(fip);
 	fi_freeinfo(fip->fi);
 	free(fip);
@@ -1028,17 +1186,35 @@ rpmem_fip_connect(struct rpmem_fip *fip)
 {
 	int ret;
 
-	ret = fip->ops->lanes_post(fip);
-	if (ret)
-		goto err_lanes_post;
-
 	ret = rpmem_fip_lanes_connect(fip);
 	if (ret)
 		goto err_lanes_connect;
 
+	ret = rpmem_fip_monitor_init(fip);
+	if (ret)
+		goto err_monitor;
+
+	ret = rpmem_fip_init_memory(fip);
+	if (ret)
+		goto err_init_memory;
+
+	ret = fip->ops->lanes_init_mem(fip);
+	if (ret)
+		goto err_init_lanes_mem;
+
+	ret = fip->ops->lanes_post(fip);
+	if (ret)
+		goto err_lanes_post;
+
 	return 0;
-err_lanes_connect:
 err_lanes_post:
+err_init_lanes_mem:
+	rpmem_fip_fini_memory(fip);
+err_init_memory:
+	rpmem_fip_monitor_fini(fip);
+err_monitor:
+	rpmem_fip_lanes_shutdown(fip);
+err_lanes_connect:
 	return ret;
 }
 
@@ -1050,13 +1226,21 @@ rpmem_fip_close(struct rpmem_fip *fip)
 {
 	int ret;
 	int lret = 0;
-	for (unsigned i = 0; i < fip->nlanes; i++) {
-		ret = fi_shutdown(fip->lanes[i].base.ep, 0);
-		if (ret) {
-			RPMEM_FI_ERR(ret, "disconnecting endpoint");
-			lret = ret;
-		}
-	}
+
+	if (unlikely(rpmem_fip_is_closing(fip)))
+		goto close_monitor;
+
+	rpmem_fip_fini_memory(fip);
+
+	ret = rpmem_fip_lanes_shutdown(fip);
+	if (ret)
+		lret = ret;
+
+close_monitor:
+	/* close fip monitor */
+	ret = rpmem_fip_monitor_fini(fip);
+	if (ret)
+		lret = ret;
 
 	return lret;
 }
@@ -1066,13 +1250,18 @@ rpmem_fip_close(struct rpmem_fip *fip)
  */
 int
 rpmem_fip_persist(struct rpmem_fip *fip, size_t offset, size_t len,
-	unsigned lane)
+	unsigned lane, unsigned flags)
 {
+	RPMEM_ASSERT((flags & RPMEM_FLAGS_MASK) == 0);
+
+	if (unlikely(rpmem_fip_is_closing(fip)))
+		return ECONNRESET; /* it will be passed to errno */
+
 	RPMEM_ASSERT(lane < fip->nlanes);
 	if (unlikely(lane >= fip->nlanes))
 		return EINVAL; /* it will be passed to errno */
 
-	if (unlikely(offset + len > fip->size))
+	if (unlikely(offset > fip->size || offset + len > fip->size))
 		return EINVAL; /* it will be passed to errno */
 
 	if (unlikely(len == 0)) {
@@ -1085,7 +1274,7 @@ rpmem_fip_persist(struct rpmem_fip *fip, size_t offset, size_t len,
 		size_t tmp_len = len < fip->fi->ep_attr->max_msg_size ?
 			len : fip->fi->ep_attr->max_msg_size;
 
-		ret = fip->ops->persist(fip, offset, tmp_len, lane);
+		ret = fip->ops->persist(fip, offset, tmp_len, lane, flags);
 		if (ret) {
 			RPMEM_LOG(ERR, "persist operation failed");
 			goto err;
@@ -1095,6 +1284,9 @@ rpmem_fip_persist(struct rpmem_fip *fip, size_t offset, size_t len,
 		len -= tmp_len;
 	}
 err:
+	if (unlikely(rpmem_fip_is_closing(fip)))
+		return ECONNRESET; /* it will be passed to errno */
+
 	return ret;
 }
 
@@ -1106,6 +1298,10 @@ rpmem_fip_read(struct rpmem_fip *fip, void *buff, size_t len,
 	size_t off, unsigned lane)
 {
 	int ret;
+
+	if (unlikely(rpmem_fip_is_closing(fip)))
+		return ECONNRESET; /* it will be passed to errno */
+
 	RPMEM_ASSERT(lane < fip->nlanes);
 	if (unlikely(lane >= fip->nlanes))
 		return EINVAL; /* it will be passed to errno */
@@ -1189,6 +1385,9 @@ err_readmsg:
 err_rd_mr:
 	free(rd_buff);
 err_malloc_rd_buff:
+	if (unlikely(rpmem_fip_is_closing(fip)))
+		return ECONNRESET; /* it will be passed to errno */
+
 	return ret;
 }
 

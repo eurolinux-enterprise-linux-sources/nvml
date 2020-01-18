@@ -41,6 +41,7 @@ LIBPMEMOBJ_1.0 {
 		pmemobj_open;
 		pmemobj_close;
 		pmemobj_check;
+		pmemobj_ctl_exec;
 		pmemobj_ctl_get;
 		pmemobj_ctl_set;
 		pmemobj_mutex_zero;
@@ -65,6 +66,7 @@ LIBPMEMOBJ_1.0 {
 		pmemobj_pool_by_ptr;
 		pmemobj_oid;
 		pmemobj_alloc;
+		pmemobj_xalloc;
 		pmemobj_zalloc;
 		pmemobj_realloc;
 		pmemobj_zrealloc;
@@ -108,6 +110,12 @@ LIBPMEMOBJ_1.0 {
 		pmemobj_flush;
 		pmemobj_drain;
 		pmemobj_direct;
+		pmemobj_reserve;
+		pmemobj_xreserve;
+		pmemobj_set_value;
+		pmemobj_publish;
+		pmemobj_tx_publish;
+		pmemobj_cancel;
 		_pobj_cached_pool;
 		_pobj_cache_invalidate;
 		_pobj_debug_notice;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -55,8 +55,6 @@
 #include "srcversion.h"
 #endif
 
-static char nvml_src_version[] = "SRCVERSION:" SRCVERSION;
-
 static const char *Log_prefix;
 static int Log_level;
 static FILE *Out_fp;
@@ -110,6 +108,7 @@ Last_errormsg_fini(void)
 		Free(p);
 		(void) os_tls_set(Last_errormsg_key, NULL);
 	}
+	(void) os_tls_key_delete(Last_errormsg_key);
 }
 
 static inline struct errormsg *
@@ -161,36 +160,6 @@ Last_errormsg_get(void)
 }
 
 #endif /* NO_LIBPTHREAD */
-
-#ifdef DEBUG
-/*
- * getexecname -- return name of current executable
- *
- * This function is only used when logging is enabled, to make
- * it more clear in the log which program was running.
- */
-static const char *
-getexecname(void)
-{
-	static char namepath[PATH_MAX];
-	ssize_t cc;
-
-#ifndef _WIN32
-	char procpath[PATH_MAX];
-
-	snprintf(procpath, PATH_MAX, "/proc/%d/exe", getpid());
-
-	if ((cc = readlink(procpath, namepath, PATH_MAX)) < 0)
-#else
-	if ((cc = GetModuleFileNameA(NULL, namepath, PATH_MAX)) == 0)
-#endif
-		strcpy(namepath, "unknown");
-	else
-		namepath[cc] = '\0';
-
-	return namepath;
-}
-#endif	/* DEBUG */
 
 /*
  * out_init -- initialize the log
@@ -249,7 +218,7 @@ out_init(const char *log_prefix, const char *log_level_var,
 	}
 #endif	/* DEBUG */
 
-	char *log_alignment = os_getenv("NVML_LOG_ALIGN");
+	char *log_alignment = os_getenv("PMDK_LOG_ALIGN");
 	if (log_alignment) {
 		int align = atoi(log_alignment);
 		if (align > 0)
@@ -262,11 +231,16 @@ out_init(const char *log_prefix, const char *log_level_var,
 		setlinebuf(Out_fp);
 
 #ifdef DEBUG
-	LOG(1, "pid %d: program: %s", getpid(), getexecname());
+	static char namepath[PATH_MAX];
+	LOG(1, "pid %d: program: %s", getpid(),
+		util_getexecname(namepath, PATH_MAX));
 #endif
 	LOG(1, "%s version %d.%d", log_prefix, major_version, minor_version);
-	LOG(1, "src version %s", nvml_src_version);
-#ifdef USE_VG_PMEMCHECK
+
+	static __attribute__((used)) const char *version_msg =
+			"src version: " SRCVERSION;
+	LOG(1, "%s", version_msg);
+#if VG_PMEMCHECK_ENABLED
 	/*
 	 * Attribute "used" to prevent compiler from optimizing out the variable
 	 * when LOG expands to no code (!DEBUG)
@@ -274,22 +248,22 @@ out_init(const char *log_prefix, const char *log_level_var,
 	static __attribute__((used)) const char *pmemcheck_msg =
 			"compiled with support for Valgrind pmemcheck";
 	LOG(1, "%s", pmemcheck_msg);
-#endif /* USE_VG_PMEMCHECK */
-#ifdef USE_VG_HELGRIND
+#endif /* VG_PMEMCHECK_ENABLED */
+#if VG_HELGRIND_ENABLED
 	static __attribute__((used)) const char *helgrind_msg =
 			"compiled with support for Valgrind helgrind";
 	LOG(1, "%s", helgrind_msg);
-#endif /* USE_VG_HELGRIND */
-#ifdef USE_VG_MEMCHECK
+#endif /* VG_HELGRIND_ENABLED */
+#if VG_MEMCHECK_ENABLED
 	static __attribute__((used)) const char *memcheck_msg =
 			"compiled with support for Valgrind memcheck";
 	LOG(1, "%s", memcheck_msg);
-#endif /* USE_VG_MEMCHECK */
-#ifdef USE_VG_DRD
+#endif /* VG_MEMCHECK_ENABLED */
+#if VG_DRD_ENABLED
 	static __attribute__((used)) const char *drd_msg =
 			"compiled with support for Valgrind drd";
 	LOG(1, "%s", drd_msg);
-#endif /* USE_VG_DRD */
+#endif /* VG_DRD_ENABLED */
 
 	Last_errormsg_key_alloc();
 }

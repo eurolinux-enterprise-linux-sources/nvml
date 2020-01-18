@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,9 +44,11 @@
 
 #include "alloc_class.h"
 
+#include "set.h"
 #include "common.h"
 #include "output.h"
 #include "info.h"
+#include "util.h"
 
 #define BITMAP_BUFF_SIZE 1024
 
@@ -162,8 +164,8 @@ get_bitmap_reserved(struct chunk_run *run, uint32_t *reserved)
 
 	uint32_t ret = 0;
 	for (uint64_t i = 0; i < nvals - 1; i++)
-		ret += util_count_ones(run->bitmap[i]);
-	ret += util_count_ones(run->bitmap[nvals - 1] & ~last_val);
+		ret += util_popcount64(run->bitmap[i]);
+	ret += util_popcount64(run->bitmap[nvals - 1] & ~last_val);
 
 	*reserved = ret;
 
@@ -276,7 +278,7 @@ info_obj_pvector(struct pmem_info *pip, int vnum, int vobj,
 		exit(EXIT_FAILURE);
 	}
 
-	size_t nvalues = pvector_nvalues(ctx);
+	size_t nvalues = pvector_size(ctx);
 	outv_field(vnum, name, "%lu element%s", nvalues,
 			nvalues != 1 ? "s" : "");
 
@@ -514,13 +516,11 @@ info_obj_heap(struct pmem_info *pip)
 	outv_field(v, "Signature", "%s", heap->signature);
 	outv_field(v, "Major", "%ld", heap->major);
 	outv_field(v, "Minor", "%ld", heap->minor);
-	outv_field(v, "Size", "%s",
-			out_get_size_str(heap->size, pip->args.human));
 	outv_field(v, "Chunk size", "%s",
 			out_get_size_str(heap->chunksize, pip->args.human));
 	outv_field(v, "Chunks per zone", "%ld", heap->chunks_per_zone);
 	outv_field(v, "Checksum", "%s", out_get_checksum(heap, sizeof(*heap),
-				&heap->checksum));
+			&heap->checksum, 0));
 }
 
 /*
@@ -675,8 +675,9 @@ info_obj_chunk(struct pmem_info *pip, uint64_t c, uint64_t z,
 				sizeof(run->block_size) + sizeof(run->bitmap),
 				PTR_TO_OFF(pop, run), 1);
 
-		struct alloc_class *aclass = alloc_class_by_unit_size(
-			pip->obj.alloc_classes, run->block_size);
+		struct alloc_class *aclass = alloc_class_by_run(
+			pip->obj.alloc_classes,
+			run->block_size, m.header_type, m.size_idx);
 		if (aclass) {
 			outv_field(v, "Block size", "%s",
 					out_get_size_str(run->block_size,
@@ -850,7 +851,7 @@ info_obj_descriptor(struct pmem_info *pip)
 	outv_field(v, "Heap offset", "0x%lx", pop->heap_offset);
 	outv_field(v, "Heap size", "%lu", pop->heap_size);
 	outv_field(v, "Checksum", "%s", out_get_checksum(dscp, OBJ_DSC_P_SIZE,
-				&pop->checksum));
+			&pop->checksum, 0));
 	outv_field(v, "Root offset", "0x%lx", pop->root_offset);
 
 	/* run id with -v option */
@@ -914,13 +915,12 @@ info_obj_stats_alloc_classes(struct pmem_info *pip, int v,
 				pip->obj.alloc_classes, (uint8_t)class);
 		if (c == NULL)
 			continue;
+		if (!stats->class_stats[class].n_units)
+			continue;
 
 		double used_perc = 100.0 *
 			(double)stats->class_stats[class].n_used /
 			(double)stats->class_stats[class].n_units;
-
-		if (!stats->class_stats[class].n_units)
-			continue;
 
 		outv_nl(v);
 		outv_field(v, "Unit size", "%s", out_get_size_str(

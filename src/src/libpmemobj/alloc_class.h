@@ -44,7 +44,6 @@
 
 #define MAX_ALLOCATION_CLASSES (UINT8_MAX)
 #define DEFAULT_ALLOC_CLASS_ID (0)
-
 #define RUN_UNIT_MAX BITS_PER_VALUE
 
 struct alloc_class_collection;
@@ -101,11 +100,26 @@ void alloc_class_collection_delete(struct alloc_class_collection *ac);
 void alloc_class_generate_run_proto(struct alloc_class_run_proto *dest,
 	size_t unit_size, uint32_t size_idx);
 
-struct alloc_class *alloc_class_by_unit_size(
-	struct alloc_class_collection *ac, size_t size);
+struct alloc_class *alloc_class_by_run(
+	struct alloc_class_collection *ac,
+	size_t unit_size, enum header_type header_type, uint32_t size_idx);
 struct alloc_class *alloc_class_by_alloc_size(
 	struct alloc_class_collection *ac, size_t size);
 struct alloc_class *alloc_class_by_id(
 	struct alloc_class_collection *ac, uint8_t id);
+
+int alloc_class_reserve(struct alloc_class_collection *ac, uint8_t id);
+int alloc_class_find_first_free_slot(struct alloc_class_collection *ac,
+	uint8_t *slot);
+
+ssize_t
+alloc_class_calc_size_idx(struct alloc_class *c, size_t size);
+
+struct alloc_class *
+alloc_class_register(struct alloc_class_collection *ac,
+	struct alloc_class *c);
+
+void alloc_class_delete(struct alloc_class_collection *ac,
+	struct alloc_class *c);
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -47,7 +47,7 @@
 
 #define LAYOUT "cpp"
 
-namespace nvobj = nvml::obj;
+namespace nvobj = pmem::obj;
 
 namespace
 {
@@ -143,7 +143,7 @@ test_ptr_atomic(nvobj::pool<root> &pop)
 	UT_ASSERTne(pfoo.get(), nullptr);
 
 	(*pfoo).bar = TEST_INT;
-	pop.persist(pfoo);
+	pop.persist(&pfoo->bar, sizeof(pfoo->bar));
 	pop.memset_persist(pfoo->arr, TEST_CHAR, sizeof(pfoo->arr));
 
 	for (auto c : pfoo->arr) {
@@ -188,7 +188,7 @@ test_ptr_transactional(nvobj::pool<root> &pop)
 		nvobj::transaction::exec_tx(pop, [&] {
 			pfoo->bar = TEST_INT;
 			/* raw memory access requires extra care */
-			nvml::detail::conditional_add_to_tx(&pfoo->arr);
+			pmem::detail::conditional_add_to_tx(&pfoo->arr);
 			memset(&pfoo->arr, TEST_CHAR, sizeof(pfoo->arr));
 
 			/* do the swap test */
@@ -219,7 +219,7 @@ test_ptr_transactional(nvobj::pool<root> &pop)
 			pfoo->bar = 0;
 			nvobj::transaction::abort(-1);
 		});
-	} catch (nvml::manual_tx_abort &) {
+	} catch (pmem::manual_tx_abort &) {
 		exception_thrown = true;
 	} catch (...) {
 		UT_ASSERT(0);
@@ -287,7 +287,7 @@ test_ptr_array(nvobj::pool<root> &pop)
 
 			nvobj::transaction::abort(-1);
 		});
-	} catch (nvml::manual_tx_abort &) {
+	} catch (pmem::manual_tx_abort &) {
 		exception_thrown = true;
 	} catch (...) {
 		UT_ASSERT(0);
@@ -303,7 +303,7 @@ test_ptr_array(nvobj::pool<root> &pop)
 
 			nvobj::transaction::abort(-1);
 		});
-	} catch (nvml::manual_tx_abort &) {
+	} catch (pmem::manual_tx_abort &) {
 		exception_thrown = true;
 	} catch (...) {
 		UT_ASSERT(0);
@@ -334,7 +334,7 @@ test_offset(nvobj::pool<root> &pop)
 	};
 
 	try {
-		nvobj::transaction::exec_tx(pop, [&pop] {
+		nvobj::transaction::exec_tx(pop, [] {
 			auto cptr = nvobj::make_persistent<C>();
 			nvobj::persistent_ptr<B> bptr = cptr;
 			UT_ASSERT((bptr.raw().off - cptr.raw().off) ==
@@ -362,7 +362,7 @@ main(int argc, char *argv[])
 	try {
 		pop = nvobj::pool<struct root>::create(
 			path, LAYOUT, PMEMOBJ_MIN_POOL, S_IWUSR | S_IRUSR);
-	} catch (nvml::pool_error &pe) {
+	} catch (pmem::pool_error &pe) {
 		UT_FATAL("!pool::create: %s %s", pe.what(), path);
 	}
 

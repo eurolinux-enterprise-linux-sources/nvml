@@ -1,6 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 #
-# Copyright 2014-2017, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -34,8 +34,6 @@
 #
 # src/test/vmem_valgrind/TEST3 -- unit test for vmem_valgrind
 #
-export UNITTEST_NAME=vmem_valgrind/TEST3
-export UNITTEST_NUM=3
 export VALGRIND_OPTS="--suppressions=excluded-errors.supp --leak-check=full\
 	--show-reachable=yes"
 # standard unit test setup
@@ -45,7 +43,7 @@ require_test_type medium
 
 require_fs_type any
 require_build_type debug nondebug
-require_valgrind_dev_version 3.7
+require_valgrind 3.7
 configure_valgrind memcheck force-enable
 setup
 

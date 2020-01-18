@@ -21,12 +21,6 @@
     <None Include="out5.log.match">
       <Filter>Match Files</Filter>
     </None>
-    <None Include="out6.log.match">
-      <Filter>Match Files</Filter>
-    </None>
-    <None Include="out7.log.match">
-      <Filter>Match Files</Filter>
-    </None>
     <None Include="TEST0.PS1">
       <Filter>Test Scripts</Filter>
     </None>
@@ -34,18 +28,6 @@
       <Filter>Test Scripts</Filter>
     </None>
     <None Include="TEST3.PS1">
-      <Filter>Test Scripts</Filter>
-    </None>
-    <None Include="TEST6.PS1">
-      <Filter>Test Scripts</Filter>
-    </None>
-    <None Include="TEST7.PS1">
-      <Filter>Test Scripts</Filter>
-    </None>
-    <None Include="TEST9.PS1">
-      <Filter>Test Scripts</Filter>
-    </None>
-    <None Include="TEST10.PS1">
       <Filter>Test Scripts</Filter>
     </None>
     <None Include="README" />
@@ -80,6 +62,15 @@
       <Filter>Test Scripts</Filter>
     </None>
     <None Include="TEST12.PS1">
+      <Filter>Test Scripts</Filter>
+    </None>
+    <None Include="TEST26.PS1">
+      <Filter>Test Scripts</Filter>
+    </None>
+    <None Include="TEST9w.PS1">
+      <Filter>Test Scripts</Filter>
+    </None>
+    <None Include="TEST10w.PS1">
       <Filter>Test Scripts</Filter>
     </None>
   </ItemGroup>

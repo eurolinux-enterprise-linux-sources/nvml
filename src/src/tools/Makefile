@@ -1,4 +1,4 @@
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -35,7 +35,7 @@ TOP = ../..
 
 TESTCONFIG=$(TOP)/src/test/testconfig.sh
 
-TARGETS = pmempool rpmemd
+TARGETS = pmempool rpmemd daxio
 SCOPEDIRS=$(TARGETS)
 SCOPEFILES=$(foreach dir, $(SCOPEDIRS), $(shell find $(dir) -name *.[ch] ))
 

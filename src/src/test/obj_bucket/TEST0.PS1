@@ -1,5 +1,5 @@
 #
-# Copyright 2015-2017, Intel Corporation
+# Copyright 2015-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -38,18 +38,11 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "obj_bucket/TEST0"
-$Env:UNITTEST_NUM = "0"
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
 
 require_test_type medium
-
-# mocked allocator does not play well with memcheck
-# XXX: no memcheck for Windows yet, but whatever tool we'll use, it must
-# be aware we're mocking the system allocator
-#configure_valgrind memcheck force-disable
 
 setup
 

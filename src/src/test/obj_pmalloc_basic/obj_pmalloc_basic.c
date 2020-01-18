@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,12 +40,13 @@
 #include "pmalloc.h"
 #include "unittest.h"
 #include "valgrind_internal.h"
+#include "set.h"
 
 #define MOCK_POOL_SIZE (PMEMOBJ_MIN_POOL * 3)
 #define TEST_MEGA_ALLOC_SIZE (10 * 1024 * 1024)
 #define TEST_HUGE_ALLOC_SIZE (4 * 255 * 1024)
 #define TEST_SMALL_ALLOC_SIZE (1000)
-#define TEST_MEDIUM_ALLOC_SIZE (10000)
+#define TEST_MEDIUM_ALLOC_SIZE (1024 * 200)
 #define TEST_TINY_ALLOC_SIZE (64)
 #define TEST_RUNS 2
 
@@ -119,7 +120,7 @@ obj_memset(void *ctx, void *ptr, int c, size_t sz)
 	return ptr;
 }
 
-static void
+static size_t
 test_oom_allocs(size_t size)
 {
 	uint64_t max_allocs = MOCK_POOL_SIZE / size;
@@ -130,6 +131,7 @@ test_oom_allocs(size_t size)
 		if (pmalloc(mock_pop, &addr->ptr, size, 0, 0)) {
 			break;
 		}
+		UT_ASSERT(palloc_is_allocated(&mock_pop->heap, addr->ptr));
 		UT_ASSERT(addr->ptr != 0);
 		allocs[count++] = addr->ptr;
 	}
@@ -137,10 +139,64 @@ test_oom_allocs(size_t size)
 	for (int i = 0; i < count; ++i) {
 		addr->ptr = allocs[i];
 		pfree(mock_pop, &addr->ptr);
+		UT_ASSERT(!palloc_is_allocated(&mock_pop->heap, allocs[i]));
 		UT_ASSERT(addr->ptr == 0);
+	}
+
+	for (int i = 0; i < count; ++i) {
+		UT_ASSERT(!palloc_is_allocated(&mock_pop->heap, allocs[i]));
 	}
 	UT_ASSERT(count != 0);
 	FREE(allocs);
+
+	return count;
+}
+
+static size_t
+test_oom_resrv(size_t size)
+{
+	uint64_t max_allocs = MOCK_POOL_SIZE / size;
+
+	uint64_t *allocs = CALLOC(max_allocs, sizeof(*allocs));
+	struct pobj_action *resvs = CALLOC(max_allocs, sizeof(*resvs));
+
+	size_t count = 0;
+	for (;;) {
+		if (palloc_reserve(&mock_pop->heap, size, NULL, NULL, 0, 0, 0,
+			&resvs[count]) != 0)
+			break;
+
+		allocs[count] = resvs[count].heap.offset;
+		UT_ASSERT(!palloc_is_allocated(&mock_pop->heap, allocs[count]));
+		UT_ASSERT(allocs[count] != 0);
+		count++;
+	}
+
+	for (size_t i = 0; i < count; ) {
+		size_t nresv = MIN(count - i, 10);
+		struct redo_log *redo = pmalloc_redo_hold(mock_pop);
+		struct operation_context ctx;
+		operation_init(&ctx, mock_pop, mock_pop->redo, redo);
+		palloc_publish(&mock_pop->heap, &resvs[i], (int)nresv, &ctx);
+
+		pmalloc_redo_release(mock_pop);
+
+		i += nresv;
+	}
+
+	for (int i = 0; i < count; ++i) {
+		UT_ASSERT(palloc_is_allocated(&mock_pop->heap, allocs[i]));
+		addr->ptr = allocs[i];
+		pfree(mock_pop, &addr->ptr);
+		UT_ASSERT(addr->ptr == 0);
+		UT_ASSERT(!palloc_is_allocated(&mock_pop->heap, allocs[i]));
+	}
+
+	UT_ASSERT(count != 0);
+	FREE(allocs);
+	FREE(resvs);
+
+	return count;
 }
 
 static void
@@ -174,8 +230,6 @@ redo_log_check_offset(void *ctx, uint64_t offset)
 	PMEMobjpool *pop = ctx;
 	return OBJ_OFF_IS_VALID(pop, offset);
 }
-
-#define MOCK_RUN_ID 5
 
 #define PMALLOC_EXTRA 20
 #define PALLOC_FLAG (1 << 15)
@@ -231,12 +285,10 @@ test_mock_pool_allocs(void)
 	addr = MMAP_ANON_ALIGNED(MOCK_POOL_SIZE, Ut_mmap_align);
 	mock_pop = &addr->p;
 	mock_pop->addr = addr;
-	mock_pop->size = MOCK_POOL_SIZE;
 	mock_pop->rdonly = 0;
 	mock_pop->is_pmem = 0;
 	mock_pop->heap_offset = offsetof(struct mock_pop, ptr);
 	UT_ASSERTeq(mock_pop->heap_offset % Ut_pagesize, 0);
-	mock_pop->heap_size = MOCK_POOL_SIZE - mock_pop->heap_offset;
 	mock_pop->nlanes = 1;
 	mock_pop->lanes_offset = sizeof(PMEMobjpool);
 	mock_pop->is_master_replica = 1;
@@ -251,17 +303,23 @@ test_mock_pool_allocs(void)
 	mock_pop->p_ops.memcpy_persist = obj_memcpy;
 	mock_pop->p_ops.memset_persist = obj_memset;
 	mock_pop->p_ops.base = mock_pop;
-	mock_pop->p_ops.pool_size = mock_pop->size;
+	mock_pop->set = MALLOC(sizeof(*(mock_pop->set)));
+	mock_pop->set->options = 0;
+	mock_pop->set->directory_based = 0;
 
 	mock_pop->redo = redo_log_config_new(addr, &mock_pop->p_ops,
 			redo_log_check_offset, mock_pop, REDO_NUM_ENTRIES);
 
 	void *heap_start = (char *)mock_pop + mock_pop->heap_offset;
-	uint64_t heap_size = mock_pop->heap_size;
+	uint64_t heap_size = MOCK_POOL_SIZE - mock_pop->heap_offset;
 
-	heap_init(heap_start, heap_size, &mock_pop->p_ops);
-	heap_boot(&mock_pop->heap, heap_start, heap_size, MOCK_RUN_ID, mock_pop,
-			&mock_pop->p_ops);
+	struct stats *s = stats_new(mock_pop);
+	UT_ASSERTne(s, NULL);
+
+	heap_init(heap_start, heap_size, &mock_pop->heap_size,
+		&mock_pop->p_ops);
+	heap_boot(&mock_pop->heap, heap_start, heap_size, &mock_pop->heap_size,
+		mock_pop, &mock_pop->p_ops, s, mock_pop->set);
 	heap_buckets_init(&mock_pop->heap);
 
 	/* initialize runtime lanes structure */
@@ -275,23 +333,46 @@ test_mock_pool_allocs(void)
 
 	test_malloc_free_loop(MALLOC_FREE_SIZE);
 
+	size_t medium_resv = test_oom_resrv(TEST_MEDIUM_ALLOC_SIZE);
+
 	/*
 	 * Allocating till OOM and freeing the objects in a loop for different
 	 * buckets covers basically all code paths except error cases.
 	 */
-	test_oom_allocs(TEST_HUGE_ALLOC_SIZE);
-	test_oom_allocs(TEST_TINY_ALLOC_SIZE);
-	test_oom_allocs(TEST_HUGE_ALLOC_SIZE);
-	test_oom_allocs(TEST_SMALL_ALLOC_SIZE);
-	test_oom_allocs(TEST_MEGA_ALLOC_SIZE);
+	size_t medium0 = test_oom_allocs(TEST_MEDIUM_ALLOC_SIZE);
+	size_t mega0 = test_oom_allocs(TEST_MEGA_ALLOC_SIZE);
+	size_t huge0 = test_oom_allocs(TEST_HUGE_ALLOC_SIZE);
+	size_t small0 = test_oom_allocs(TEST_SMALL_ALLOC_SIZE);
+	size_t tiny0 = test_oom_allocs(TEST_TINY_ALLOC_SIZE);
+	size_t huge1 = test_oom_allocs(TEST_HUGE_ALLOC_SIZE);
+	size_t small1 = test_oom_allocs(TEST_SMALL_ALLOC_SIZE);
+	size_t mega1 = test_oom_allocs(TEST_MEGA_ALLOC_SIZE);
+	size_t tiny1 = test_oom_allocs(TEST_TINY_ALLOC_SIZE);
+	size_t medium1 = test_oom_allocs(TEST_MEDIUM_ALLOC_SIZE);
+
+	UT_ASSERTeq(mega0, mega1);
+	UT_ASSERTeq(huge0, huge1);
+	UT_ASSERTeq(small0, small1);
+	UT_ASSERTeq(tiny0, tiny1);
+	UT_ASSERTeq(medium0, medium1);
+	UT_ASSERTeq(medium0, medium_resv);
+
+	/* realloc to the same size shouldn't affect anything */
+	for (size_t i = 0; i < tiny1; ++i)
+		test_realloc(TEST_TINY_ALLOC_SIZE, TEST_TINY_ALLOC_SIZE);
+
+	size_t tiny2 = test_oom_allocs(TEST_TINY_ALLOC_SIZE);
+	UT_ASSERTeq(tiny1, tiny2);
 
 	test_realloc(TEST_SMALL_ALLOC_SIZE, TEST_MEDIUM_ALLOC_SIZE);
 	test_realloc(TEST_HUGE_ALLOC_SIZE, TEST_MEGA_ALLOC_SIZE);
 
+	stats_delete(mock_pop, s);
 	lane_cleanup(mock_pop);
 	redo_log_config_delete(mock_pop->redo);
 	heap_cleanup(&mock_pop->heap);
 
+	FREE(mock_pop->set);
 	MUNMAP_ANON_ALIGNED(addr, MOCK_POOL_SIZE);
 }
 
@@ -318,3 +399,12 @@ main(int argc, char *argv[])
 
 	DONE(NULL);
 }
+
+
+#ifdef _MSC_VER
+/*
+ * Since libpmemobj is linked statically, we need to invoke its ctor/dtor.
+ */
+MSVC_CONSTR(libpmemobj_init)
+MSVC_DESTR(libpmemobj_fini)
+#endif

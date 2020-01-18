@@ -47,14 +47,33 @@ issue in https://github.com/pmem/issues. There are also blog articles in
 http://pmem.io/blog/ which you might find helpful.
 
 Have fun!
-The NVML team
+The PMDK team
 
 ### Compiler notice ###
 The C++ bindings require a C++11 compliant compiler, therefore the minimal
 versions of GCC and Clang are 4.8.1 and 3.3 respectively. However the
-nvml::obj::transaction::automatic class requires C++17, so
+pmem::obj::transaction::automatic class requires C++17, so
 you need a more recent version for this to be available(GCC 6.1/Clang 3.7).
 It is recommended to use these or newer versions of GCC or Clang.
+
+### Standard notice ###
+Please note that the C++11 standard, section 3.8, states that a valid
+non-trivially default constructible object (in other words, not plain old data)
+must be properly constructed in the lifetime of the application.
+Libpmemobj, or any shared memory solution for that matter, does not
+strictly adhere to that constraint.
+
+We believe that in the future, languages that wish to support persistent memory
+will need to alter their semantics to establish a defined behavior for objects
+whose lifetimes exceed that of the application. In the meantime, the programs
+that wish to use persistent memory will need to rely on compiler-defined
+behavior.
+
+Our library, and by extension these bindings, have been extensively tested in
+g++, clang++ and MSVC++ to make sure that our solution is safe to use and
+practically speaking implementation defined. The only exception to this rule is
+the use of polymorphic types, which are notably forbidden when using C++
+bindings.
 
 ### Important classes/functions ###
 
@@ -62,9 +81,9 @@ It is recommended to use these or newer versions of GCC or Clang.
  * Transactional array allocations - make_persistent_array.hpp
  * Atomic allocations - make_persistent_atomic.hpp
  * Atomic array allocations - make_persistent_array_atomic.hpp
- * Resides on persistent memory property - [p](@ref nvml::obj::p)
- * Persistent smart pointer - [persistent_ptr](@ref nvml::obj::persistent_ptr)
- * Persistent memory transactions - [transaction](@ref nvml::obj::transaction)
- * Persistent memory resident mutex - [mutex](@ref nvml::obj::mutex)
- * Persistent memory pool - [pool](@ref nvml::obj::pool)
- * Persistent memory allocator - [allocator](@ref nvml::obj::allocator)
+ * Resides on persistent memory property - [p](@ref pmem::obj::p)
+ * Persistent smart pointer - [persistent_ptr](@ref pmem::obj::persistent_ptr)
+ * Persistent memory transactions - [transaction](@ref pmem::obj::transaction)
+ * Persistent memory resident mutex - [mutex](@ref pmem::obj::mutex)
+ * Persistent memory pool - [pool](@ref pmem::obj::pool)
+ * Persistent memory allocator - [allocator](@ref pmem::obj::allocator)
