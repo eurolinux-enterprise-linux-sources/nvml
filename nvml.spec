@@ -1,6 +1,6 @@
 Name:		nvml
-Version:	1.4
-Release:	3%{?dist}
+Version:	1.5.1
+Release:	2.1%{?dist}
 Summary:	Non-Volatile Memory Library
 License:	BSD
 URL:		http://pmem.io/pmdk
@@ -11,8 +11,6 @@ BuildRequires:	autoconf
 BuildRequires:	automake
 BuildRequires:	man
 BuildRequires:	pkgconfig
-BuildRequires:	doxygen
-BuildRequires:	gdb
 BuildRequires:	ndctl-devel >= 59.2-1
 BuildRequires:	daxctl-devel >= 59.2-1
 
@@ -43,6 +41,7 @@ persistence, optimized specifically for persistent memory.
 %package -n libpmem
 Summary: Low-level persistent memory support library
 Group: System Environment/Libraries
+Obsoletes: libpmemcto
 %description -n libpmem
 The libpmem provides low level persistent memory support. In particular,
 support for the persistent memory instructions for flushing changes
@@ -61,6 +60,7 @@ to pmem is provided.
 Summary: Development files for the low-level persistent memory library
 Group: Development/Libraries
 Requires: libpmem = %{version}-%{release}
+Obsoletes: libpmemcto-devel
 %description -n libpmem-devel
 The libpmem provides low level persistent memory support. In particular,
 support for the persistent memory instructions for flushing changes
@@ -77,6 +77,7 @@ convenient.
 %{_libdir}/pkgconfig/libpmem.pc
 %{_includedir}/libpmem.h
 %{_mandir}/man7/libpmem.7.gz
+%{_mandir}/man5/pmem_ctl.5.gz
 %{_mandir}/man3/pmem_*.3.gz
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
@@ -86,6 +87,7 @@ convenient.
 Summary: Debug variant of the low-level persistent memory library
 Group: Development/Libraries
 Requires: libpmem = %{version}-%{release}
+Obsoletes: libpmemcto-debug
 %description -n libpmem-debug
 The libpmem provides low level persistent memory support. In particular,
 support for the persistent memory instructions for flushing changes
@@ -144,6 +146,7 @@ more generally useful.
 %{_includedir}/libpmemblk.h
 %{_mandir}/man7/libpmemblk.7.gz
 %{_mandir}/man5/poolset.5.gz
+%{_mandir}/man5/pmem_ctl.5.gz
 %{_mandir}/man3/pmemblk_*.3.gz
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
@@ -207,6 +210,7 @@ level libraries like libpmemobj to be more generally useful.
 %{_includedir}/libpmemlog.h
 %{_mandir}/man7/libpmemlog.7.gz
 %{_mandir}/man5/poolset.5.gz
+%{_mandir}/man5/pmem_ctl.5.gz
 %{_mandir}/man3/pmemlog_*.3.gz
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
@@ -269,9 +273,11 @@ probably want to start with this library.
 %{_libdir}/libpmemobj.so
 %{_libdir}/pkgconfig/libpmemobj.pc
 %{_includedir}/libpmemobj.h
+%dir %{_includedir}/libpmemobj
 %{_includedir}/libpmemobj/*.h
 %{_mandir}/man7/libpmemobj.7.gz
 %{_mandir}/man5/poolset.5.gz
+%{_mandir}/man5/pmem_ctl.5.gz
 %{_mandir}/man3/pmemobj_*.3.gz
 %{_mandir}/man3/pobj_*.3.gz
 %{_mandir}/man3/oid_*.3.gz
@@ -341,6 +347,7 @@ applications that want to make use of libvmem.
 %{_libdir}/pkgconfig/libvmem.pc
 %{_includedir}/libvmem.h
 %{_mandir}/man7/libvmem.7.gz
+%{_mandir}/man5/pmem_ctl.5.gz
 %{_mandir}/man3/vmem_*.3.gz
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
@@ -407,6 +414,7 @@ applications that want to specifically make use of libvmmalloc.
 %{_libdir}/pkgconfig/libvmmalloc.pc
 %{_includedir}/libvmmalloc.h
 %{_mandir}/man7/libvmmalloc.7.gz
+%{_mandir}/man5/pmem_ctl.5.gz
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
 
@@ -431,30 +439,6 @@ debug version is to set the environment variable LD_LIBRARY_PATH to
 %dir %{_libdir}/pmdk_debug
 %{_libdir}/pmdk_debug/libvmmalloc.so
 %{_libdir}/pmdk_debug/libvmmalloc.so.*
-%license LICENSE
-%doc ChangeLog CONTRIBUTING.md README.md
-
-
-# Specify a virtual Provide for libpmemobj++-static package, so the package
-# usage can be tracked.
-%package -n libpmemobj++-devel
-Summary: C++ bindings for Persistent Memory Transactional Object Store library
-Group: Development/Libraries
-Provides: libpmemobj++-static = %{version}-%{release}
-Requires: libpmemobj-devel = %{version}-%{release}
-%description -n libpmemobj++-devel
-The libpmemobj library provides a transactional object store,
-providing memory allocation, transactions, and general facilities for
-persistent memory programming.
-
-This sub-package contains header files for libpmemobj C++ bindings.
-
-%files -n libpmemobj++-devel
-%defattr(-,root,root,-)
-%{_libdir}/pkgconfig/libpmemobj++.pc
-%{_includedir}/libpmemobj++/*.hpp
-%{_includedir}/libpmemobj++/detail/*.hpp
-%{_docdir}/libpmemobj++-devel/*
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
 
@@ -492,6 +476,7 @@ pools created by libpmemlog, libpemblk and libpmemobj libraries.
 %{_includedir}/libpmempool.h
 %{_mandir}/man7/libpmempool.7.gz
 %{_mandir}/man5/poolset.5.gz
+%{_mandir}/man5/pmem_ctl.5.gz
 %{_mandir}/man3/pmempool_*.3.gz
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
@@ -528,7 +513,7 @@ Requires: openssh-clients
 %description -n librpmem
 The librpmem library provides low-level support for remote access
 to persistent memory utilizing RDMA-capable NICs. It can be used
-to replicate peristent memory regions over RDMA protocol.
+to replicate persistent memory regions over RDMA protocol.
 
 %files -n librpmem
 %defattr(-,root,root,-)
@@ -544,7 +529,7 @@ Requires: librpmem = %{version}-%{release}
 %description -n librpmem-devel
 The librpmem library provides low-level support for remote access
 to persistent memory utilizing RDMA-capable NICs. It can be used
-to replicate peristent memory regions over RDMA protocol.
+to replicate persistent memory regions over RDMA protocol.
 
 This sub-package contains libraries and header files for developing
 applications that want to specifically make use of librpmem.
@@ -555,6 +540,7 @@ applications that want to specifically make use of librpmem.
 %{_libdir}/pkgconfig/librpmem.pc
 %{_includedir}/librpmem.h
 %{_mandir}/man7/librpmem.7.gz
+%{_mandir}/man5/pmem_ctl.5.gz
 %{_mandir}/man3/rpmem_*.3.gz
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
@@ -567,7 +553,7 @@ Requires: librpmem = %{version}-%{release}
 %description -n librpmem-debug
 The librpmem library provides low-level support for remote access
 to persistent memory utilizing RDMA-capable NICs. It can be used
-to replicate peristent memory regions over RDMA protocol.
+to replicate persistent memory regions over RDMA protocol.
 
 This sub-package contains debug variant of the library, providing
 run-time assertions and trace points. The typical way to access the
@@ -597,63 +583,6 @@ and facilitates access to persistent memory over RDMA.
 %{_mandir}/man1/rpmemd.1.gz
 
 
-%package -n libpmemcto
-Summary: Close-to-Open Persistence library
-Group: System Environment/Libraries
-Requires: libpmem = %{version}-%{release}
-%description -n libpmemcto
-The libpmemcto library is a Persistent Memory allocator with no overhead
-imposed by run-time flushing or transactional updates.
-
-%files -n libpmemcto
-%defattr(-,root,root,-)
-%{_libdir}/libpmemcto.so.*
-%license LICENSE
-%doc ChangeLog CONTRIBUTING.md README.md
-
-
-%package -n libpmemcto-devel
-Summary: Development files for Close-to-Open Persistence library
-Group: Development/Libraries
-Requires: libpmemcto = %{version}-%{release}
-%description -n libpmemcto-devel
-The libpmemcto library is a Persistent Memory allocator with no overhead
-imposed by run-time flushing or transactional updates.
-
-%files -n libpmemcto-devel
-%defattr(-,root,root,-)
-%{_libdir}/libpmemcto.so
-%{_libdir}/pkgconfig/libpmemcto.pc
-%{_includedir}/libpmemcto.h
-%{_mandir}/man7/libpmemcto.7.gz
-%{_mandir}/man5/poolset.5.gz
-%{_mandir}/man3/pmemcto*.3.gz
-%license LICENSE
-%doc ChangeLog CONTRIBUTING.md README.md
-
-
-%package -n libpmemcto-debug
-Summary: Debug variant of the Close-to-Open Persistence library
-Group: Development/Libraries
-Requires: libpmemcto = %{version}-%{release}
-%description -n libpmemcto-debug
-The libpmemcto library is a Persistent Memory allocator with no overhead
-imposed by run-time flushing or transactional updates.
-
-This sub-package contains debug variant of the library, providing
-run-time assertions and trace points. The typical way to access the
-debug version is to set the environment variable LD_LIBRARY_PATH to
-/usr/lib64/pmdk_debug.
-
-%files -n libpmemcto-debug
-%defattr(-,root,root,-)
-%dir %{_libdir}/pmdk_debug
-%{_libdir}/pmdk_debug/libpmemcto.so
-%{_libdir}/pmdk_debug/libpmemcto.so.*
-%license LICENSE
-%doc ChangeLog CONTRIBUTING.md README.md
-
-
 %package -n pmempool
 Summary: Utilities for Persistent Memory
 Group: System Environment/Base
@@ -662,7 +591,6 @@ Requires: libpmemlog = %{version}-%{release}
 Requires: libpmemblk = %{version}-%{release}
 Requires: libpmemobj = %{version}-%{release}
 Requires: libpmempool = %{version}-%{release}
-Requires: libpmemcto = %{version}-%{release}
 Obsoletes: nvml-tools < %{version}-%{release}
 %description -n pmempool
 The pmempool is a standalone utility for management and off-line analysis
@@ -675,7 +603,7 @@ and users of the applications based on PMDK libraries.
 %{_bindir}/pmempool
 %{_mandir}/man1/pmempool.1.gz
 %{_mandir}/man1/pmempool-*.1.gz
-%config(noreplace) %{_sysconfdir}/bash_completion.d/pmempool.sh
+%config(noreplace) %{_sysconfdir}/bash_completion.d/pmempool
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
 
@@ -722,11 +650,13 @@ NDCTL_ENABLE=y make install DESTDIR=%{buildroot} \
 	mandir=%{_mandir} \
 	bindir=%{_bindir} \
 	sysconfdir=%{_sysconfdir} \
-	docdir=%{_docdir} \
-	CPP_DOC_DIR=libpmemobj++-devel
+	docdir=%{_docdir}
 mkdir -p %{buildroot}%{_datadir}/pmdk
 cp utils/pmdk.magic %{buildroot}%{_datadir}/pmdk/pmdk.magic
 
+rm %{buildroot}/usr/bin/pmreorder
+rm %{buildroot}/usr/share/man/man1/pmreorder.1.gz
+rm -rf %{buildroot}/usr/share/pmreorder
 
 %post   -n libpmem -p /sbin/ldconfig
 %postun -n libpmem -p /sbin/ldconfig
@@ -742,8 +672,6 @@ cp utils/pmdk.magic %{buildroot}%{_datadir}/pmdk/pmdk.magic
 %postun -n libvmmalloc -p /sbin/ldconfig
 %post   -n libpmempool -p /sbin/ldconfig
 %postun -n libpmempool -p /sbin/ldconfig
-%post	-n libpmemcto -p /sbin/ldconfig
-%postun	-n libpmemcto -p /sbin/ldconfig
 %post   -n librpmem -p /sbin/ldconfig
 %postun -n librpmem -p /sbin/ldconfig
 
@@ -753,6 +681,22 @@ cp utils/pmdk.magic %{buildroot}%{_datadir}/pmdk/pmdk.magic
 
 
 %changelog
+* Tue Apr 30 2019 Jeff Moyer <jmoyer@redhat.com> - 1.5.1-2.1.el7
+- obsolete libpmemcto
+- Resolves: rhbz#1702932
+
+* Wed Apr 10 2019 Jeff Moyer <jmoyer@redhat.com> - 1.5.1-2.el7
+- Fix up unpackaged files
+- Related: rhbz#1634347
+
+* Fri Apr 05 2019 Jeff Moyer <jmoyer@redhat.com> - 1.5.1-1.el7
+- rebase to pmdk 1.5.1
+  - libpmemobj C++ bindings moved to separate package
+  - pmempool convert is now a thin wrapper around pmdk-convert
+  - add ownership information for libpmemobj headers directory
+  - remove broken pmemcto library
+- Related: rhbz#1634347
+
 * Wed Jun 27 2018 Jeff Moyer <jmoyer@redhat.com> - 1.4-3.el7
 - Fix up rpmemd dependency on libfabric
 - Resolves: rhbz#1595671

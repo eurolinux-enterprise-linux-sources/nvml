@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,6 +34,13 @@
  * pmempool.h -- internal definitions for libpmempool
  */
 
+#ifndef PMEMPOOL_H
+#define PMEMPOOL_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define PMEMPOOL_LOG_PREFIX "libpmempool"
 #define PMEMPOOL_LOG_LEVEL_VAR "PMEMPOOL_LOG_LEVEL"
 #define PMEMPOOL_LOG_FILE_VAR "PMEMPOOL_LOG_FILE"
@@ -60,4 +67,11 @@ struct pmempool_check_ctx {
 	struct check_data *data;
 	struct pool_data *pool;
 	enum check_result result;
+	unsigned sync_required;
 };
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

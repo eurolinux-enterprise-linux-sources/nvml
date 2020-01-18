@@ -36,8 +36,6 @@
 
 #include "unittest.h"
 #include "shutdown_state.h"
-#include "set.h"
-#include "obj.h"
 #include <stdlib.h>
 #include <libpmemobj.h>
 
@@ -56,7 +54,7 @@ main(int argc, char *argv[])
 	if (argc < 2)
 		UT_FATAL("usage: %s init fail file (uuid usc)...", argv[0]);
 
-	int files = (argc - 3) / 2;
+	unsigned files = (unsigned)(argc - 3) / 2;
 
 	uids = MALLOC(files * sizeof(uids[0]));
 	uscs = MALLOC(files * sizeof(uscs[0]));
@@ -67,10 +65,10 @@ main(int argc, char *argv[])
 	int fail = atoi(argv[2]);
 	char *path = argv[3];
 
-	argv = argv + 4;
-	for (int i = 0; i < files; i++) {
-		uids[i] = argv[i * 2];
-		uscs[i] = strtoull(argv[i * 2 + 1], NULL, 0);
+	char **args = argv + 4;
+	for (unsigned i = 0; i < files; i++) {
+		uids[i] = args[i * 2];
+		uscs[i] = strtoull(args[i * 2 + 1], NULL, 0);
 	}
 
 	PMEMobjpool *pop;
@@ -78,6 +76,13 @@ main(int argc, char *argv[])
 		if ((pop = pmemobj_create(path, "LAYOUT", 0, 0600)) == NULL) {
 			UT_FATAL("!%s: pmemobj_create", path);
 		}
+#ifndef _WIN32
+		pmemobj_close(pop);
+		pmempool_feature_enable(path, PMEMPOOL_FEAT_SHUTDOWN_STATE, 0);
+		if ((pop = pmemobj_open(path, "LAYOUT")) == NULL) {
+			UT_FATAL("!%s: pmemobj_open", path);
+		}
+#endif
 	} else {
 		if ((pop = pmemobj_open(path, "LAYOUT")) == NULL) {
 			UT_FATAL("!%s: pmemobj_open", path);
@@ -87,19 +92,12 @@ main(int argc, char *argv[])
 
 	if (!fail)
 		pmemobj_close(pop);
-#ifdef __FreeBSD__
-	/*
-	 * XXX On FreeBSD, mmap()ing a file does not increment the flock()
-	 *	reference count, so the pool set files are held open until
-	 *	pmemobj_close(). In the simulated failure case we still need
-	 *	to close the files for check_open_files() to succeed.
-	 */
-	else
-		util_poolset_fdclose_always(pop->set);
-#endif
 
 	FREE(uids);
 	FREE(uscs);
+
+	if (fail)
+		exit(1);
 
 	DONE(NULL);
 }
@@ -132,3 +130,11 @@ FUNC_MOCK(os_dimm_usc, int, const char *path, uint64_t *usc, ...)
 	return 0;
 }
 FUNC_MOCK_END
+
+#ifdef _MSC_VER
+/*
+ * Since libpmemobj is linked statically, we need to invoke its ctor/dtor.
+ */
+MSVC_CONSTR(libpmemobj_init)
+MSVC_DESTR(libpmemobj_fini)
+#endif

@@ -40,6 +40,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <string.h>
+#include <errno.h>
 #include "out.h"
 #include "os.h"
 #include "fs.h"
@@ -68,9 +69,16 @@ check_cpu_cache(const char *domain_path)
 	ssize_t len = read(domain_fd, domain_value,
 			DOMAIN_VALUE_LEN);
 
-	if (len == -1) {
+	if (len < 0) {
 		ERR("!read(%d, %p, %d)", domain_fd,
 			domain_value, DOMAIN_VALUE_LEN);
+		cpu_cache = -1;
+		goto end;
+	} else if (len == 0) {
+		errno = ENODATA;
+		ERR("read(%d, %p, %d) empty string",
+			domain_fd, domain_value,
+			DOMAIN_VALUE_LEN);
 		cpu_cache = -1;
 		goto end;
 	} else if (domain_value[len - 1] != '\n') {
@@ -80,7 +88,6 @@ check_cpu_cache(const char *domain_path)
 		cpu_cache = -1;
 		goto end;
 	}
-	os_close(domain_fd);
 
 	LOG(15, "detected persistent_domain: %s", domain_value);
 	if (strncmp(domain_value, "cpu_cache", strlen("cpu_cache")) == 0) {
@@ -134,10 +141,10 @@ check_domain_in_region(const char *region_path)
 			"%s/"PERSISTENCE_DOMAIN,
 			region_path);
 		if (ret < 0) {
-			ERR("!snprintf(%p, %d,"
-				"%s/"PERSISTENCE_DOMAIN", %s)",
+			ERR("snprintf(%p, %d,"
+				"%s/"PERSISTENCE_DOMAIN", %s): %d",
 				domain_path, PATH_MAX,
-				region_path, region_path);
+				region_path, region_path, ret);
 			cpu_cache = -1;
 			goto end;
 		}

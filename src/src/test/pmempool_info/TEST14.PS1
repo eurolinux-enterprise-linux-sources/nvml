@@ -32,12 +32,6 @@
 #
 # pmempool_info/TEST14 -- test for info command
 #
-[CmdletBinding(PositionalBinding=$false)]
-Param(
-    [alias("d")]
-    $DIR = ""
-    )
-
 
 . ..\unittest\unittest.ps1
 
@@ -49,20 +43,20 @@ setup
 
 $POOL="$DIR\file.pool"
 $LOG="out$Env:UNITTEST_NUM.log"
-rm $LOG -Force -Recurse -ea si
+rm $LOG -Force -ea si
 
 expect_normal_exit $PMEMPOOL create --layout pmempool$Env:SUFFIX obj $POOL
 expect_abnormal_exit $PMEMALLOC -o 1 -t 1 -ea $POOL
 expect_normal_exit $PMEMPOOL info -l -R -a $POOL >> $LOG
 echo "" >> $LOG
 expect_abnormal_exit $PMEMALLOC -o 1 -t 1 -s -es $POOL
-expect_normal_exit $PMEMPOOL info -l -R -Stx $POOL >> $LOG
+expect_normal_exit $PMEMPOOL info -l -R $POOL >> $LOG
 echo "" >> $LOG
 expect_abnormal_exit $PMEMALLOC -o 1024 -t 1 -s -es $POOL
-expect_normal_exit $PMEMPOOL info -l -R -Stx $POOL >> $LOG
+expect_normal_exit $PMEMPOOL info -l -R $POOL >> $LOG
 echo "" >> $LOG
 expect_abnormal_exit $PMEMALLOC -o 1 -t 1 -s -f -ef $POOL
-expect_normal_exit $PMEMPOOL info -l -R -a -Stx $POOL >> $LOG
+expect_normal_exit $PMEMPOOL info -l -R -a $POOL >> $LOG
 
 check
 

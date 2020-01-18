@@ -12,40 +12,28 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\libpmemblk\btt.c" />
-    <ClCompile Include="..\..\libpmemlog\libpmemlog.c" />
-    <ClCompile Include="..\..\libpmemlog\log.c" />
     <ClCompile Include="..\..\libpmemobj\alloc_class.c" />
-    <ClCompile Include="..\..\libpmemobj\stats.c" />
     <ClCompile Include="..\..\libpmemobj\bucket.c" />
     <ClCompile Include="..\..\libpmemobj\container_ravl.c" />
     <ClCompile Include="..\..\libpmemobj\container_seglists.c" />
-    <ClCompile Include="..\..\libpmemobj\ctl.c" />
-    <ClCompile Include="..\..\libpmemobj\ctl_global.c" />
-    <ClCompile Include="..\..\libpmemobj\ravl.c" />
     <ClCompile Include="..\..\libpmemobj\cuckoo.c" />
     <ClCompile Include="..\..\libpmemobj\heap.c" />
     <ClCompile Include="..\..\libpmemobj\lane.c" />
-    <ClCompile Include="..\..\libpmemobj\libpmemobj.c" />
-    <ClCompile Include="..\..\libpmemobj\libpmemobj_main.c" />
     <ClCompile Include="..\..\libpmemobj\list.c" />
     <ClCompile Include="..\..\libpmemobj\memblock.c" />
     <ClCompile Include="..\..\libpmemobj\memops.c" />
-    <ClCompile Include="..\..\libpmemobj\obj.c" />
     <ClCompile Include="..\..\libpmemobj\palloc.c" />
     <ClCompile Include="..\..\libpmemobj\pmalloc.c" />
-    <ClCompile Include="..\..\libpmemobj\pvector.c" />
+    <ClCompile Include="..\..\libpmemobj\ravl.c" />
     <ClCompile Include="..\..\libpmemobj\recycler.c" />
-    <ClCompile Include="..\..\libpmemobj\redo.c" />
-    <ClCompile Include="..\..\libpmemobj\ringbuf.c" />
     <ClCompile Include="..\..\libpmemobj\sync.c" />
-    <ClCompile Include="..\..\libpmemobj\tx.c" />
+    <ClCompile Include="..\..\libpmemobj\ulog.c" />
     <ClCompile Include="check.c" />
     <ClCompile Include="common.c" />
     <ClCompile Include="convert.c" />
-    <ClCompile Include="convert_obj_v1_v2.c" />
-    <ClCompile Include="convert_obj_v3_v4.c" />
     <ClCompile Include="create.c" />
     <ClCompile Include="dump.c" />
+    <ClCompile Include="feature.c" />
     <ClCompile Include="info.c" />
     <ClCompile Include="info_blk.c" />
     <ClCompile Include="info_log.c" />
@@ -62,6 +50,7 @@
     <ClInclude Include="convert.h" />
     <ClInclude Include="create.h" />
     <ClInclude Include="dump.h" />
+    <ClInclude Include="feature.h" />
     <ClInclude Include="info.h" />
     <ClInclude Include="output.h" />
     <ClInclude Include="rm.h" />
@@ -74,9 +63,6 @@
     </ProjectReference>
     <ProjectReference Include="..\..\libpmemblk\libpmemblk.vcxproj">
       <Project>{f7c6c6b6-4142-4c82-8699-4a9d8183181b}</Project>
-    </ProjectReference>
-    <ProjectReference Include="..\..\libpmemcto\libpmemcto.vcxproj">
-      <Project>{1ba340ec-b0b2-438d-a47c-27f86f604133}</Project>
     </ProjectReference>
     <ProjectReference Include="..\..\libpmemlog\libpmemlog.vcxproj">
       <Project>{0b1818eb-bdc8-4865-964f-db8bf05cfd86}</Project>
@@ -101,7 +87,7 @@
     <ProjectGuid>{7DC3B3DD-73ED-4602-9AF3-8D7053620DEA}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>pmempool</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.14393.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.16299.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
@@ -132,18 +118,18 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <GenerateManifest>false</GenerateManifest>
-    <IncludePath>$(SolutionDir)\common;$(SolutionDir)\test\unittest;$(SolutionDir)\windows\include;$(SolutionDir)\include;$(SolutionDir)\windows\getopt;$(SolutionDir)\libpmemlog;$(SolutionDir)\libpmemblk;$(SolutionDir)\libpmemcto;$(SolutionDir)\libpmemobj;$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)\common;$(SolutionDir)\test\unittest;$(SolutionDir)\windows\include;$(SolutionDir)\include;$(SolutionDir)\windows\getopt;$(SolutionDir)\libpmemlog;$(SolutionDir)\libpmemblk;$(SolutionDir)\libpmemobj;$(IncludePath)</IncludePath>
+    <OutDir>$(SolutionDir)$(Platform)\$(Configuration)\libs\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <GenerateManifest>false</GenerateManifest>
-    <IncludePath>$(SolutionDir)\common;$(SolutionDir)\test\unittest;$(SolutionDir)\windows\include;$(SolutionDir)\include;$(SolutionDir)\windows\getopt;$(SolutionDir)\libpmemlog;$(SolutionDir)\libpmemblk;$(SolutionDir)\libpmemcto;$(SolutionDir)\libpmemobj;$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)\common;$(SolutionDir)\test\unittest;$(SolutionDir)\windows\include;$(SolutionDir)\include;$(SolutionDir)\windows\getopt;$(SolutionDir)\libpmemlog;$(SolutionDir)\libpmemblk;$(SolutionDir)\libpmemobj;$(IncludePath)</IncludePath>
+    <OutDir>$(SolutionDir)$(Platform)\$(Configuration)\libs\</OutDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>PMDK_UTF8_API; NTDDI_VERSION=NTDDI_WIN10_RS1;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>PMDK_UTF8_API;SDS_ENABLED; NTDDI_VERSION=NTDDI_WIN10_RS1;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ForcedIncludeFiles>platform.h</ForcedIncludeFiles>
       <CompileAs>CompileAsC</CompileAs>
       <PreprocessToFile>false</PreprocessToFile>
@@ -168,7 +154,7 @@
       <WarningLevel>Level3</WarningLevel>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <FunctionLevelLinking>true</FunctionLevelLinking>
-      <PreprocessorDefinitions>PMDK_UTF8_API; NTDDI_VERSION=NTDDI_WIN10_RS1;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>PMDK_UTF8_API;SDS_ENABLED; NTDDI_VERSION=NTDDI_WIN10_RS1;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <CompileAs>CompileAsC</CompileAs>
       <ForcedIncludeFiles>platform.h</ForcedIncludeFiles>
       <PreprocessToFile>false</PreprocessToFile>

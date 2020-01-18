@@ -34,6 +34,7 @@
  * obj_list_mocks.c -- mocks for redo/lane/heap/obj modules
  */
 
+#include <inttypes.h>
 #include "valgrind_internal.h"
 #include "obj_list.h"
 #include "set.h"
@@ -50,21 +51,49 @@ pmem_drain_nop(void)
 /*
  * obj_persist -- pmemobj version of pmem_persist w/o replication
  */
-static void
-obj_persist(void *ctx, const void *addr, size_t len)
+static int
+obj_persist(void *ctx, const void *addr, size_t len, unsigned flags)
 {
 	PMEMobjpool *pop = (PMEMobjpool *)ctx;
 	pop->persist_local(addr, len);
+
+	return 0;
 }
 
 /*
  * obj_flush -- pmemobj version of pmem_flush w/o replication
  */
-static void
-obj_flush(void *ctx, const void *addr, size_t len)
+static int
+obj_flush(void *ctx, const void *addr, size_t len, unsigned flags)
 {
 	PMEMobjpool *pop = (PMEMobjpool *)ctx;
 	pop->flush_local(addr, len);
+
+	return 0;
+}
+
+static uintptr_t Pool_addr;
+static size_t Pool_size;
+
+static void
+obj_msync_nofail(const void *addr, size_t size)
+{
+	uintptr_t addr_ptrt = (uintptr_t)addr;
+
+	/*
+	 * Verify msynced range is in the last mapped file range. Useful for
+	 * catching errors which normally would be caught only on Windows by
+	 * win_mmap.c.
+	 */
+	if (addr_ptrt < Pool_addr || addr_ptrt >= Pool_addr + Pool_size ||
+			addr_ptrt + size >= Pool_addr + Pool_size)
+		UT_FATAL("<0x%" PRIxPTR ",0x%" PRIxPTR "> "
+				"not in <0x%" PRIxPTR ",0x%" PRIxPTR "> range",
+				addr_ptrt, addr_ptrt + size, Pool_addr,
+				Pool_addr + Pool_size);
+
+	if (pmem_msync(addr, size))
+		UT_FATAL("!pmem_msync");
 }
 
 /*
@@ -77,6 +106,20 @@ obj_drain(void *ctx)
 	pop->drain_local();
 }
 
+
+static void *
+obj_memcpy(void *ctx, void *dest, const void *src, size_t len,
+	unsigned flags)
+{
+	return pmem_memcpy(dest, src, len, flags);
+}
+
+static void *
+obj_memset(void *ctx, void *ptr, int c, size_t sz, unsigned flags)
+{
+	return pmem_memset(ptr, c, sz, flags);
+}
+
 /*
  * linear_alloc -- allocates `size` bytes (rounded up to 8 bytes) and returns
  * offset to the allocated object
@@ -87,18 +130,6 @@ linear_alloc(uint64_t *cur_offset, size_t size)
 	uint64_t ret = *cur_offset;
 	*cur_offset += roundup(size, sizeof(uint64_t));
 	return ret;
-}
-
-/*
- * redo_log_check_offset -- (internal) check if offset is valid
- *
- * XXX: copy & paste from obj.c (since it's static)
- */
-static int
-redo_log_check_offset(void *ctx, uint64_t offset)
-{
-	PMEMobjpool *pop = (PMEMobjpool *)ctx;
-	return OBJ_OFF_IS_VALID(pop, offset);
 }
 
 /*
@@ -118,6 +149,8 @@ FUNC_MOCK_RUN_DEFAULT
 		UT_OUT("!%s: pmem_map_file", fname);
 		return NULL;
 	}
+	Pool_addr = (uintptr_t)addr;
+	Pool_size = size;
 
 	Pop = (PMEMobjpool *)addr;
 	Pop->addr = Pop;
@@ -139,15 +172,21 @@ FUNC_MOCK_RUN_DEFAULT
 		Pop->persist_local = pmem_persist;
 		Pop->flush_local = pmem_flush;
 		Pop->drain_local = pmem_drain;
+		Pop->memcpy_local = pmem_memcpy;
+		Pop->memset_local = pmem_memset;
 	} else {
-		Pop->persist_local = (persist_local_fn)pmem_msync;
-		Pop->flush_local = (persist_local_fn)pmem_msync;
+		Pop->persist_local = obj_msync_nofail;
+		Pop->flush_local = obj_msync_nofail;
 		Pop->drain_local = pmem_drain_nop;
+		Pop->memcpy_local = pmem_memcpy;
+		Pop->memset_local = pmem_memset;
 	}
 
 	Pop->p_ops.persist = obj_persist;
 	Pop->p_ops.flush = obj_flush;
 	Pop->p_ops.drain = obj_drain;
+	Pop->p_ops.memcpy = obj_memcpy;
+	Pop->p_ops.memset = obj_memset;
 	Pop->p_ops.base = Pop;
 	struct pmem_ops *p_ops = &Pop->p_ops;
 
@@ -161,8 +200,8 @@ FUNC_MOCK_RUN_DEFAULT
 	Id = (int *)((uintptr_t)Pop + linear_alloc(&heap_offset, sizeof(*Id)));
 
 	/* Alloc lane layout */
-	Lane_section.layout = (struct lane_section_layout *)((uintptr_t)Pop +
-			linear_alloc(&heap_offset, LANE_SECTION_LEN));
+	Lane.layout = (struct lane_layout *)((uintptr_t)Pop +
+			linear_alloc(&heap_offset, LANE_TOTAL_SIZE));
 
 	/* Alloc in band lists */
 	List.oid.pool_uuid_lo = Pop->uuid_lo;
@@ -195,9 +234,8 @@ FUNC_MOCK_RUN_DEFAULT
 	Pop->run_id += 2;
 	pmemops_persist(p_ops, &Pop->run_id, sizeof(Pop->run_id));
 
-	Pop->redo = redo_log_config_new(Pop->addr, p_ops, redo_log_check_offset,
-			Pop, REDO_NUM_ENTRIES);
-	pmemops_persist(p_ops, &Pop->redo, sizeof(Pop->redo));
+	Lane.external = operation_new((struct ulog *)&Lane.layout->external,
+		LANE_REDO_EXTERNAL_SIZE, NULL, NULL, p_ops, LOG_TYPE_REDO);
 
 	return Pop;
 }
@@ -210,10 +248,12 @@ FUNC_MOCK_END
  */
 FUNC_MOCK(pmemobj_close, void, PMEMobjpool *pop)
 	FUNC_MOCK_RUN_DEFAULT {
-		redo_log_config_delete(Pop->redo);
+		operation_delete(Lane.external);
 		UT_ASSERTeq(pmem_unmap(Pop,
 			Pop->heap_size + Pop->heap_offset), 0);
 		Pop = NULL;
+		Pool_addr = 0;
+		Pool_size = 0;
 	}
 FUNC_MOCK_END
 
@@ -257,10 +297,12 @@ FUNC_MOCK(pmemobj_alloc, int, PMEMobjpool *pop, PMEMoid *oidp,
 	FUNC_MOCK_RUN_DEFAULT {
 		PMEMoid oid = {0, 0};
 		oid.pool_uuid_lo = 0;
-		pmalloc(NULL, &oid.off, size, 0, 0);
+		pmalloc(pop, &oid.off, size, 0, 0);
 		if (oidp) {
 			*oidp = oid;
-			pmemops_persist(&Pop->p_ops, oidp, sizeof(*oidp));
+			if (OBJ_PTR_FROM_POOL(pop, oidp))
+				pmemops_persist(&Pop->p_ops, oidp,
+						sizeof(*oidp));
 		}
 		return 0;
 	}
@@ -269,20 +311,12 @@ FUNC_MOCK_END
 /*
  * lane_hold -- lane_hold mock
  *
- * Returns pointer to list lane section. For other types returns error.
+ * Returns pointer to list lane section.
  */
-FUNC_MOCK(lane_hold, unsigned, PMEMobjpool *pop, struct lane_section **section,
-		enum lane_section_type type)
+FUNC_MOCK(lane_hold, unsigned, PMEMobjpool *pop, struct lane **lane)
 	FUNC_MOCK_RUN_DEFAULT {
-		int ret = 0;
-		if (type != LANE_SECTION_LIST) {
-			ret = -1;
-			*section = NULL;
-		} else {
-			ret = 0;
-			*section = &Lane_section;
-		}
-		return ret;
+		*lane = &Lane;
+		return 0;
 	}
 FUNC_MOCK_END
 
@@ -298,9 +332,9 @@ FUNC_MOCK_RET_ALWAYS_VOID(lane_release, PMEMobjpool *pop);
  */
 FUNC_MOCK(lane_recover_and_section_boot, int, PMEMobjpool *pop)
 	FUNC_MOCK_RUN_DEFAULT {
-		return Section_ops[LANE_SECTION_LIST]->recover(Pop,
-				Lane_section.layout,
-				sizeof(*Lane_section.layout));
+		ulog_recover((struct ulog *)&Lane.layout->external,
+			OBJ_OFF_IS_VALID_FROM_CTX, &pop->p_ops);
+		return 0;
 	}
 FUNC_MOCK_END
 
@@ -314,24 +348,27 @@ FUNC_MOCK(lane_section_cleanup, int, PMEMobjpool *pop)
 FUNC_MOCK_END
 
 /*
- * redo_log_store_last -- redo_log_store_last mock
+ * ulog_store_last -- ulog_store_last mock
  */
-FUNC_MOCK(redo_log_store_last, void, const struct redo_ctx *ctx,
-		struct redo_log *redo, size_t index,
-		uint64_t offset, uint64_t value)
+FUNC_MOCK(ulog_store, void,
+	struct ulog *dest,
+	struct ulog *src, size_t nbytes, size_t redo_base_nbytes,
+	struct ulog_next *next, const struct pmem_ops *p_ops)
 	FUNC_MOCK_RUN_DEFAULT {
-		switch (Redo_fail) {
+		switch (Ulog_fail) {
 		case FAIL_AFTER_FINISH:
-			_FUNC_REAL(redo_log_store_last)(ctx,
-					redo, index, offset, value);
+			_FUNC_REAL(ulog_store)(dest, src,
+					nbytes, redo_base_nbytes,
+					next, p_ops);
 			DONEW(NULL);
 			break;
 		case FAIL_BEFORE_FINISH:
 			DONEW(NULL);
 			break;
 		default:
-			_FUNC_REAL(redo_log_store_last)(ctx,
-					redo, index, offset, value);
+			_FUNC_REAL(ulog_store)(dest, src,
+					nbytes, redo_base_nbytes,
+					next, p_ops);
 			break;
 		}
 
@@ -339,35 +376,13 @@ FUNC_MOCK(redo_log_store_last, void, const struct redo_ctx *ctx,
 FUNC_MOCK_END
 
 /*
- * redo_log_set_last -- redo_log_set_last mock
+ * ulog_process -- ulog_process mock
  */
-FUNC_MOCK(redo_log_set_last, void, const struct redo_ctx *ctx,
-		struct redo_log *redo, size_t index)
-	FUNC_MOCK_RUN_DEFAULT {
-		switch (Redo_fail) {
-		case FAIL_AFTER_FINISH:
-			_FUNC_REAL(redo_log_set_last)(ctx, redo, index);
-			DONEW(NULL);
-			break;
-		case FAIL_BEFORE_FINISH:
-			DONEW(NULL);
-			break;
-		default:
-			_FUNC_REAL(redo_log_set_last)(ctx, redo, index);
-			break;
-		}
-
-	}
-FUNC_MOCK_END
-
-/*
- * redo_log_process -- redo_log_process mock
- */
-FUNC_MOCK(redo_log_process, void, const struct redo_ctx *ctx,
-		struct redo_log *redo, size_t nentries)
+FUNC_MOCK(ulog_process, void, struct ulog *ulog,
+	ulog_check_offset_fn check, const struct pmem_ops *p_ops)
 		FUNC_MOCK_RUN_DEFAULT {
-			_FUNC_REAL(redo_log_process)(ctx, redo, nentries);
-			if (Redo_fail == FAIL_AFTER_PROCESS) {
+			_FUNC_REAL(ulog_process)(ulog, check, p_ops);
+			if (Ulog_fail == FAIL_AFTER_PROCESS) {
 				DONEW(NULL);
 			}
 		}

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,7 +34,14 @@
  * rpmem_fip_msg.h -- simple wrappers for fi_rma(3) and fi_msg(3) functions
  */
 
+#ifndef RPMEM_FIP_MSG_H
+#define RPMEM_FIP_MSG_H 1
+
 #include <rdma/fi_rma.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*
  * rpmem_fip_rma -- helper struct for RMA operation
@@ -128,8 +135,9 @@ rpmem_fip_readmsg(struct fid_ep *ep, struct rpmem_fip_rma *rma,
  * rpmem_fip_sendmsg -- wrapper for fi_sendmsg
  */
 static inline int
-rpmem_fip_sendmsg(struct fid_ep *ep, struct rpmem_fip_msg *msg)
+rpmem_fip_sendmsg(struct fid_ep *ep, struct rpmem_fip_msg *msg, size_t len)
 {
+	msg->iov.iov_len = len;
 	return (int)fi_sendmsg(ep, &msg->msg, msg->flags);
 }
 
@@ -159,3 +167,9 @@ rpmem_fip_msg_get_pres(struct rpmem_fip_msg *msg)
 {
 	return (struct rpmem_msg_persist_resp *)msg->iov.iov_base;
 }
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

@@ -32,12 +32,6 @@
 #
 # pmempool_create/TEST2 -- test for creating pools of specified size
 #
-[CmdletBinding(PositionalBinding=$false)]
-Param(
-    [alias("d")]
-    $DIR = ""
-    )
-
 
 . ..\unittest\unittest.ps1
 
@@ -49,6 +43,8 @@ setup
 
 $POOL="$DIR\file.pool"
 $SIZE=(1024 + 512) * 1024 * 1024
+
+require_free_space "${SIZE}b"
 
 # PMEMBLK
 expect_normal_exit $PMEMPOOL create -s $SIZE blk 512 $POOL

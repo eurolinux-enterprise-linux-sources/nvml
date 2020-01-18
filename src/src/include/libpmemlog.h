@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018, Intel Corporation
+ * Copyright 2014-2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,6 +43,8 @@
 #ifndef LIBPMEMLOG_H
 #define LIBPMEMLOG_H 1
 
+#include <sys/types.h>
+
 #ifdef _WIN32
 #include <pmemcompat.h>
 
@@ -52,12 +54,18 @@
 #define pmemlog_check pmemlog_checkW
 #define pmemlog_check_version pmemlog_check_versionW
 #define pmemlog_errormsg pmemlog_errormsgW
+#define pmemlog_ctl_get pmemlog_ctl_getW
+#define pmemlog_ctl_set pmemlog_ctl_setW
+#define pmemlog_ctl_exec pmemlog_ctl_execW
 #else
 #define pmemlog_open pmemlog_openU
 #define pmemlog_create pmemlog_createU
 #define pmemlog_check pmemlog_checkU
 #define pmemlog_check_version pmemlog_check_versionU
 #define pmemlog_errormsg pmemlog_errormsgU
+#define pmemlog_ctl_get pmemlog_ctl_getU
+#define pmemlog_ctl_set pmemlog_ctl_setU
+#define pmemlog_ctl_exec pmemlog_ctl_execU
 #endif
 
 #else
@@ -67,8 +75,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <sys/types.h>
 
 /*
  * opaque type, internal to libpmemlog
@@ -153,6 +159,20 @@ const char *pmemlog_errormsg(void);
 #else
 const char *pmemlog_errormsgU(void);
 const wchar_t *pmemlog_errormsgW(void);
+#endif
+
+#ifndef _WIN32
+/* EXPERIMENTAL */
+int pmemlog_ctl_get(PMEMlogpool *plp, const char *name, void *arg);
+int pmemlog_ctl_set(PMEMlogpool *plp, const char *name, void *arg);
+int pmemlog_ctl_exec(PMEMlogpool *plp, const char *name, void *arg);
+#else
+int pmemlog_ctl_getU(PMEMlogpool *plp, const char *name, void *arg);
+int pmemlog_ctl_getW(PMEMlogpool *plp, const wchar_t *name, void *arg);
+int pmemlog_ctl_setU(PMEMlogpool *plp, const char *name, void *arg);
+int pmemlog_ctl_setW(PMEMlogpool *plp, const wchar_t *name, void *arg);
+int pmemlog_ctl_execU(PMEMlogpool *plp, const char *name, void *arg);
+int pmemlog_ctl_execW(PMEMlogpool *plp, const wchar_t *name, void *arg);
 #endif
 
 #ifdef __cplusplus

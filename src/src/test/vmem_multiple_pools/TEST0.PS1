@@ -32,11 +32,6 @@
 #
 # src/test/vmem_multiple_pools/TEST0.PS1 -- unit test for vmem_multiple_pools
 #
-[CmdletBinding(PositionalBinding=$false)]
-Param(
-    [alias("d")]
-    $DIR = ""
-    )
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
@@ -46,6 +41,8 @@ require_fs_type any
 require_build_type debug nondebug
 
 setup
+
+require_free_space 2G
 
 expect_normal_exit $Env:EXE_DIR\vmem_multiple_pools$Env:EXESUFFIX $DIR 128 1
 

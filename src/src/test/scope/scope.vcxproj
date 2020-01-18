@@ -14,7 +14,7 @@
     <ProjectGuid>{C0E811E0-8942-4CFD-A817-74D99E9E6577}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>scope</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.14393.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.16299.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
@@ -70,7 +70,6 @@
     <None Include="out4w.log.match" />
     <None Include="out5w.log.match" />
     <None Include="out6w.log.match" />
-    <None Include="out7w.log.match" />
     <None Include="TEST0w.PS1" />
     <None Include="TEST1w.PS1" />
     <None Include="TEST2w.PS1" />
@@ -78,7 +77,6 @@
     <None Include="TEST4w.PS1" />
     <None Include="TEST5w.PS1" />
     <None Include="TEST6w.PS1" />
-    <None Include="TEST7w.PS1" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\tools\dllview\dllview.vcxproj">

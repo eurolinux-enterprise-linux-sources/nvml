@@ -39,21 +39,18 @@ vpath %.c ../../rpmem_common/
 TARGET = pmempool
 
 OBJS = pmempool.o\
-       info.o info_blk.o info_log.o info_obj.o info_cto.o redo.o\
-       create.o dump.o check.o rm.o convert.o convert_obj_v1_v2.o\
-       synchronize.o transform.o rpmem_ssh.o rpmem_cmd.o rpmem_util.o\
-       rpmem_common.o convert_obj_v3_v4.o
+       info.o info_blk.o info_log.o info_obj.o ulog.o\
+       create.o dump.o check.o rm.o convert.o synchronize.o transform.o\
+       rpmem_ssh.o rpmem_cmd.o rpmem_util.o rpmem_common.o feature.o
 
 LIBPMEM=y
 LIBPMEMBLK=y
 LIBPMEMOBJ=y
 LIBPMEMLOG=y
-LIBPMEMCTO=y
 LIBPMEMPOOL=y
 TOOLS_COMMON=y
 
-LIBPMEMOBJ_PRIV=pvector_new pvector_size pvector_first pvector_next\
-	pvector_delete memblock_from_offset alloc_class_by_id\
+LIBPMEMOBJ_PRIV=memblock_from_offset alloc_class_by_id\
 	memblock_rebuild_state alloc_class_by_run\
 	heap_run_foreach_object alloc_class_collection_new\
 	alloc_class_collection_delete
@@ -67,7 +64,6 @@ INCS += -I$(TOP)/src/librpmem
 INCS += -I$(TOP)/src/libpmemlog
 INCS += -I$(TOP)/src/libpmemblk
 INCS += -I$(TOP)/src/libpmemobj
-INCS += -I$(TOP)/src/libpmemcto
 
 CFLAGS += -DUSE_RPMEM
 
@@ -81,7 +77,7 @@ MANPAGES = $(TOP)/doc/pmempool.1\
 	   $(TOP)/doc/pmempool-sync.1\
 	   $(TOP)/doc/pmempool-tranform.1
 
-BASH_COMP_FILES = pmempool.sh
+BASH_COMP_FILES = bash_completion/pmempool
 
 include ../Makefile.inc
 

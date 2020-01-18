@@ -118,7 +118,7 @@ util_map(int fd, size_t len, int flags, int rdonly, size_t req_align,
 	void *base;
 	void *addr = util_map_hint(len, req_align);
 	if (addr == MAP_FAILED) {
-		ERR("cannot find a contiguous region of given size");
+		LOG(1, "cannot find a contiguous region of given size");
 		return NULL;
 	}
 
@@ -148,6 +148,16 @@ util_unmap(void *addr, size_t len)
 {
 	LOG(3, "addr %p len %zu", addr, len);
 
+/*
+ * XXX Workaround for https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=169608
+ */
+#ifdef __FreeBSD__
+	if (!IS_PAGE_ALIGNED((uintptr_t)addr)) {
+		errno = EINVAL;
+		ERR("!munmap");
+		return -1;
+	}
+#endif
 	int retval = munmap(addr, len);
 	if (retval < 0)
 		ERR("!munmap");
@@ -355,7 +365,13 @@ util_range_register(const void *addr, size_t len, const char *path,
 	LOG(3, "addr %p len %zu path %s type %d", addr, len, path, type);
 
 	/* check if not tracked already */
-	ASSERTeq(util_range_find((uintptr_t)addr, len), NULL);
+	if (util_range_find((uintptr_t)addr, len) != NULL) {
+		ERR(
+		"duplicated persistent memory range; presumably unmapped with munmap() instead of pmem_unmap(): addr %p len %zu",
+			addr, len);
+		errno = ENOMEM;
+		return -1;
+	}
 
 	struct map_tracker *mt;
 	mt  = Malloc(sizeof(struct map_tracker));
@@ -391,8 +407,11 @@ util_range_split(struct map_tracker *mt, const void *addrp, const void *endp)
 	uintptr_t addr = (uintptr_t)addrp;
 	uintptr_t end = (uintptr_t)endp;
 	ASSERTne(mt, NULL);
-	ASSERTeq(addr % Mmap_align, 0);
-	ASSERTeq(end % Mmap_align, 0);
+	if (addr == end || addr % Mmap_align != 0 || end % Mmap_align != 0) {
+		ERR(
+		"invalid munmap length, must be non-zero and page aligned");
+		return -1;
+	}
 
 	struct map_tracker *mtb = NULL;
 	struct map_tracker *mte = NULL;
@@ -418,7 +437,7 @@ util_range_split(struct map_tracker *mt, const void *addrp, const void *endp)
 		}
 
 		mtb->base_addr = mt->base_addr;
-		mtb->end_addr = (uintptr_t)addr;
+		mtb->end_addr = addr;
 		mtb->region_id = mt->region_id;
 		mtb->type = mt->type;
 	}
@@ -475,6 +494,18 @@ util_range_unregister(const void *addr, size_t len)
 	int ret = 0;
 
 	util_rwlock_wrlock(&Mmap_list_lock);
+
+	/*
+	 * Changes in the map tracker list must match the underlying behavior.
+	 *
+	 * $ man 2 mmap:
+	 *	The address addr must be a multiple of the page size (but length
+	 *	need not be). All pages containing a part of the indicated range
+	 *	are unmapped.
+	 *
+	 * This means that we must align the length to the page size.
+	 */
+	len = PAGE_ALIGNED_UP_SIZE(len);
 
 	void *end = (char *)addr + len;
 

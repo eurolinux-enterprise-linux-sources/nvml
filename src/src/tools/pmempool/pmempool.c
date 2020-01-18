@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -51,6 +51,7 @@
 #include "convert.h"
 #include "synchronize.h"
 #include "transform.h"
+#include "feature.h"
 #include "set.h"
 
 #ifndef _WIN32
@@ -66,12 +67,12 @@
 struct command {
 	const char *name;
 	const char *brief;
-	int (*func)(char *, int, char *[]);
-	void (*help)(char *);
+	int (*func)(const char *, int, char *[]);
+	void (*help)(const char *);
 };
 
-static struct command *get_command(char *cmd_str);
-static void print_help(char *appname);
+static const struct command *get_command(const char *cmd_str);
+static void print_help(const char *appname);
 
 /*
  * long_options -- pmempool command line arguments
@@ -86,7 +87,7 @@ static const struct option long_options[] = {
  * help_help -- prints help message for help command
  */
 static void
-help_help(char *appname)
+help_help(const char *appname)
 {
 	printf("Usage: %s help <command>\n", appname);
 }
@@ -95,11 +96,11 @@ help_help(char *appname)
  * help_func -- prints help message for specified command
  */
 static int
-help_func(char *appname, int argc, char *argv[])
+help_func(const char *appname, int argc, char *argv[])
 {
 	if (argc > 1) {
 		char *cmd_str = argv[1];
-		struct command *cmdp = get_command(cmd_str);
+		const struct command *cmdp = get_command(cmd_str);
 
 		if (cmdp && cmdp->help) {
 			cmdp->help(appname);
@@ -117,7 +118,7 @@ help_func(char *appname, int argc, char *argv[])
 /*
  * commands -- definition of all pmempool commands
  */
-static struct command commands[] = {
+static const struct command commands[] = {
 	{
 		.name = "info",
 		.brief = "print information and statistics about a pool",
@@ -167,6 +168,12 @@ static struct command commands[] = {
 		.help = pmempool_transform_help,
 	},
 	{
+		.name = "feature",
+		.brief = "toggle / query pool features",
+		.func = pmempool_feature_func,
+		.help = pmempool_feature_help,
+	},
+	{
 		.name = "help",
 		.brief = "print help text about a command",
 		.func = help_func,
@@ -183,7 +190,7 @@ static struct command commands[] = {
  * print_version -- prints pmempool version message
  */
 static void
-print_version(char *appname)
+print_version(const char *appname)
 {
 	printf("%s %s\n", appname, SRCVERSION);
 }
@@ -192,7 +199,7 @@ print_version(char *appname)
  * print_usage -- prints pmempool usage message
  */
 static void
-print_usage(char *appname)
+print_usage(const char *appname)
 {
 	printf("usage: %s [--version] [--help] <command> [<args>]\n", appname);
 }
@@ -201,7 +208,7 @@ print_usage(char *appname)
  * print_help -- prints pmempool help message
  */
 static void
-print_help(char *appname)
+print_help(const char *appname)
 {
 	print_usage(appname);
 	print_version(appname);
@@ -224,8 +231,8 @@ print_help(char *appname)
 /*
  * get_command -- returns command for specified command name
  */
-static struct command *
-get_command(char *cmd_str)
+static const struct command *
+get_command(const char *cmd_str)
 {
 	unsigned i;
 	for (i = 0; i < COMMANDS_NUMBER; i++) {
@@ -284,7 +291,7 @@ main(int argc, char *argv[])
 
 	char *cmd_str = argv[optind];
 
-	struct command *cmdp = get_command(cmd_str);
+	const struct command *cmdp = get_command(cmd_str);
 
 	if (cmdp) {
 		ret = cmdp->func(APPNAME, argc - 1, argv + 1);

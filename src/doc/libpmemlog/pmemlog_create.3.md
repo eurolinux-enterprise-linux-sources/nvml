@@ -48,7 +48,7 @@ date: pmemlog API version 1.1
 
 _UW(pmemlog_create), _UW(pmemlog_open),
 **pmemlog_close**(), _UW(pmemlog_check)
--- create, open, close and validate persistent memory resident log file
+- create, open, close and validate persistent memory resident log file
 
 
 # SYNOPSIS #
@@ -113,6 +113,12 @@ Similar to _UW(pmemlog_create), *path* must identify either an existing
 log memory pool file, or the *set* file used to create a pool set.
 The application must have permission to open the file and memory map the
 file or pool set with read/write permissions.
+
+Be aware that if the pool contains bad blocks inside, opening can be aborted
+by the SIGBUS signal, because currently the pool is not checked against
+bad blocks during opening. It can be turned on by setting the CHECK_BAD_BLOCKS
+compat feature. For details see description of this feature
+in **pmempool-feature**(1).
 
 The **pmemlog_close**() function closes the memory pool indicated by *plp*
 and deletes the memory pool handle. The log memory pool itself lives on in

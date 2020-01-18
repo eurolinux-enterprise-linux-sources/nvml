@@ -45,14 +45,13 @@ touch $ERR_TEMP
 $LAYOUT = "OBJ_LAYOUT${Env:SUFFIX}"
 $POOLSET = "$DIR\pool.set"
 
-$POOL_TYPES = "obj", "blk", "log", "cto"
+$POOL_TYPES = "obj", "blk", "log"
 
 # pmempool create arguments:
 $create_args = @{}
 $create_args.obj = @("obj", "$POOLSET")
 $create_args.blk = @("blk", "512", "$POOLSET")
 $create_args.log = @("log", "$POOLSET")
-$create_args.cto = @("cto", "$POOLSET")
 
 # Known compat flags:
 
@@ -61,10 +60,10 @@ $POOL_FEAT_SINGLEHDR = 0x0001
 $POOL_FEAT_CKSUM_2K = 0x0002
 
 # Unknown compat flags:
-$UNKNOWN_COMPAT = 1, 2, 3, 1111
+$UNKNOWN_COMPAT = 2, 4, 8, 1024
 
 # Unknown incompat flags:
-$UNKNOWN_INCOMPAT = 4, 7, 1111
+$UNKNOWN_INCOMPAT = 8, 15, 1111
 
 # set compat flags in header
 function set_compat {
@@ -75,7 +74,7 @@ function set_compat {
         [String]$flag
 
     )
-    expect_normal_exit $PMEMSPOIL $part "pool_hdr.compat_features=$flag" `
+    expect_normal_exit $PMEMSPOIL $part "pool_hdr.features.compat=$flag" `
         "pool_hdr.checksum_gen()"
 }
 
@@ -88,6 +87,6 @@ function set_incompat {
         [String]$flag
 
     )
-    expect_normal_exit $PMEMSPOIL $part "pool_hdr.incompat_features=$flag" `
+    expect_normal_exit $PMEMSPOIL $part "pool_hdr.features.incompat=$flag" `
         "pool_hdr.checksum_gen()"
 }

@@ -58,25 +58,30 @@ struct step {
 static const struct step steps[] = {
 	{
 		.type		= POOL_TYPE_ANY,
+		.func		= check_bad_blocks,
+		.part		= true,
+	},
+	{
+		.type		= POOL_TYPE_ANY,
 		.func		= check_backup,
 		.part		= true,
 	},
 	{
 		.type		= POOL_TYPE_BLK | POOL_TYPE_LOG |
-					POOL_TYPE_OBJ | POOL_TYPE_CTO,
+					POOL_TYPE_OBJ,
 		.func		= check_sds,
 		.part		= true,
 	},
 	{
 		.type		= POOL_TYPE_BLK | POOL_TYPE_LOG |
-					POOL_TYPE_OBJ | POOL_TYPE_CTO |
+					POOL_TYPE_OBJ |
 					POOL_TYPE_UNKNOWN,
 		.func		= check_pool_hdr,
 		.part		= true,
 	},
 	{
 		.type		= POOL_TYPE_BLK | POOL_TYPE_LOG |
-					POOL_TYPE_OBJ | POOL_TYPE_CTO |
+					POOL_TYPE_OBJ |
 					POOL_TYPE_UNKNOWN,
 		.func		= check_pool_hdr_uuids,
 		.part		= true,
@@ -92,11 +97,6 @@ static const struct step steps[] = {
 		.part		= false,
 	},
 	{
-		.type		= POOL_TYPE_CTO,
-		.func		= check_cto,
-		.part		= false,
-	},
-	{
 		.type		= POOL_TYPE_BLK | POOL_TYPE_BTT,
 		.func		= check_btt_info,
 		.part		= false,
@@ -108,7 +108,7 @@ static const struct step steps[] = {
 	},
 	{
 		.type		= POOL_TYPE_BLK | POOL_TYPE_LOG |
-					POOL_TYPE_BTT | POOL_TYPE_CTO,
+					POOL_TYPE_BTT,
 		.func		= check_write,
 		.part		= false,
 	},

@@ -121,7 +121,7 @@ parse_args(int argc, char *argv[])
 				err("'%s' -- invalid alignment", optarg);
 				return -1;
 			}
-			Align = (size_t)align;
+			Align = align;
 			break;
 		case 's':
 			Opts |= MAP_SYNC_SUPP;
@@ -212,17 +212,22 @@ is_pmem(const char *path)
 static int
 is_dev_dax(const char *path)
 {
+	enum file_type type = util_file_get_type(path);
+	if (type < 0) {
+		printf("%s -- not accessible\n", path);
+		return -1;
+	}
+
 	if (os_access(path, W_OK|R_OK)) {
 		printf("%s -- permission denied\n", path);
 		return -1;
 	}
 
-	if (!util_file_is_device_dax(path)) {
-		printf("%s -- not device dax\n", path);
-		return 0;
-	}
+	if (type == TYPE_DEVDAX)
+		return 1;
 
-	return 1;
+	printf("%s -- not device dax\n", path);
+	return 0;
 }
 
 /*
@@ -278,12 +283,14 @@ supports_map_sync(const char *path)
 	void *addr = mmap(NULL, size, PROT_READ|PROT_WRITE,
 		MAP_SHARED|MAP_SYNC|MAP_SHARED_VALIDATE, fd, 0);
 
-	if (addr == MAP_FAILED &&
-		!(errno == EOPNOTSUPP || errno == EINVAL)) {
+	if (addr != MAP_FAILED) {
+		ret = 1;
+	} else if (addr == MAP_FAILED &&
+		(errno == EOPNOTSUPP || errno == EINVAL)) {
+		ret = 0;
+	} else {
 		err("mmap: %s\n", strerror(errno));
 		ret = -1;
-	} else {
-		ret = 0;
 	}
 
 	os_close(fd);

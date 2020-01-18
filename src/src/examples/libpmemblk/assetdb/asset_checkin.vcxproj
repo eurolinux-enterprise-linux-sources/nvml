@@ -13,7 +13,7 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{581B3A58-F3F0-4765-91E5-D0C82816A528}</ProjectGuid>
     <RootNamespace>pmemblk</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.14393.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.16299.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <ItemGroup Condition="'$(SolutionName)'=='PMDK'">
     <ProjectReference Include="..\..\..\libpmemblk\libpmemblk.vcxproj">
@@ -36,13 +36,13 @@
     <WholeProgramOptimization>true</WholeProgramOptimization>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-  <PropertyGroup>
-    <IncludePath>$(ProjectDir)..\..\;$(solutionDir)include;$(IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
-  </PropertyGroup>
   <ItemDefinitionGroup>
     <Manifest>
       <AdditionalManifestFiles>..\..\..\LongPath.manifest</AdditionalManifestFiles>
     </Manifest>
+    <Link>
+      <AdditionalDependencies>libpmem.lib;libpmemblk.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
   </ItemDefinitionGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Import Project="..\..\Examples_$(Configuration).props" />

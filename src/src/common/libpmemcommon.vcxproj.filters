@@ -11,6 +11,12 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="badblock_none.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="badblock.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="file.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -56,24 +62,63 @@
     <ClCompile Include="shutdown_state.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="os_dimm_none.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="os_deep_windows.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="os_auto_flush_windows.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="os_dimm_windows.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ctl.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ctl_prefault.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ctl_sds.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="ctl.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ctl_global.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="badblock.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="dlsym.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="file.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="fs.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="mmap.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="os.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="os_auto_flush.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="os_auto_flush_windows.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="os_badblock.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="os_deep.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="os_thread.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="out.h">
@@ -98,21 +143,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="valgrind_internal.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="os.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="os_thread.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="fs.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="os_deep.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="os_auto_flush.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

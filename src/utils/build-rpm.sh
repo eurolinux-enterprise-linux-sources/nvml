@@ -155,9 +155,9 @@ if [ "$EXTRA_CFLAGS_RELEASE" = "" ]; then
 fi
 
 LIBFABRIC_MIN_VERSION=1.4.2
-NDCTL_MIN_VERSION=58.2.37
+NDCTL_MIN_VERSION=60.1
 
-RPMBUILD_OPTS=""
+RPMBUILD_OPTS=( )
 PACKAGE_VERSION=$(get_version $PACKAGE_VERSION_TAG)
 
 if [ -z "$PACKAGE_VERSION" ]
@@ -183,7 +183,7 @@ cd $WORKING_DIR
 check_dir $SOURCE
 mv $SOURCE $PACKAGE_SOURCE
 
-if [ "$DISTRO" = "SLES" ]
+if [ "$DISTRO" = "SLES_like" ]
 then
 	RPM_LICENSE="BSD-3-Clause"
 	RPM_GROUP_SYS_BASE="System\/Base"
@@ -221,51 +221,51 @@ sed -e "s/__VERSION__/$PACKAGE_VERSION/g" \
 	-e "s/__NDCTL_MIN_VER__/$NDCTL_MIN_VERSION/g" \
 	$OLDPWD/$SCRIPT_DIR/pmdk.spec.in > $RPM_SPEC_FILE
 
-if [ "$DISTRO" = "SLES" ]
+if [ "$DISTRO" = "SLES_like" ]
 then
 	sed -i '/^#.*bugzilla.redhat/d' $RPM_SPEC_FILE
 fi
+
+# do not split on space
+IFS=$'\n'
 
 # experimental features
 if [ "${EXPERIMENTAL}" = "y" ]
 then
 	# no experimental features for now
-	RPMBUILD_OPTS+=""
+	RPMBUILD_OPTS+=( )
 fi
 
 # librpmem & rpmemd
 if [ "${BUILD_RPMEM}" = "y" ]
 then
-	RPMBUILD_OPTS+="--with rpmem "
+	RPMBUILD_OPTS+=(--with fabric)
 else
-	RPMBUILD_OPTS+="--without rpmem "
+	RPMBUILD_OPTS+=(--without fabric)
 fi
 
-# daxio
-if [ "${NDCTL_ENABLE}" = "y" ]
+# daxio & RAS
+if [ "${NDCTL_ENABLE}" = "n" ]
 then
-	RPMBUILD_OPTS+="--with ndctl "
+	RPMBUILD_OPTS+=(--without ndctl)
 else
-	RPMBUILD_OPTS+="--without ndctl "
+	RPMBUILD_OPTS+=(--with ndctl)
 fi
 
 # use specified testconfig file or default
 if [[( -n "${TEST_CONFIG_FILE}") && ( -f "$TEST_CONFIG_FILE" ) ]]
 then
 	echo "Test config file: $TEST_CONFIG_FILE"
-	TEST_CONFIG_VAL=${TEST_CONFIG_FILE}
+	RPMBUILD_OPTS+=(--define "_testconfig $TEST_CONFIG_FILE")
 else
 	echo -e "Test config file $TEST_CONFIG_FILE does not exist.\n"\
 		"Default test config will be used."
-	TEST_CONFIG_VAL="default"
 fi
 
 # run make check or not
-if [ "${BUILD_PACKAGE_CHECK}" = "y" ]
+if [ "${BUILD_PACKAGE_CHECK}" == "n" ]
 then
-	CHECK=1
-else
-	CHECK=0
+	RPMBUILD_OPTS+=(--define "_skip_check 1")
 fi
 
 tar zcf $PACKAGE_TARBALL $PACKAGE_SOURCE
@@ -273,15 +273,13 @@ tar zcf $PACKAGE_TARBALL $PACKAGE_SOURCE
 # Create directory structure for rpmbuild
 mkdir -v BUILD SPECS
 
-echo "opts: $RPMBUILD_OPTS --define _testconfig ${TEST_CONFIG_VAL} --define _check ${CHECK}"
+echo "opts: ${RPMBUILD_OPTS[@]}"
 
 rpmbuild --define "_topdir `pwd`"\
 	--define "_rpmdir ${OUT_DIR}"\
 	--define "_srcrpmdir ${OUT_DIR}"\
-	--define "_testconfig ${TEST_CONFIG_VAL}"\
-	--define "_check ${CHECK}"\
 	 -ta $PACKAGE_TARBALL \
-	 $RPMBUILD_OPTS
+	 ${RPMBUILD_OPTS[@]}
 
 echo "Building rpm packages done"
 

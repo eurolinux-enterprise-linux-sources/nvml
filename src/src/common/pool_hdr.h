@@ -42,6 +42,11 @@
 #include <unistd.h>
 #include "uuid.h"
 #include "shutdown_state.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * Number of bits per type in alignment descriptor
  */
@@ -104,6 +109,15 @@ struct arch_flags {
 #define PMDK_DATA_BE 2 /* 2's complement, big endian */
 
 /*
+ * features flags
+ */
+typedef struct {
+	uint32_t compat;	/* mask: compatible "may" features */
+	uint32_t incompat;	/* mask: "must support" features */
+	uint32_t ro_compat;	/* mask: force RO if unsupported */
+} features_t;
+
+/*
  * header used at the beginning of all types of memory pools
  *
  * for pools build on persistent memory, the integer types
@@ -111,30 +125,21 @@ struct arch_flags {
  */
 #define POOL_HDR_SIG_LEN 8
 
-
-/*
- * defines the first not checksumed field - all fields after this will be
- * ignored during checksum calculations
- */
-#define POOL_HDR_CSUM_END_OFF offsetof(struct pool_hdr, unused2)
-
 struct pool_hdr {
 	char signature[POOL_HDR_SIG_LEN];
 	uint32_t major;			/* format major version number */
-	uint32_t compat_features;	/* mask: compatible "may" features */
-	uint32_t incompat_features;	/* mask: "must support" features */
-	uint32_t ro_compat_features;	/* mask: force RO if unsupported */
-	uuid_t poolset_uuid; /* pool set UUID */
-	uuid_t uuid; /* UUID of this file */
-	uuid_t prev_part_uuid; /* prev part */
-	uuid_t next_part_uuid; /* next part */
-	uuid_t prev_repl_uuid; /* prev replica */
-	uuid_t next_repl_uuid; /* next replica */
+	features_t features;		/* features flags */
+	uuid_t poolset_uuid;		/* pool set UUID */
+	uuid_t uuid;			/* UUID of this file */
+	uuid_t prev_part_uuid;		/* prev part */
+	uuid_t next_part_uuid;		/* next part */
+	uuid_t prev_repl_uuid;		/* prev replica */
+	uuid_t next_repl_uuid;		/* next replica */
 	uint64_t crtime;		/* when created (seconds since epoch) */
 	struct arch_flags arch_flags;	/* architecture identification flags */
-	unsigned char unused[1888];	/* must be zero */
+	unsigned char unused[1904];	/* must be zero */
 	/* not checksumed */
-	unsigned char unused2[1992];	/* must be zero */
+	unsigned char unused2[1976];	/* must be zero */
 	struct shutdown_state sds;	/* shutdown status */
 	uint64_t checksum;		/* checksum of above fields */
 };
@@ -149,8 +154,18 @@ void util_convert2h_hdr_nocheck(struct pool_hdr *hdrp);
 void util_get_arch_flags(struct arch_flags *arch_flags);
 int util_check_arch_flags(const struct arch_flags *arch_flags);
 
-int util_feature_check(struct pool_hdr *hdrp, uint32_t incompat,
-				uint32_t ro_compat, uint32_t compat);
+features_t util_get_unknown_features(features_t features, features_t known);
+int util_feature_check(struct pool_hdr *hdrp, features_t features);
+int util_feature_cmp(features_t features, features_t ref);
+int util_feature_is_zero(features_t features);
+int util_feature_is_set(features_t features, features_t flag);
+void util_feature_enable(features_t *features, features_t new_feature);
+void util_feature_disable(features_t *features, features_t new_feature);
+
+const char *util_feature2str(features_t feature, features_t *found);
+features_t util_str2feature(const char *str);
+uint32_t util_str2pmempool_feature(const char *str);
+uint32_t util_feature2pmempool_feature(features_t feat);
 
 /*
  * set of macros for determining the alignment descriptor
@@ -171,12 +186,86 @@ int util_feature_check(struct pool_hdr *hdrp, uint32_t incompat,
 (alignment_desc_of(long double)	<<  9 * ALIGNMENT_DESC_BITS) |\
 (alignment_desc_of(void *)	<< 10 * ALIGNMENT_DESC_BITS)
 
+#define POOL_FEAT_ZERO		0x0000U
+
+static const features_t features_zero =
+	{POOL_FEAT_ZERO, POOL_FEAT_ZERO, POOL_FEAT_ZERO};
+
+/*
+ * compat features
+ */
+#define POOL_FEAT_CHECK_BAD_BLOCKS	0x0001U	/* check bad blocks in a pool */
+
+#define POOL_FEAT_COMPAT_ALL \
+	(POOL_FEAT_CHECK_BAD_BLOCKS)
+
+#define FEAT_COMPAT(X) \
+	{POOL_FEAT_##X, POOL_FEAT_ZERO, POOL_FEAT_ZERO}
+
 /*
  * incompat features
  */
-#define POOL_FEAT_SINGLEHDR	0x0001	/* pool header only in the first part */
-#define POOL_FEAT_CKSUM_2K	0x0002	/* only first 2K of hdr checksummed */
+#define POOL_FEAT_SINGLEHDR	0x0001U	/* pool header only in the first part */
+#define POOL_FEAT_CKSUM_2K	0x0002U	/* only first 2K of hdr checksummed */
+#define POOL_FEAT_SDS		0x0004U	/* check shutdown state */
 
-#define POOL_FEAT_ALL	(POOL_FEAT_SINGLEHDR | POOL_FEAT_CKSUM_2K)
+#define POOL_FEAT_INCOMPAT_ALL \
+	(POOL_FEAT_SINGLEHDR | POOL_FEAT_CKSUM_2K | POOL_FEAT_SDS)
+
+/*
+ * incompat features effective values (if applicable)
+ */
+#ifdef SDS_ENABLED
+#define POOL_E_FEAT_SDS		POOL_FEAT_SDS
+#else
+#define POOL_E_FEAT_SDS		0x0000U	/* empty */
+#endif
+
+#define POOL_FEAT_COMPAT_VALID \
+	(POOL_FEAT_CHECK_BAD_BLOCKS)
+
+#define POOL_FEAT_INCOMPAT_VALID \
+	(POOL_FEAT_SINGLEHDR | POOL_FEAT_CKSUM_2K | POOL_E_FEAT_SDS)
+
+#ifdef _WIN32
+#define POOL_FEAT_INCOMPAT_DEFAULT \
+	(POOL_FEAT_CKSUM_2K | POOL_E_FEAT_SDS)
+#else
+/*
+ * shutdown state support on Linux requires root access
+ * so it is disabled by default
+ */
+#define POOL_FEAT_INCOMPAT_DEFAULT \
+	(POOL_FEAT_CKSUM_2K)
+#endif
+
+#define FEAT_INCOMPAT(X) \
+	{POOL_FEAT_ZERO, POOL_FEAT_##X, POOL_FEAT_ZERO}
+
+#define POOL_FEAT_VALID \
+	{POOL_FEAT_COMPAT_VALID, POOL_FEAT_INCOMPAT_VALID, POOL_FEAT_ZERO}
+
+/*
+ * defines the first not checksummed field - all fields after this will be
+ * ignored during checksum calculations.
+ */
+#define POOL_HDR_CSUM_2K_END_OFF offsetof(struct pool_hdr, unused2)
+#define POOL_HDR_CSUM_4K_END_OFF offsetof(struct pool_hdr, checksum)
+
+/*
+ * pick the first not checksummed field. 2K variant is used if
+ * POOL_FEAT_CKSUM_2K incompat feature is set.
+ */
+#define POOL_HDR_CSUM_END_OFF(hdrp) \
+	((hdrp)->features.incompat & POOL_FEAT_CKSUM_2K) \
+		? POOL_HDR_CSUM_2K_END_OFF : POOL_HDR_CSUM_4K_END_OFF
+
+/* ignore shutdown state if incompat feature is disabled */
+#define IGNORE_SDS(hdrp) \
+	(((hdrp) != NULL) && (((hdrp)->features.incompat & POOL_FEAT_SDS) == 0))
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -69,7 +69,7 @@ static const struct pmempool_transform_context pmempool_transform_default = {
 /*
  * help_str -- string for help message
  */
-static const char *help_str =
+static const char * const help_str =
 "Modify internal structure of a poolset\n"
 "\n"
 "Common options:\n"
@@ -95,7 +95,7 @@ static const struct option long_options[] = {
  * print_usage -- print application usage short description
  */
 static void
-print_usage(char *appname)
+print_usage(const char *appname)
 {
 	printf("usage: %s transform [<options>] <poolset_file_src>"
 			" <poolset_file_dst>\n", appname);
@@ -105,7 +105,7 @@ print_usage(char *appname)
  * print_version -- print version string
  */
 static void
-print_version(char *appname)
+print_version(const char *appname)
 {
 	printf("%s %s\n", appname, SRCVERSION);
 }
@@ -114,7 +114,7 @@ print_version(char *appname)
  * pmempool_transform_help -- print help message for the transform command
  */
 void
-pmempool_transform_help(char *appname)
+pmempool_transform_help(const char *appname)
 {
 	print_usage(appname);
 	print_version(appname);
@@ -126,14 +126,14 @@ pmempool_transform_help(char *appname)
  */
 static int
 pmempool_transform_parse_args(struct pmempool_transform_context *ctx,
-		char *appname, int argc, char *argv[])
+		const char *appname, int argc, char *argv[])
 {
 	int opt;
 	while ((opt = getopt_long(argc, argv, "dhv",
 			long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'd':
-			ctx->flags = PMEMPOOL_DRY_RUN;
+			ctx->flags = PMEMPOOL_TRANSFORM_DRY_RUN;
 			break;
 		case 'h':
 			pmempool_transform_help(appname);
@@ -162,7 +162,7 @@ pmempool_transform_parse_args(struct pmempool_transform_context *ctx,
  * pmempool_transform_func -- main function for the transform command
  */
 int
-pmempool_transform_func(char *appname, int argc, char *argv[])
+pmempool_transform_func(const char *appname, int argc, char *argv[])
 {
 	int ret;
 	struct pmempool_transform_context ctx = pmempool_transform_default;

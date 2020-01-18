@@ -32,7 +32,7 @@
 
 #
 # push-image.sh <OS-VER> - pushes the Docker image tagged with OS-VER
-#                          to the Docker Hub
+#                          to the Docker Hub.
 #
 # The script utilizes $DOCKER_USER and $DOCKER_PASSWORD variables to log in to
 # Docker Hub. The variables can be set in the Travis project's configuration
@@ -56,7 +56,7 @@ if [[ -z "$1" ]]; then
 fi
 
 # Check if the image tagged with pmdk/OS-VER exists locally
-if [[ ! $(docker images -a | awk -v pattern="^pmem/pmdk:$1\$" \
+if [[ ! $(docker images -a | awk -v pattern="^pmem/pmdk:1.5-$1\$" \
 	'$1":"$2 ~ pattern') ]]
 then
 	echo "ERROR: wrong argument."
@@ -68,4 +68,4 @@ fi
 docker login -u="$DOCKER_USER" -p="$DOCKER_PASSWORD"
 
 # Push the image to the repository
-docker push pmem/pmdk:$1
+docker push pmem/pmdk:1.5-$1

@@ -32,6 +32,12 @@
 #
 
 SOURCE =\
+	$(COMMON)/badblock_$(OS_DIMM).c\
+	$(COMMON)/badblock.c\
+	$(COMMON)/ctl.c\
+	$(COMMON)/ctl_prefault.c\
+	$(COMMON)/ctl_sds.c\
+	$(call osdep, $(COMMON)/extent,.c)\
 	$(COMMON)/file.c\
 	$(COMMON)/file_posix.c\
 	$(COMMON)/fs_posix.c\

@@ -14,7 +14,7 @@
     <ProjectGuid>{2B1A5104-A324-4D02-B5C7-D021FB8F880C}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>out_err_mt_win</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.14393.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.16299.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
@@ -66,9 +66,6 @@
     </ProjectReference>
     <ProjectReference Include="..\..\libpmemblk\libpmemblk.vcxproj">
       <Project>{f7c6c6b6-4142-4c82-8699-4a9d8183181b}</Project>
-    </ProjectReference>
-    <ProjectReference Include="..\..\libpmemcto\libpmemcto.vcxproj">
-      <Project>{1ba340ec-b0b2-438d-a47c-27f86f604133}</Project>
     </ProjectReference>
     <ProjectReference Include="..\..\libpmemlog\libpmemlog.vcxproj">
       <Project>{0b1818eb-bdc8-4865-964f-db8bf05cfd86}</Project>

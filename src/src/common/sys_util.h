@@ -40,6 +40,11 @@
 #include <errno.h>
 
 #include "os_thread.h"
+#include "out.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*
  * util_mutex_init -- os_mutex_init variant that never fails from
@@ -84,6 +89,23 @@ util_mutex_lock(os_mutex_t *m)
 		errno = tmp;
 		FATAL("!os_mutex_lock");
 	}
+}
+
+/*
+ * util_mutex_trylock -- os_mutex_trylock variant that never fails from
+ * caller perspective (other than EBUSY). If util_mutex_trylock failed, this
+ * function aborts the program.
+ * Returns 0 if locked successfully, otherwise returns EBUSY.
+ */
+static inline int
+util_mutex_trylock(os_mutex_t *m)
+{
+	int tmp = os_mutex_trylock(m);
+	if (tmp && tmp != EBUSY) {
+		errno = tmp;
+		FATAL("!os_mutex_trylock");
+	}
+	return tmp;
 }
 
 /*
@@ -300,5 +322,9 @@ util_semaphore_post(os_semaphore_t *sem)
 	if (os_semaphore_post(sem) != 0)
 		FATAL("!os_semaphore_post");
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

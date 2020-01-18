@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,6 +37,7 @@
 
 #include <stddef.h>
 
+#include "file.h"
 #include "unittest.h"
 
 /*
@@ -69,7 +70,11 @@ main(int argc, char *argv[])
 	PMEMobjpool *pop;
 	const char *path = argv[1];
 
-	if (os_access(path, F_OK) != 0) {
+	int exists = util_file_exists(path);
+	if (exists < 0)
+		UT_FATAL("!util_file_exists");
+
+	if (!exists) {
 		if ((pop = pmemobj_create(path, POBJ_LAYOUT_NAME(tx_invalid),
 			PMEMOBJ_MIN_POOL, S_IWUSR | S_IRUSR)) == NULL) {
 			UT_FATAL("!pmemobj_create %s", path);
@@ -90,12 +95,9 @@ main(int argc, char *argv[])
 		UT_ASSERTeq(pmemobj_type_num(oid), 1);
 	}
 
-	/* suppress error msg by default, enable for non-abort cases */
-	ut_suppress_errmsg();
 	if (strcmp(argv[2], "alloc") == 0)
 		pmemobj_tx_alloc(10, 1);
 	else if (strcmp(argv[2], "alloc-in-work") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 			pmemobj_tx_alloc(10, 1);
 		} TX_END
@@ -124,7 +126,6 @@ main(int argc, char *argv[])
 	else if (strcmp(argv[2], "zalloc") == 0)
 		pmemobj_tx_zalloc(10, 1);
 	else if (strcmp(argv[2], "zalloc-in-work") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 			pmemobj_tx_zalloc(10, 1);
 		} TX_END
@@ -153,7 +154,6 @@ main(int argc, char *argv[])
 	else if (strcmp(argv[2], "strdup") == 0)
 		pmemobj_tx_strdup("aaa", 1);
 	else if (strcmp(argv[2], "strdup-in-work") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 			pmemobj_tx_strdup("aaa", 1);
 		} TX_END
@@ -182,7 +182,6 @@ main(int argc, char *argv[])
 	else if (strcmp(argv[2], "realloc") == 0)
 		pmemobj_tx_realloc(oid, 10, 1);
 	else if (strcmp(argv[2], "realloc-in-work") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 			pmemobj_tx_realloc(oid, 10, 1);
 		} TX_END
@@ -211,7 +210,6 @@ main(int argc, char *argv[])
 	else if (strcmp(argv[2], "zrealloc") == 0)
 		pmemobj_tx_zrealloc(oid, 10, 1);
 	else if (strcmp(argv[2], "zrealloc-in-work") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 			pmemobj_tx_zrealloc(oid, 10, 1);
 		} TX_END
@@ -240,7 +238,6 @@ main(int argc, char *argv[])
 	else if (strcmp(argv[2], "free") == 0)
 		pmemobj_tx_free(oid);
 	else if (strcmp(argv[2], "free-in-work") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 			pmemobj_tx_free(oid);
 		} TX_END
@@ -269,7 +266,6 @@ main(int argc, char *argv[])
 	else if (strcmp(argv[2], "add_range") == 0)
 		pmemobj_tx_add_range(oid, 0, 10);
 	else if (strcmp(argv[2], "add_range-in-work") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 			pmemobj_tx_add_range(oid, 0, 10);
 		} TX_END
@@ -298,7 +294,6 @@ main(int argc, char *argv[])
 	else if (strcmp(argv[2], "add_range_direct") == 0)
 		pmemobj_tx_add_range_direct(pmemobj_direct(oid), 10);
 	else if (strcmp(argv[2], "add_range_direct-in-work") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 			pmemobj_tx_add_range_direct(pmemobj_direct(oid), 10);
 		} TX_END
@@ -327,7 +322,6 @@ main(int argc, char *argv[])
 	else if (strcmp(argv[2], "abort") == 0)
 		pmemobj_tx_abort(ENOMEM);
 	else if (strcmp(argv[2], "abort-in-work") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 			pmemobj_tx_abort(ENOMEM);
 		} TX_END
@@ -356,7 +350,6 @@ main(int argc, char *argv[])
 	else if (strcmp(argv[2], "commit") == 0)
 		pmemobj_tx_commit();
 	else if (strcmp(argv[2], "commit-in-work") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 			pmemobj_tx_commit();
 		} TX_END
@@ -389,7 +382,6 @@ main(int argc, char *argv[])
 			pmemobj_tx_end();
 		} TX_END
 	} else if (strcmp(argv[2], "end-in-abort") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 			pmemobj_tx_abort(ENOMEM);
 		} TX_ONABORT {
@@ -398,7 +390,6 @@ main(int argc, char *argv[])
 			exit(0);
 		} TX_END
 	} else if (strcmp(argv[2], "end-in-commit") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 		} TX_ONCOMMIT {
 			pmemobj_tx_end();
@@ -406,7 +397,6 @@ main(int argc, char *argv[])
 			exit(0);
 		} TX_END
 	} else if (strcmp(argv[2], "end-in-finally") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 		} TX_FINALLY {
 			pmemobj_tx_end();
@@ -422,25 +412,21 @@ main(int argc, char *argv[])
 	else if (strcmp(argv[2], "process") == 0)
 		pmemobj_tx_process();
 	else if (strcmp(argv[2], "process-in-work") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 			pmemobj_tx_process();
 		} TX_END
 	} else if (strcmp(argv[2], "process-in-abort") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 			pmemobj_tx_abort(ENOMEM);
 		} TX_ONABORT {
 			pmemobj_tx_process();
 		} TX_END
 	} else if (strcmp(argv[2], "process-in-commit") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 		} TX_ONCOMMIT {
 			pmemobj_tx_process();
 		} TX_END
 	} else if (strcmp(argv[2], "process-in-finally") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 		} TX_FINALLY {
 			pmemobj_tx_process();
@@ -455,11 +441,9 @@ main(int argc, char *argv[])
 	}
 
 	else if (strcmp(argv[2], "begin") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 		} TX_END
 	} else if (strcmp(argv[2], "begin-in-work") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 			TX_BEGIN(pop) {
 			} TX_END
@@ -484,7 +468,6 @@ main(int argc, char *argv[])
 			} TX_END
 		} TX_END
 	} else if (strcmp(argv[2], "begin-after-tx") == 0) {
-		ut_unsuppress_errmsg();
 		TX_BEGIN(pop) {
 		} TX_END
 		TX_BEGIN(pop) {

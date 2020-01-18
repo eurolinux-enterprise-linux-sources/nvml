@@ -79,6 +79,32 @@ os_open(const char *pathname, int flags, ...)
 }
 
 /*
+ * os_fsync -- fsync abstraction layer
+ */
+int
+os_fsync(int fd)
+{
+	return fsync(fd);
+}
+
+/*
+ * os_fsync_dir -- fsync the directory
+ */
+int
+os_fsync_dir(const char *dir_name)
+{
+	int fd = os_open(dir_name, O_RDONLY | O_DIRECTORY);
+	if (fd < 0)
+		return -1;
+
+	int ret = os_fsync(fd);
+
+	os_close(fd);
+
+	return ret;
+}
+
+/*
  * os_stat -- stat abstraction layer
  */
 int
@@ -234,10 +260,10 @@ os_clock_gettime(int id, struct timespec *ts)
 /*
  * os_rand_r -- rand_r abstraction layer
  */
-int
+unsigned
 os_rand_r(unsigned *seedp)
 {
-	return rand_r(seedp);
+	return (unsigned)rand_r(seedp);
 }
 
 /*
@@ -261,7 +287,7 @@ os_setenv(const char *name, const char *value, int overwrite)
 /*
  * secure_getenv -- provide GNU secure_getenv for FreeBSD
  */
-#ifdef __FreeBSD__
+#ifndef __USE_GNU
 static char *
 secure_getenv(const char *name)
 {
@@ -284,6 +310,14 @@ os_getenv(const char *name)
 /*
  * os_strsignal -- strsignal abstraction layer
  */
-const char *os_strsignal(int sig) {
+const char *
+os_strsignal(int sig)
+{
 	return strsignal(sig);
+}
+
+int
+os_execv(const char *path, char *const argv[])
+{
+	return execv(path, argv);
 }

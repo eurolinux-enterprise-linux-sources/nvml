@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018, Intel Corporation
+ * Copyright 2014-2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,6 +43,8 @@
 #ifndef LIBPMEM_H
 #define LIBPMEM_H 1
 
+#include <sys/types.h>
+
 #ifdef _WIN32
 #include <pmemcompat.h>
 
@@ -61,8 +63,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <sys/types.h>
 
 /*
  * This limit is set arbitrary to incorporate a pool header and required
@@ -99,12 +99,34 @@ int pmem_deep_drain(const void *addr, size_t len);
 int pmem_deep_persist(const void *addr, size_t len);
 void pmem_drain(void);
 int pmem_has_hw_drain(void);
+
 void *pmem_memmove_persist(void *pmemdest, const void *src, size_t len);
 void *pmem_memcpy_persist(void *pmemdest, const void *src, size_t len);
 void *pmem_memset_persist(void *pmemdest, int c, size_t len);
 void *pmem_memmove_nodrain(void *pmemdest, const void *src, size_t len);
 void *pmem_memcpy_nodrain(void *pmemdest, const void *src, size_t len);
 void *pmem_memset_nodrain(void *pmemdest, int c, size_t len);
+
+#define PMEM_F_MEM_NODRAIN	(1U << 0)
+
+#define PMEM_F_MEM_NONTEMPORAL	(1U << 1)
+#define PMEM_F_MEM_TEMPORAL	(1U << 2)
+
+#define PMEM_F_MEM_WC		(1U << 3)
+#define PMEM_F_MEM_WB		(1U << 4)
+
+#define PMEM_F_MEM_NOFLUSH	(1U << 5)
+
+#define PMEM_F_MEM_VALID_FLAGS (PMEM_F_MEM_NODRAIN | \
+				PMEM_F_MEM_NONTEMPORAL | \
+				PMEM_F_MEM_TEMPORAL | \
+				PMEM_F_MEM_WC | \
+				PMEM_F_MEM_WB | \
+				PMEM_F_MEM_NOFLUSH)
+
+void *pmem_memmove(void *pmemdest, const void *src, size_t len, unsigned flags);
+void *pmem_memcpy(void *pmemdest, const void *src, size_t len, unsigned flags);
+void *pmem_memset(void *pmemdest, int c, size_t len, unsigned flags);
 
 /*
  * PMEM_MAJOR_VERSION and PMEM_MINOR_VERSION provide the current version of the

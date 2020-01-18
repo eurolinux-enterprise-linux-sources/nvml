@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -181,15 +181,11 @@ pmempool_errormsgW(void)
 static void
 pmempool_ppc_set_default(PMEMpoolcheck *ppc)
 {
+	/* all other fields should be zeroed */
 	const PMEMpoolcheck ppc_default = {
 		.args		= {
-			.path		= NULL,
-			.backup_path	= NULL,
 			.pool_type	= PMEMPOOL_POOL_TYPE_DETECT,
-			.flags		= 0
 		},
-		.data		= NULL,
-		.pool		= NULL,
 		.result		= CHECK_RESULT_CONSISTENT,
 	};
 	*ppc = ppc_default;
@@ -238,7 +234,7 @@ pmempool_check_initU(struct pmempool_check_argsU *args, size_t args_size)
 	 */
 	if (util_flag_isset(args->flags, PMEMPOOL_CHECK_DRY_RUN) &&
 			args->backup_path != NULL) {
-		ERR("dry run does not allow to perform backup");
+		ERR("dry run does not allow one to perform backup");
 		errno = EINVAL;
 		return NULL;
 	}
@@ -252,9 +248,9 @@ pmempool_check_initU(struct pmempool_check_argsU *args, size_t args_size)
 		return NULL;
 	}
 
-	PMEMpoolcheck *ppc = malloc(sizeof(*ppc));
+	PMEMpoolcheck *ppc = calloc(1, sizeof(*ppc));
 	if (ppc == NULL) {
-		ERR("!malloc");
+		ERR("!calloc");
 		return NULL;
 	}
 
@@ -412,12 +408,24 @@ enum pmempool_check_result
 pmempool_check_end(PMEMpoolcheck *ppc)
 {
 	LOG(3, NULL);
-	enum check_result result = ppc->result;
+	const enum check_result result = ppc->result;
+	const unsigned sync_required = ppc->sync_required;
 
 	check_fini(ppc);
 	free(ppc->path);
 	free(ppc->backup_path);
 	free(ppc);
+
+	if (sync_required) {
+		switch (result) {
+		case CHECK_RESULT_CONSISTENT:
+		case CHECK_RESULT_REPAIRED:
+			return PMEMPOOL_CHECK_RESULT_SYNC_REQ;
+		default:
+			/* other results require fixing prior to sync */
+			;
+		}
+	}
 
 	switch (result) {
 		case CHECK_RESULT_CONSISTENT:

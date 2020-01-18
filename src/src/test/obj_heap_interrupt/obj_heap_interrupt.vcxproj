@@ -11,10 +11,14 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\common\ctl.c" />
+    <ClCompile Include="..\..\common\ctl_prefault.c" />
+    <ClCompile Include="..\..\common\ctl_sds.c" />
+    <ClCompile Include="..\..\libpmemobj\alloc_class.c" />
     <ClCompile Include="..\..\libpmemobj\bucket.c" />
-    <ClCompile Include="..\..\libpmemobj\ctl.c" />
-    <ClCompile Include="..\..\libpmemobj\ctl_global.c" />
-    <ClCompile Include="..\..\libpmemobj\ravl.c" />
+    <ClCompile Include="..\..\libpmemobj\container_ravl.c" />
+    <ClCompile Include="..\..\libpmemobj\container_seglists.c" />
+    <ClCompile Include="..\..\libpmemobj\ctl_debug.c" />
     <ClCompile Include="..\..\libpmemobj\cuckoo.c" />
     <ClCompile Include="..\..\libpmemobj\heap.c" />
     <ClCompile Include="..\..\libpmemobj\lane.c" />
@@ -28,16 +32,12 @@
     <ClCompile Include="..\..\libpmemobj\obj.c" />
     <ClCompile Include="..\..\libpmemobj\palloc.c" />
     <ClCompile Include="..\..\libpmemobj\pmalloc.c" />
-    <ClCompile Include="..\..\libpmemobj\pvector.c" />
     <ClCompile Include="..\..\libpmemobj\recycler.c" />
-    <ClCompile Include="..\..\libpmemobj\container_ravl.c" />
-    <ClCompile Include="..\..\libpmemobj\container_seglists.c" />
-    <ClCompile Include="..\..\libpmemobj\redo.c" />
-    <ClCompile Include="..\..\libpmemobj\ringbuf.c" />
+    <ClCompile Include="..\..\libpmemobj\ulog.c" />
+    <ClCompile Include="..\..\libpmemobj\ravl.c" />
+    <ClCompile Include="..\..\libpmemobj\stats.c" />
     <ClCompile Include="..\..\libpmemobj\sync.c" />
     <ClCompile Include="..\..\libpmemobj\tx.c" />
-    <ClCompile Include="..\..\libpmemobj\alloc_class.c" />
-    <ClCompile Include="..\..\libpmemobj\stats.c" />
     <ClCompile Include="obj_heap_interrupt.c">
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">_DEBUG;_CONSOLE;%(PreprocessorDefinitions);WRAP_REAL</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NDEBUG;_CONSOLE;%(PreprocessorDefinitions);WRAP_REAL</PreprocessorDefinitions>
@@ -64,7 +64,7 @@
     <ProjectGuid>{07A153D9-DF17-4DE8-A3C2-EBF171B961AE}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>obj_heap_interrupt</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.14393.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.16299.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,8 +44,12 @@
 #include "memblock.h"
 #include "os_thread.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define CALC_SIZE_IDX(_unit_size, _size)\
-(_size == 0 ? 0 : (uint32_t)(((_size - 1) / _unit_size) + 1))
+((_size) == 0 ? 0 : (uint32_t)((((_size) - 1) / (_unit_size)) + 1))
 
 struct bucket {
 	os_mutex_t lock;
@@ -67,5 +71,9 @@ int *bucket_current_resvp(struct bucket *b);
 int bucket_insert_block(struct bucket *b, const struct memory_block *m);
 
 void bucket_delete(struct bucket *b);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

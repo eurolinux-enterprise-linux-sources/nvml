@@ -1,5 +1,5 @@
 /*
- * Copyright 2017, Intel Corporation
+ * Copyright 2017-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,6 +39,10 @@
 
 #include "ctl.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct stats_transient {
 	int unused;
 };
@@ -54,18 +58,18 @@ struct stats {
 };
 
 #define STATS_INC(stats, type, name, value) do {\
-	if (stats->enabled)\
-		util_fetch_and_add64((&stats->type->name), (value));\
+	if ((stats)->enabled)\
+		util_fetch_and_add64((&(stats)->type->name), (value));\
 } while (0)
 
 #define STATS_SUB(stats, type, name, value) do {\
-	if (stats->enabled)\
-		util_fetch_and_sub64((&stats->type->name), (value));\
+	if ((stats)->enabled)\
+		util_fetch_and_sub64((&(stats)->type->name), (value));\
 } while (0)
 
 #define STATS_SET(stats, type, name, value) do {\
-	if (stats->enabled)\
-		util_atomic_store_explicit64((&stats->type->name), (value),\
+	if ((stats)->enabled)\
+		util_atomic_store_explicit64((&(stats)->type->name), (value),\
 		memory_order_release);\
 } while (0)
 
@@ -75,9 +79,10 @@ struct stats {
 NULL, NULL}
 
 #define STATS_CTL_HANDLER(type, name, varname)\
-static int CTL_READ_HANDLER(type##_##name)(PMEMobjpool *pop,\
+static int CTL_READ_HANDLER(type##_##name)(void *ctx,\
 	enum ctl_query_source source, void *arg, struct ctl_indexes *indexes)\
 {\
+	PMEMobjpool *pop = ctx;\
 	uint64_t *argv = arg;\
 	util_atomic_load_explicit64(&pop->stats->type->varname,\
 		argv, memory_order_acquire);\
@@ -88,5 +93,9 @@ void stats_ctl_register(PMEMobjpool *pop);
 
 struct stats *stats_new(PMEMobjpool *pop);
 void stats_delete(PMEMobjpool *pop, struct stats *stats);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

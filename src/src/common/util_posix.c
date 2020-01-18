@@ -35,13 +35,13 @@
  */
 
 #include <string.h>
-#include <util.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <errno.h>
 #include "os.h"
 #include "out.h"
+#include "util.h"
 
 /* pass through for Posix */
 void
@@ -121,6 +121,7 @@ util_aligned_free(void *ptr)
 char *
 util_getexecname(char *path, size_t pathlen)
 {
+	ASSERT(pathlen != 0);
 	ssize_t cc;
 
 #ifdef __FreeBSD__
@@ -134,10 +135,12 @@ util_getexecname(char *path, size_t pathlen)
 #else
 	cc = readlink("/proc/self/exe", path, pathlen);
 #endif
-	if (cc == -1)
-		strcpy(path, "unknown");
-	else
+	if (cc == -1) {
+		strncpy(path, "unknown", pathlen);
+		path[pathlen - 1] = '\0';
+	} else {
 		path[cc] = '\0';
+	}
 
 	return path;
 }

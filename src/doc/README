@@ -10,7 +10,7 @@ links to examples and man pages. Developers new to PMDK are probably looking
 for libpmemobj.
 
 To generate web-based documentation or Linux/FreeBSD man pages, you need to
-have groff, doxygen and pandoc installed. m4 macros are used in the document
+have groff and pandoc installed. m4 macros are used in the document
 sources to generate OS-specific variants of man pages and web-based
 documentation. The macros are defined in macros.man. Processing is performed
 by the ../utils/md2man.sh script.
@@ -24,7 +24,6 @@ libpmem -- low-level persistent memory support
 libpmemblk -- pmem-resident arrays of blocks
 libpmemlog -- pmem-resident log files
 libpmemobj -- transactional object store
-libpmemcto -- close-to-open persistence (EXPERIMENTAL)
 libvmem -- volatile memory allocation library
 libvmmalloc -- general purpose volatile memory allocation library
 libpmempool -- persistent memory pool management library

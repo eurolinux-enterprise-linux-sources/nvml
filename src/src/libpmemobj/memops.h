@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,55 +40,58 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "vec.h"
 #include "pmemops.h"
-#include "redo.h"
+#include "ulog.h"
 #include "lane.h"
 
-enum operation_type {
-	OPERATION_SET,
-	OPERATION_AND,
-	OPERATION_OR,
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-	MAX_OPERATION_TYPE
+enum operation_log_type {
+	LOG_PERSISTENT, /* log of persistent modifications */
+	LOG_TRANSIENT, /* log of transient memory modifications */
+
+	MAX_OPERATION_LOG_TYPE
 };
 
-struct operation_entry {
-	uint64_t *ptr;
-	uint64_t value;
-	enum operation_type type;
+enum log_type {
+	LOG_TYPE_UNDO,
+	LOG_TYPE_REDO,
+
+	MAX_LOG_TYPE,
 };
 
-#define MAX_MEMOPS_ENTRIES REDO_NUM_ENTRIES
+struct operation_context;
 
-enum operation_entry_type {
-	ENTRY_PERSISTENT,
-	ENTRY_TRANSIENT,
+struct operation_context *
+operation_new(struct ulog *redo, size_t ulog_base_nbytes,
+	ulog_extend_fn extend, ulog_free_fn ulog_free,
+	const struct pmem_ops *p_ops, enum log_type type);
 
-	MAX_OPERATION_ENTRY_TYPE
-};
+void operation_init(struct operation_context *ctx);
+void operation_start(struct operation_context *ctx);
+void operation_resume(struct operation_context *ctx);
 
-/*
- * operation_context -- context of an ongoing palloc operation
- */
-struct operation_context {
-	const void *base;
+void operation_delete(struct operation_context *ctx);
 
-	const struct redo_ctx *redo_ctx;
-	struct redo_log *redo;
-	const struct pmem_ops *p_ops;
+int operation_add_buffer(struct operation_context *ctx,
+	void *dest, void *src, size_t size, ulog_operation_type type);
 
-	size_t nentries[MAX_OPERATION_ENTRY_TYPE];
-	struct operation_entry
-		entries[MAX_OPERATION_ENTRY_TYPE][MAX_MEMOPS_ENTRIES];
-};
-
-void operation_init(struct operation_context *ctx, const void *base,
-	const struct redo_ctx *redo_ctx, struct redo_log *redo);
-void operation_add_entry(struct operation_context *ctx,
-	void *ptr, uint64_t value, enum operation_type type);
-void operation_add_typed_entry(struct operation_context *ctx,
+int operation_add_entry(struct operation_context *ctx,
+	void *ptr, uint64_t value, ulog_operation_type type);
+int operation_add_typed_entry(struct operation_context *ctx,
 	void *ptr, uint64_t value,
-	enum operation_type type, enum operation_entry_type en_type);
+	ulog_operation_type type, enum operation_log_type log_type);
+
+int operation_reserve(struct operation_context *ctx, size_t new_capacity);
 void operation_process(struct operation_context *ctx);
+void operation_finish(struct operation_context *ctx);
+void operation_cancel(struct operation_context *ctx);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

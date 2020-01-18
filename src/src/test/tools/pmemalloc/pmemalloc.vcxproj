@@ -37,7 +37,7 @@
     <ProjectGuid>{4C6E7F0A-7E6A-4713-B1D2-B7B4ADC992AF}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>pmemalloc</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.14393.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.16299.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
@@ -61,36 +61,32 @@
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
     <Import Project="..\..\..\LongPathSupport.props" />
+    <Import Project="..\tools_debug.props" />
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
     <Import Project="..\..\..\LongPathSupport.props" />
+    <Import Project="..\tools_release.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <GenerateManifest>true</GenerateManifest>
     <IncludePath>$(SolutionDir)\common;$(SolutionDir)\test\unittest;$(SolutionDir)\windows\include;$(SolutionDir)\include;$(SolutionDir)\windows\getopt;$(SolutionDir)\libpmemlog;$(SolutionDir)\libpmemblk;$(SolutionDir)\libpmemobj;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <GenerateManifest>false</GenerateManifest>
     <IncludePath>$(SolutionDir)\common;$(SolutionDir)\test\unittest;$(SolutionDir)\windows\include;$(SolutionDir)\include;$(SolutionDir)\windows\getopt;$(SolutionDir)\libpmemlog;$(SolutionDir)\libpmemblk;$(SolutionDir)\libpmemobj;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>PMDK_UTF8_API; NTDDI_VERSION=NTDDI_WIN10_RS1;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ForcedIncludeFiles>platform.h</ForcedIncludeFiles>
       <CompileAs>CompileAsC</CompileAs>
       <PreprocessToFile>false</PreprocessToFile>
       <DisableLanguageExtensions>false</DisableLanguageExtensions>
-      <TreatWarningAsError>true</TreatWarningAsError>
     </ClCompile>
     <Link>
-      <SubSystem>Console</SubSystem>
       <AdditionalDependencies>Shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>Debug</GenerateDebugInformation>
-      <TreatLinkerWarningAsErrors>true</TreatLinkerWarningAsErrors>
     </Link>
     <ProjectReference>
       <LinkLibraryDependencies>true</LinkLibraryDependencies>
@@ -102,20 +98,15 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <FunctionLevelLinking>true</FunctionLevelLinking>
       <PreprocessorDefinitions>PMDK_UTF8_API; NTDDI_VERSION=NTDDI_WIN10_RS1;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <CompileAs>CompileAsC</CompileAs>
       <ForcedIncludeFiles>platform.h</ForcedIncludeFiles>
       <PreprocessToFile>false</PreprocessToFile>
       <DisableLanguageExtensions>false</DisableLanguageExtensions>
-      <TreatWarningAsError>true</TreatWarningAsError>
     </ClCompile>
     <Link>
-      <SubSystem>Console</SubSystem>
       <AdditionalDependencies>Shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <TreatLinkerWarningAsErrors>true</TreatLinkerWarningAsErrors>
       <GenerateDebugInformation>DebugFastLink</GenerateDebugInformation>
     </Link>
     <ProjectReference>

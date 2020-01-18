@@ -33,17 +33,13 @@
 #
 # src/test/obj_debug/TEST0 -- unit test for debug features
 #
-[CmdletBinding(PositionalBinding=$false)]
-Param(
-    [alias("d")]
-    $DIR = ""
-    )
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
 
 require_test_type medium
 require_build_type debug
+require_fs_type any
 
 setup
 

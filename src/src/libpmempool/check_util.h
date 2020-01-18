@@ -33,10 +33,16 @@
 /*
  * check_util.h -- internal definitions check util
  */
+#ifndef CHECK_UTIL_H
+#define CHECK_UTIL_H
 
 #include <time.h>
 #include <limits.h>
 #include <sys/param.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define CHECK_STEP_COMPLETE	UINT_MAX
 #define CHECK_INVALID_QUESTION	UINT_MAX
@@ -58,6 +64,7 @@ struct check_status;
 /* container storing state of all check steps */
 #define PREFIX_MAX_SIZE 30
 typedef struct {
+	unsigned init_done;
 	unsigned step;
 
 	unsigned replica;
@@ -67,6 +74,7 @@ typedef struct {
 	int single_part;
 
 	struct pool_set *set;
+	int is_dev_dax;
 
 	struct pool_hdr *hdrp;
 	/* copy of the pool header in host byte order */
@@ -77,6 +85,8 @@ typedef struct {
 	 * the pool parameters structure requires refresh.
 	 */
 	int pool_hdr_modified;
+
+	unsigned healthy_replicas;
 
 	struct pool_hdr *next_part_hdrp;
 	struct pool_hdr *prev_part_hdrp;
@@ -124,13 +134,13 @@ typedef struct {
 } location;
 
 /* check steps */
+void check_bad_blocks(PMEMpoolcheck *ppc);
 void check_backup(PMEMpoolcheck *ppc);
 void check_pool_hdr(PMEMpoolcheck *ppc);
 void check_pool_hdr_uuids(PMEMpoolcheck *ppc);
 void check_sds(PMEMpoolcheck *ppc);
 void check_log(PMEMpoolcheck *ppc);
 void check_blk(PMEMpoolcheck *ppc);
-void check_cto(PMEMpoolcheck *ppc);
 void check_btt_info(PMEMpoolcheck *ppc);
 void check_btt_map_flog(PMEMpoolcheck *ppc);
 void check_write(PMEMpoolcheck *ppc);
@@ -207,3 +217,9 @@ void cache_to_utf8(struct check_data *data, char *buf, size_t size);
 
 #define CHECK_WITHOUT_FIXING(ppc)\
 	CHECK_IS_NOT(ppc, REPAIR) || CHECK_IS(ppc, DRY_RUN)
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

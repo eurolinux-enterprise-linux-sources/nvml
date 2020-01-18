@@ -34,13 +34,6 @@
 #
 # src/test/obj_pool/TEST24 -- unit test for pmemobj_open
 #
-[CmdletBinding(PositionalBinding=$false)]
-Param(
-    [alias("d")]
-    $DIR = ""
-    )
-
-
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
@@ -54,7 +47,7 @@ setup
 #        (layout doesn't match the value from pool header)
 #
 expect_normal_exit $Env:EXE_DIR\obj_pool$Env:EXESUFFIX `
-    c $DIR\testfile test$Env:SUFFIX 20 0640
+    c $DIR\testfile test 20 0640
 
 expect_normal_exit $Env:EXE_DIR\obj_pool$Env:EXESUFFIX `
     o $DIR\testfile EMPTY

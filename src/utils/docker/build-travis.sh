@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Copyright 2016-2018, Intel Corporation
+# Copyright 2016-2019, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -69,7 +69,7 @@ if [[ -z "$TEST_BUILD" ]]; then
 	TEST_BUILD=all
 fi
 
-imageName=pmem/pmdk:${OS}-${OS_VER}
+imageName=pmem/pmdk:1.5-${OS}-${OS_VER}
 containerName=pmdk-${OS}-${OS_VER}
 
 if [[ $MAKE_PKG -eq 0 ]] ; then command="./run-build.sh"; fi
@@ -82,6 +82,8 @@ if [[ ( "$TRAVIS_EVENT_TYPE" == "cron" || "$TRAVIS_BRANCH" == "coverity_scan" )\
 fi
 
 if [ -n "$DNS_SERVER" ]; then DNS_SETTING=" --dns=$DNS_SERVER "; fi
+if [[ $SKIP_CHECK -eq 1 ]]; then BUILD_PACKAGE_CHECK=n; else BUILD_PACKAGE_CHECK=y; fi
+if [ -z "$NDCTL_ENABLE" ]; then ndctl_enable=; else ndctl_enable="--env NDCTL_ENABLE=$NDCTL_ENABLE"; fi
 
 WORKDIR=/pmdk
 SCRIPTSDIR=$WORKDIR/utils/docker
@@ -100,15 +102,12 @@ docker run --rm --privileged=true --name=$containerName -ti \
 	--env VALGRIND=$VALGRIND \
 	--env EXTRA_CFLAGS=$EXTRA_CFLAGS \
 	--env EXTRA_CXXFLAGS=$EXTRA_CXXFLAGS \
-	--env USE_LLVM_LIBCPP=$USE_LLVM_LIBCPP \
-	--env LIBCPP_LIBDIR=$LIBCPP_LIBDIR \
-	--env LIBCPP_INCDIR=$LIBCPP_INCDIR \
 	--env REMOTE_TESTS=$REMOTE_TESTS \
 	--env TEST_BUILD=$TEST_BUILD \
 	--env WORKDIR=$WORKDIR \
 	--env EXPERIMENTAL=$EXPERIMENTAL \
+	--env BUILD_PACKAGE_CHECK=$BUILD_PACKAGE_CHECK \
 	--env SCRIPTSDIR=$SCRIPTSDIR \
-	--env CLANG_FORMAT=clang-format-3.8 \
 	--env TRAVIS=$TRAVIS \
 	--env TRAVIS_COMMIT_RANGE=$TRAVIS_COMMIT_RANGE \
 	--env TRAVIS_COMMIT=$TRAVIS_COMMIT \
@@ -117,7 +116,7 @@ docker run --rm --privileged=true --name=$containerName -ti \
 	--env TRAVIS_EVENT_TYPE=$TRAVIS_EVENT_TYPE \
 	--env COVERITY_SCAN_TOKEN=$COVERITY_SCAN_TOKEN \
 	--env COVERITY_SCAN_NOTIFICATION_EMAIL=$COVERITY_SCAN_NOTIFICATION_EMAIL \
-	--env NDCTL_ENABLE=$NDCTL_ENABLE \
+	$ndctl_enable \
 	-v $HOST_WORKDIR:$WORKDIR \
 	-v /etc/localtime:/etc/localtime \
 	-w $SCRIPTSDIR \

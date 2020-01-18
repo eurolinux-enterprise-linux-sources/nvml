@@ -34,11 +34,6 @@
 #
 # src/test/pmem_movnt/TEST0 -- unit test for pmem_memcpy, pmem_memmove
 #                              and pmem_memset
-[CmdletBinding(PositionalBinding=$false)]
-Param(
-    [alias("d")]
-    $DIR = ""
-    )
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
@@ -75,5 +70,10 @@ test_all
 $Env:PMEM_AVX = 1
 
 test_all
+
+$Env:PMEM_NO_MOVNT = 1
+$Env:PMEM_NO_GENERIC_MEMCPY = 1
+
+test
 
 pass

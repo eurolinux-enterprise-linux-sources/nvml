@@ -39,9 +39,6 @@
 
 . ../unittest/unittest.sh
 
-SIZE_4KB=4096
-SIZE_2MB=2097152
-
 require_test_type medium
 require_fs_type any
 
@@ -49,12 +46,17 @@ require_dax_device_alignments $SIZE_4KB $SIZE_4KB
 
 setup
 
+OFFSET=$(get_devdax_size 0)
+ROOT_SIZE=$[OFFSET + 1024]
+MAX_SIZE=$[PMEMOBJ_MAX_ALLOC_SIZE - 1024]
+require_max_devdax_size 0 $MAX_SIZE
+
 dax_device_zero
 
 LOG=out${UNITTEST_NUM}.log
 LOG_TEMP=out${UNITTEST_NUM}_part.log
-rm -rf $LOG && touch $LOG
-rm -rf $LOG_TEMP && touch $LOG_TEMP
+rm -f $LOG && touch $LOG
+rm -f $LOG_TEMP && touch $LOG_TEMP
 
 LAYOUT=OBJ_LAYOUT$SUFFIX
 POOLSET_IN=$DIR/poolset.in
@@ -69,11 +71,6 @@ create_poolset $POOLSET_OUT \
 	O SINGLEHDR \
 	AUTO:${DEVICE_DAX_PATH[0]}:x \
 	AUTO:${DEVICE_DAX_PATH[1]}:x
-
-DAX_SIZE[0]=$(get_devdax_size 0)
-
-OFFSET=${DAX_SIZE[0]}
-ROOT_SIZE=$[OFFSET + 1024]
 
 # CLI script for writing some data hitting all the parts
 WRITE_SCRIPT=$DIR/write_data

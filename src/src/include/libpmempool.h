@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2018, Intel Corporation
+ * Copyright 2016-2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,6 +39,10 @@
 #ifndef LIBPMEMPOOL_H
 #define LIBPMEMPOOL_H 1
 
+#include <stdint.h>
+#include <stddef.h>
+#include <limits.h>
+
 #ifdef _WIN32
 #include <pmemcompat.h>
 
@@ -53,6 +57,9 @@
 #define pmempool_rm pmempool_rmW
 #define pmempool_check_version pmempool_check_versionW
 #define pmempool_errormsg pmempool_errormsgW
+#define pmempool_feature_enable pmempool_feature_enableW
+#define pmempool_feature_disable pmempool_feature_disableW
+#define pmempool_feature_query pmempool_feature_queryW
 #else
 #define pmempool_check_status pmempool_check_statusU
 #define pmempool_check_args pmempool_check_argsU
@@ -64,6 +71,9 @@
 #define pmempool_rm pmempool_rmU
 #define pmempool_check_version pmempool_check_versionU
 #define pmempool_errormsg pmempool_errormsgU
+#define pmempool_feature_enable pmempool_feature_enableU
+#define pmempool_feature_disable pmempool_feature_disableU
+#define pmempool_feature_query pmempool_feature_queryU
 #endif
 
 #endif
@@ -71,19 +81,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <stdint.h>
-#include <stddef.h>
-#include <limits.h>
-
-
-/* COMMON FLAGS */
-
-/*
- * do not apply changes, only check if operation is viable
- */
-#define PMEMPOOL_DRY_RUN (1 << 1)
-
 
 /* PMEMPOOL CHECK */
 
@@ -96,33 +93,33 @@ enum pmempool_pool_type {
 	PMEMPOOL_POOL_TYPE_BLK,
 	PMEMPOOL_POOL_TYPE_OBJ,
 	PMEMPOOL_POOL_TYPE_BTT,
-	PMEMPOOL_POOL_TYPE_CTO,
+	PMEMPOOL_POOL_TYPE_RESERVED1, /* used to be cto */
 };
 
 /*
  * perform repairs
  */
-#define PMEMPOOL_CHECK_REPAIR		(1 << 0)
+#define PMEMPOOL_CHECK_REPAIR		(1U << 0)
 /*
  * emulate repairs
  */
-#define PMEMPOOL_CHECK_DRY_RUN PMEMPOOL_DRY_RUN
+#define PMEMPOOL_CHECK_DRY_RUN		(1U << 1)
 /*
  * perform hazardous repairs
  */
-#define PMEMPOOL_CHECK_ADVANCED		(1 << 2)
+#define PMEMPOOL_CHECK_ADVANCED		(1U << 2)
 /*
  * do not ask before repairs
  */
-#define PMEMPOOL_CHECK_ALWAYS_YES	(1 << 3)
+#define PMEMPOOL_CHECK_ALWAYS_YES	(1U << 3)
 /*
  * generate info statuses
  */
-#define PMEMPOOL_CHECK_VERBOSE		(1 << 4)
+#define PMEMPOOL_CHECK_VERBOSE		(1U << 4)
 /*
  * generate string format statuses
  */
-#define PMEMPOOL_CHECK_FORMAT_STR	(1 << 5)
+#define PMEMPOOL_CHECK_FORMAT_STR	(1U << 5)
 
 /*
  * types of check statuses
@@ -142,6 +139,7 @@ enum pmempool_check_result {
 	PMEMPOOL_CHECK_RESULT_REPAIRED,
 	PMEMPOOL_CHECK_RESULT_CANNOT_REPAIR,
 	PMEMPOOL_CHECK_RESULT_ERROR,
+	PMEMPOOL_CHECK_RESULT_SYNC_REQ,
 };
 
 /*
@@ -156,9 +154,34 @@ enum pmempool_check_result pmempool_check_end(PMEMpoolcheck *ppc);
 
 /* PMEMPOOL RM */
 
-#define PMEMPOOL_RM_FORCE		(1 << 0) /* ignore any errors */
-#define PMEMPOOL_RM_POOLSET_LOCAL	(1 << 1) /* remove local poolsets */
-#define PMEMPOOL_RM_POOLSET_REMOTE	(1 << 2) /* remove remote poolsets */
+#define PMEMPOOL_RM_FORCE		(1U << 0) /* ignore any errors */
+#define PMEMPOOL_RM_POOLSET_LOCAL	(1U << 1) /* remove local poolsets */
+#define PMEMPOOL_RM_POOLSET_REMOTE	(1U << 2) /* remove remote poolsets */
+
+
+/*
+ * LIBPMEMPOOL SYNC
+ */
+
+/*
+ * fix bad blocks - it requires creating or reading special recovery files
+ */
+#define PMEMPOOL_SYNC_FIX_BAD_BLOCKS	(1U << 0)
+/*
+ * do not apply changes, only check if operation is viable
+ */
+#define PMEMPOOL_SYNC_DRY_RUN		(1U << 1)
+
+
+/*
+ * LIBPMEMPOOL TRANSFORM
+ */
+
+/*
+ * do not apply changes, only check if operation is viable
+ */
+#define PMEMPOOL_TRANSFORM_DRY_RUN	(1U << 1)
+
 
 /*
  * PMEMPOOL_MAJOR_VERSION and PMEMPOOL_MINOR_VERSION provide the current version
@@ -199,7 +222,7 @@ struct pmempool_check_argsU {
 	const char *path;
 	const char *backup_path;
 	enum pmempool_pool_type pool_type;
-	int flags;
+	unsigned flags;
 };
 
 #ifndef _WIN32
@@ -209,7 +232,7 @@ struct pmempool_check_argsW {
 	const wchar_t *path;
 	const wchar_t *backup_path;
 	enum pmempool_pool_type pool_type;
-	int flags;
+	unsigned flags;
 };
 #endif
 
@@ -267,12 +290,57 @@ int pmempool_transformW(const wchar_t *poolset_file_src,
 	const wchar_t *poolset_file_dst, unsigned flags);
 #endif
 
+/* PMEMPOOL feature enable, disable, query */
+
+/*
+ * feature types
+ */
+enum pmempool_feature {
+	PMEMPOOL_FEAT_SINGLEHDR,
+	PMEMPOOL_FEAT_CKSUM_2K,
+	PMEMPOOL_FEAT_SHUTDOWN_STATE,
+	PMEMPOOL_FEAT_CHECK_BAD_BLOCKS,
+};
+
+/* PMEMPOOL FEATURE ENABLE */
+#ifndef _WIN32
+int pmempool_feature_enable(const char *path, enum pmempool_feature feature,
+	unsigned flags);
+#else
+int pmempool_feature_enableU(const char *path, enum pmempool_feature feature,
+	unsigned flags);
+int pmempool_feature_enableW(const wchar_t *path,
+	enum pmempool_feature feature, unsigned flags);
+#endif
+
+/* PMEMPOOL FEATURE DISABLE */
+#ifndef _WIN32
+int pmempool_feature_disable(const char *path, enum pmempool_feature feature,
+	unsigned flags);
+#else
+int pmempool_feature_disableU(const char *path, enum pmempool_feature feature,
+	unsigned flags);
+int pmempool_feature_disableW(const wchar_t *path,
+	enum pmempool_feature feature, unsigned flags);
+#endif
+
+/* PMEMPOOL FEATURE QUERY */
+#ifndef _WIN32
+int pmempool_feature_query(const char *path, enum pmempool_feature feature,
+	unsigned flags);
+#else
+int pmempool_feature_queryU(const char *path, enum pmempool_feature feature,
+	unsigned flags);
+int pmempool_feature_queryW(const wchar_t *path,
+	enum pmempool_feature feature, unsigned flags);
+#endif
+
 /* PMEMPOOL RM */
 #ifndef _WIN32
-int pmempool_rm(const char *path, int flags);
+int pmempool_rm(const char *path, unsigned flags);
 #else
-int pmempool_rmU(const char *path, int flags);
-int pmempool_rmW(const wchar_t *path, int flags);
+int pmempool_rmU(const char *path, unsigned flags);
+int pmempool_rmW(const wchar_t *path, unsigned flags);
 #endif
 
 #ifndef _WIN32

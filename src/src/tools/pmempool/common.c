@@ -58,7 +58,6 @@
 #include "libpmemblk.h"
 #include "libpmemlog.h"
 #include "libpmemobj.h"
-#include "libpmemcto.h"
 #include "btt.h"
 #include "file.h"
 #include "os.h"
@@ -66,6 +65,7 @@
 #include "out.h"
 #include "mmap.h"
 #include "util_pmem.h"
+#include "badblock.h"
 
 #define REQ_BUFF_SIZE	2048U
 #define Q_BUFF_SIZE	8192
@@ -114,7 +114,7 @@ pmem_pool_checksum(const void *base_pool_addr)
 		struct pool_hdr hdrp;
 		memcpy(&hdrp, base_pool_addr, sizeof(hdrp));
 		return util_checksum(&hdrp, sizeof(hdrp),
-			&hdrp.checksum, 0, POOL_HDR_CSUM_END_OFF);
+			&hdrp.checksum, 0, POOL_HDR_CSUM_END_OFF(&hdrp));
 	}
 }
 
@@ -130,8 +130,6 @@ pmem_pool_type_parse_hdr(const struct pool_hdr *hdrp)
 		return PMEM_POOL_TYPE_BLK;
 	else if (memcmp(hdrp->signature, OBJ_HDR_SIG, POOL_HDR_SIG_LEN) == 0)
 		return PMEM_POOL_TYPE_OBJ;
-	else if (memcmp(hdrp->signature, CTO_HDR_SIG, POOL_HDR_SIG_LEN) == 0)
-		return PMEM_POOL_TYPE_CTO;
 	else
 		return PMEM_POOL_TYPE_UNKNOWN;
 }
@@ -150,8 +148,6 @@ pmem_pool_type_parse_str(const char *str)
 		return PMEM_POOL_TYPE_OBJ;
 	} else if (strcmp(str, "btt") == 0) {
 		return PMEM_POOL_TYPE_BTT;
-	} else if (strcmp(str, "cto") == 0) {
-		return PMEM_POOL_TYPE_CTO;
 	} else {
 		return PMEM_POOL_TYPE_UNKNOWN;
 	}
@@ -498,7 +494,9 @@ util_poolset_map(const char *fname, struct pool_set **poolset, int rdonly)
 			outv_err("cannot open pool set -- '%s'", fname);
 			return -1;
 		}
-		return util_pool_open_nocheck(*poolset, rdonly);
+		unsigned flags = (rdonly ? POOL_OPEN_COW : 0) |
+					POOL_OPEN_IGNORE_BAD_BLOCKS;
+		return util_pool_open_nocheck(*poolset, flags);
 	}
 
 	/* open poolset file */
@@ -518,7 +516,7 @@ util_poolset_map(const char *fname, struct pool_set **poolset, int rdonly)
 	os_close(fd);
 
 	/* read the pool header from first pool set file */
-	const char *part0_path = PART(REP(set, 0), 0).path;
+	const char *part0_path = PART(REP(set, 0), 0)->path;
 	struct pool_hdr hdr;
 	if (util_file_pread(part0_path, &hdr, sizeof(hdr), 0) !=
 			sizeof(hdr)) {
@@ -550,8 +548,10 @@ util_poolset_map(const char *fname, struct pool_set **poolset, int rdonly)
 	 */
 	struct pool_attr attr;
 	util_pool_hdr2attr(&attr, &hdr);
-	if (util_pool_open(poolset, fname, rdonly, 0 /* minpartsize */,
-			&attr, &nlanes, true, NULL)) {
+	unsigned flags = (rdonly ? POOL_OPEN_COW : 0) | POOL_OPEN_IGNORE_SDS |
+				POOL_OPEN_IGNORE_BAD_BLOCKS;
+	if (util_pool_open(poolset, fname, 0 /* minpartsize */,
+			&attr, &nlanes, NULL, flags)) {
 		outv_err("opening poolset failed\n");
 		return -1;
 	}
@@ -573,7 +573,15 @@ pmem_pool_parse_params(const char *fname, struct pmem_pool_params *paramsp,
 	paramsp->type = PMEM_POOL_TYPE_UNKNOWN;
 	char pool_str_addr[POOL_HDR_DESC_SIZE];
 
-	paramsp->is_poolset = util_is_poolset_file(fname) == 1;
+	enum file_type type = util_file_get_type(fname);
+	if (type < 0)
+		return -1;
+
+	int is_poolset = util_is_poolset_file(fname);
+	if (is_poolset < 0)
+		return -1;
+
+	paramsp->is_poolset = is_poolset;
 	int fd = util_file_open(fname, NULL, 0, O_RDONLY);
 	if (fd < 0)
 		return -1;
@@ -610,7 +618,8 @@ pmem_pool_parse_params(const char *fname, struct pmem_pool_params *paramsp,
 				ret = -1;
 				goto out_close;
 			}
-			if (util_pool_open_nocheck(set, 0)) {
+			if (util_pool_open_nocheck(set,
+						POOL_OPEN_IGNORE_BAD_BLOCKS)) {
 				ret = -1;
 				goto out_close;
 			}
@@ -632,7 +641,7 @@ pmem_pool_parse_params(const char *fname, struct pmem_pool_params *paramsp,
 		}
 	} else {
 		/* read first two pages */
-		if (util_file_is_device_dax(fname)) {
+		if (type == TYPE_DEVDAX) {
 			addr = util_file_map_whole(fname);
 			if (addr == NULL) {
 				ret = -1;
@@ -719,7 +728,15 @@ ask(char op, char *answers, char def_ans, const char *fmt, va_list ap)
 	if (op != '?')
 		return op;
 
-	vsnprintf(qbuff, Q_BUFF_SIZE, fmt, ap);
+	int p = vsnprintf(qbuff, Q_BUFF_SIZE, fmt, ap);
+	if (p < 0) {
+		outv_err("vsnprintf");
+		exit(EXIT_FAILURE);
+	}
+	if (p >= Q_BUFF_SIZE) {
+		outv_err("vsnprintf: output was truncated");
+		exit(EXIT_FAILURE);
+	}
 
 	int is_tty = isatty(fileno(stdin));
 	printf("%s", qbuff);
@@ -850,17 +867,6 @@ util_parse_chunk_types(const char *str, uint64_t *types)
 	assert(MAX_CHUNK_TYPE < 8 * sizeof(*types));
 	return util_parse_enums(str, 0, MAX_CHUNK_TYPE, types,
 			(enum_to_str_fn)out_get_chunk_type_str);
-}
-
-/*
- * util_parse_lane_section -- parse lane section strings
- */
-int
-util_parse_lane_sections(const char *str, uint64_t *types)
-{
-	assert(MAX_LANE_SECTION < 8 * sizeof(*types));
-	return util_parse_enums(str, 0, MAX_LANE_SECTION, types,
-			(enum_to_str_fn)out_get_lane_section_str);
 }
 
 /*
@@ -1147,48 +1153,6 @@ util_heap_max_zone(size_t size)
 }
 
 /*
- * util_heap_get_bitmap_params -- return bitmap parameters of given block size
- *
- * The function returns the following values:
- * - number of allocations
- * - number of used values in bitmap
- * - initial value of last used entry
- */
-int
-util_heap_get_bitmap_params(uint64_t block_size, uint64_t *nallocsp,
-		uint64_t *nvalsp, uint64_t *last_valp)
-{
-	assert(RUNSIZE / block_size <= UINT32_MAX);
-	uint32_t nallocs = (uint32_t)(RUNSIZE / block_size);
-
-	assert(nallocs <= RUN_BITMAP_SIZE);
-	unsigned unused_bits = RUN_BITMAP_SIZE - nallocs;
-
-	unsigned unused_values = unused_bits / BITS_PER_VALUE;
-
-	assert(MAX_BITMAP_VALUES >= unused_values);
-	uint64_t nvals = MAX_BITMAP_VALUES - unused_values;
-
-	assert(unused_bits >= unused_values * BITS_PER_VALUE);
-	unused_bits -= unused_values * BITS_PER_VALUE;
-
-	uint64_t last_val = unused_bits ? (((1ULL << unused_bits) - 1ULL) <<
-				(BITS_PER_VALUE - unused_bits)) : 0;
-
-	if (nvals >= MAX_BITMAP_VALUES || nvals == 0)
-		return -1;
-
-	if (nallocsp)
-		*nallocsp = nallocs;
-	if (nvalsp)
-		*nvalsp = nvals;
-	if (last_valp)
-		*last_valp = last_val;
-
-	return 0;
-}
-
-/*
  * pool_set_file_open -- opens pool set file or regular file
  */
 struct pool_set_file *
@@ -1250,7 +1214,9 @@ pool_set_file_open(const char *fname,
 					file->fname);
 				goto err_free_fname;
 			}
-			if (util_pool_open_nocheck(file->poolset, rdonly))
+			unsigned flags = (rdonly ? POOL_OPEN_COW : 0) |
+						POOL_OPEN_IGNORE_BAD_BLOCKS;
+			if (util_pool_open_nocheck(file->poolset, flags))
 				goto err_free_fname;
 		}
 
@@ -1325,6 +1291,10 @@ int
 pool_set_file_write(struct pool_set_file *file, void *buff,
 		size_t nbytes, uint64_t off)
 {
+	enum file_type type = util_file_get_type(file->fname);
+	if (type < 0)
+		return -1;
+
 	if (off + nbytes > file->size)
 		return -1;
 
@@ -1334,8 +1304,8 @@ pool_set_file_write(struct pool_set_file *file, void *buff,
 			return -1;
 	} else {
 		memcpy((char *)file->addr + off, buff, nbytes);
-		util_persist_auto(util_file_is_device_dax(file->fname),
-				(char *)file->addr + off, nbytes);
+		util_persist_auto(type == TYPE_DEVDAX, (char *)file->addr + off,
+					nbytes);
 	}
 	return 0;
 }
@@ -1407,4 +1377,31 @@ pool_set_file_persist(struct pool_set_file *file, const void *addr, size_t len)
 	}
 	struct pool_replica *rep = file->poolset->replica[0];
 	util_persist(rep->is_pmem, (void *)addr, len);
+}
+
+/*
+ * util_pool_clear_badblocks -- clear badblocks in a pool (set or a single file)
+ */
+int
+util_pool_clear_badblocks(const char *path, int create)
+{
+	LOG(3, "path %s create %i", path, create);
+
+	struct pool_set *setp;
+
+	/* do not check minsize */
+	int ret = util_poolset_create_set(&setp, path, 0, 0,
+						POOL_OPEN_IGNORE_SDS);
+	if (ret < 0) {
+		LOG(2, "cannot open pool set -- '%s'", path);
+		return -1;
+	}
+
+	if (badblocks_clear_poolset(setp, create)) {
+		ERR("clearing bad blocks in the pool set failed -- '%s'", path);
+		errno = EIO;
+		return -1;
+	}
+
+	return 0;
 }

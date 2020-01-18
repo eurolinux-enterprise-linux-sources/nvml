@@ -32,12 +32,6 @@
 # src/test/blk_non_zero/TEST8 -- unit test for
 # pmemblk_read/write/set_zero/set_error
 #
-[CmdletBinding(PositionalBinding=$false)]
-Param(
-    [alias("d")]
-    $DIR = ""
-    )
-
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
@@ -51,6 +45,7 @@ setup
 
 # mix writes with set_zero and set_error and check results
 $FILE_SIZE = $((1024*1024*1024))
+require_free_space "${FILE_SIZE}b"
 
 expect_normal_exit $Env:EXE_DIR\blk_non_zero$Env:EXESUFFIX 512 `
 $DIR\testfile1 c $FILE_SIZE e:1 r:1 e:2 w:2 r:2 z:3 e:3 r:3 `

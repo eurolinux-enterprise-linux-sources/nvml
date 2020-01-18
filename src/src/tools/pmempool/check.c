@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -50,6 +50,7 @@ typedef enum
 	CHECK_RESULT_NOT_CONSISTENT,
 	CHECK_RESULT_REPAIRED,
 	CHECK_RESULT_CANNOT_REPAIR,
+	CHECK_RESULT_SYNC_REQ,
 	CHECK_RESULT_ERROR
 } check_result_t;
 
@@ -85,7 +86,7 @@ static const struct pmempool_check_context pmempool_check_default = {
 /*
  * help_str -- string for help message
  */
-static const char *help_str =
+static const char * const help_str =
 "Check consistency of a pool\n"
 "\n"
 "Common options:\n"
@@ -120,7 +121,7 @@ static const struct option long_options[] = {
  * print_usage -- print short description of application's usage
  */
 static void
-print_usage(char *appname)
+print_usage(const char *appname)
 {
 	printf("Usage: %s check [<args>] <file>\n", appname);
 }
@@ -129,7 +130,7 @@ print_usage(char *appname)
  * print_version -- print version string
  */
 static void
-print_version(char *appname)
+print_version(const char *appname)
 {
 	printf("%s %s\n", appname, SRCVERSION);
 }
@@ -138,7 +139,7 @@ print_version(char *appname)
  * pmempool_check_help -- print help message for check command
  */
 void
-pmempool_check_help(char *appname)
+pmempool_check_help(const char *appname)
 {
 	print_usage(appname);
 	print_version(appname);
@@ -149,8 +150,8 @@ pmempool_check_help(char *appname)
  * pmempool_check_parse_args -- parse command line arguments
  */
 static int
-pmempool_check_parse_args(struct pmempool_check_context *pcp, char *appname,
-		int argc, char *argv[])
+pmempool_check_parse_args(struct pmempool_check_context *pcp,
+		const char *appname, int argc, char *argv[])
 {
 	int opt;
 	while ((opt = getopt_long(argc, argv, "ahvrNb:qy",
@@ -213,10 +214,11 @@ static check_result_t pmempool_check_2_check_res_t[] =
 	[PMEMPOOL_CHECK_RESULT_NOT_CONSISTENT] = CHECK_RESULT_NOT_CONSISTENT,
 	[PMEMPOOL_CHECK_RESULT_REPAIRED] = CHECK_RESULT_REPAIRED,
 	[PMEMPOOL_CHECK_RESULT_CANNOT_REPAIR] = CHECK_RESULT_CANNOT_REPAIR,
+	[PMEMPOOL_CHECK_RESULT_SYNC_REQ] = CHECK_RESULT_SYNC_REQ,
 	[PMEMPOOL_CHECK_RESULT_ERROR] = CHECK_RESULT_ERROR,
 };
 
-static char *
+static const char *
 check_ask(const char *msg)
 {
 	char answer = ask_Yn('?', "%s", msg);
@@ -284,7 +286,7 @@ pmempool_check_perform(struct pmempool_check_context *pc)
  * pmempool_check_func -- main function for check command
  */
 int
-pmempool_check_func(char *appname, int argc, char *argv[])
+pmempool_check_func(const char *appname, int argc, char *argv[])
 {
 	int ret = 0;
 	check_result_t res = CHECK_RESULT_CONSISTENT;
@@ -317,6 +319,10 @@ pmempool_check_func(char *appname, int argc, char *argv[])
 		outv(1, "%s: cannot repair\n", pc.fname);
 		ret = -1;
 		break;
+	case CHECK_RESULT_SYNC_REQ:
+		outv(1, "%s: sync required\n", pc.fname);
+		ret = 0;
+		break;
 	case CHECK_RESULT_ERROR:
 		if (errno)
 			outv_err("%s\n", strerror(errno));
@@ -324,6 +330,10 @@ pmempool_check_func(char *appname, int argc, char *argv[])
 			outv_err("repairing failed\n");
 		else
 			outv_err("checking consistency failed\n");
+		ret = -1;
+		break;
+	default:
+		outv_err("status unknown\n");
 		ret = -1;
 		break;
 	}

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Copyright 2016-2017, Intel Corporation
+# Copyright 2016-2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -43,8 +43,26 @@ set -e
 # Build librpmem even if libfabric is not compiled with ibverbs
 export RPMEM_DISABLE_LIBIBVERBS=y
 
+# Create fake tag, so that package has proper 'version' field
+git config user.email "test@package.com"
+git config user.name "test package"
+git tag -a 1.4.99 -m "1.4" HEAD~1
+
 # Build all and run tests
 cd $WORKDIR
 export PCHECK_OPTS=-j2
 make -j2 $PACKAGE_MANAGER
 
+# Install packages
+if [[ "$PACKAGE_MANAGER" == "dpkg" ]]; then
+	cd $PACKAGE_MANAGER
+	echo $USERPASS | sudo -S dpkg --install *.deb
+else
+	cd $PACKAGE_MANAGER/x86_64
+	echo $USERPASS | sudo -S rpm --install *.rpm
+fi
+
+# Compile and run standalone test
+cd $WORKDIR/utils/docker/test_package
+make LIBPMEMOBJ_MIN_VERSION=1.4
+./test_package testfile1

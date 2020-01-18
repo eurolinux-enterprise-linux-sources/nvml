@@ -7,7 +7,7 @@ header: PMDK
 date: pmempool API version 1.3
 ...
 
-[comment]: <> (Copyright 2017, Intel Corporation)
+[comment]: <> (Copyright 2017-2018, Intel Corporation)
 
 [comment]: <> (Redistribution and use in source and binary forms, with or without)
 [comment]: <> (modification, are permitted provided that the following conditions)
@@ -40,13 +40,14 @@ date: pmempool API version 1.3
 [SYNOPSIS](#synopsis)<br />
 [DESCRIPTION](#description)<br />
 [RETURN VALUE](#return-value)<br />
+[ERRORS](#errors)<br />
 [NOTES](#notes)<br />
 [SEE ALSO](#see-also)<br />
 
 
 # NAME #
 
-_UW(pmempool_sync), _UW(pmempool_transform) -- pool set synchronization and transformation
+_UW(pmempool_sync), _UW(pmempool_transform) - pool set synchronization and transformation
 
 
 # SYNOPSIS #
@@ -78,9 +79,16 @@ is performed.
 >NOTE: Only the pool set file used to create the pool should be used
 for syncing the pool.
 
+>NOTE: The _UW(pmempool_sync) cannot do anything useful if there
+are no replicas in the pool set.  In such case, it fails with an error.
+
+>NOTE: At the moment, replication is only supported for **libpmemobj**(7)
+pools, so _UW(pmempool_sync) cannot be used with other pool types
+(**libpmemlog**(7), **libpmemblk**(7)).
+
 The following flags are available:
 
-* **PMEMPOOL_DRY_RUN** - do not apply changes, only check for viability of
+* **PMEMPOOL_SYNC_DRY_RUN** - do not apply changes, only check for viability of
 synchronization.
 
 _UW(pmempool_sync) checks that the metadata of all replicas in
@@ -94,12 +102,13 @@ part in the replica. If the option *NOHDRS* is used, replicas contain no
 internal metadata. In both cases, only the missing parts or the ones which
 cannot be opened are recreated with the _UW(pmempool_sync) function.=e=)
 
+
 _UW(pmempool_transform) modifies the internal structure of a pool set.
 It supports the following operations:
 
 * adding one or more replicas,
 
-* removing one or more replicas_WINUX(.,=q=,
+* removing one or more replicas _WINUX(.,=q=,
 
 * adding or removing pool set options.=e=)
 
@@ -118,7 +127,7 @@ is performed.
 
 The following flags are available:
 
-* **PMEMPOOL_DRY_RUN** - do not apply changes, only check for viability of
+* **PMEMPOOL_TRANSFORM_DRY_RUN** - do not apply changes, only check for viability of
 transformation.
 
 _WINUX(=q=When adding or deleting replicas, the two pool set files can differ only in the
@@ -153,6 +162,10 @@ If the option *NOHDRS* is used, the effective size of a replica is the sum of
 sizes of all its part files. In this case none of the parts contains internal
 metadata.=e=)
 
+>NOTE: At the moment, *transform* operation is only supported for
+**libpmemobj**(7) pools, so _UW(pmempool_transform) cannot be used with other
+pool types (**libpmemlog**(7), **libpmemblk**(7)).
+
 
 # RETURN VALUE #
 
@@ -160,14 +173,35 @@ _UW(pmempool_sync) and _UW(pmempool_transform) return 0 on success.
 Otherwise, they return -1 and set *errno* appropriately.
 
 
-# NOTES #
+# ERRORS #
 
+**EINVAL** Invalid format of the input/output pool set file.
+
+**EINVAL** Unsupported *flags* value.
+
+**EINVAL** There is only master replica defined in the input pool set passed
+  to _UW(pmempool_sync).
+
+**EINVAL** The source pool set passed to _UW(pmempool_transform) is not a
+  **libpmemobj** pool.
+
+**EINVAL** The input and output pool sets passed to _UW(pmempool_transform)
+  are identical.
+
+**EINVAL** Attempt to perform more than one transform operation at a time.
+
+**ENOTSUP** The pool set contains a remote replica, but remote replication
+  is not supported (**librpmem**(7) is not available).
+
+
+# NOTES #
 
 The _UW(pmempool_sync) API is experimental and it may change in future
 versions of the library.
 
 The _UW(pmempool_transform) API is experimental and it may change in future
 versions of the library.
+
 
 # SEE ALSO #
 

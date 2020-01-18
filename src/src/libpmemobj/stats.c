@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018, Intel Corporation
+ * Copyright 2017-2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,10 +49,12 @@ static const struct ctl_node CTL_NODE(heap)[] = {
  * CTL_READ_HANDLER(enabled) -- returns whether or not statistics are enabled
  */
 static int
-CTL_READ_HANDLER(enabled)(PMEMobjpool *pop,
+CTL_READ_HANDLER(enabled)(void *ctx,
 	enum ctl_query_source source, void *arg,
 	struct ctl_indexes *indexes)
 {
+	PMEMobjpool *pop = ctx;
+
 	int *arg_out = arg;
 
 	*arg_out = pop->stats->enabled > 0;
@@ -64,10 +66,12 @@ CTL_READ_HANDLER(enabled)(PMEMobjpool *pop,
  * CTL_WRITE_HANDLER(enabled) -- enables or disables statistics counting
  */
 static int
-CTL_WRITE_HANDLER(enabled)(PMEMobjpool *pop,
+CTL_WRITE_HANDLER(enabled)(void *ctx,
 	enum ctl_query_source source, void *arg,
 	struct ctl_indexes *indexes)
 {
+	PMEMobjpool *pop = ctx;
+
 	int arg_in = *(int *)arg;
 
 	pop->stats->enabled = arg_in > 0;
@@ -93,6 +97,7 @@ stats_new(PMEMobjpool *pop)
 	struct stats *s = Malloc(sizeof(*s));
 	s->enabled = 0;
 	s->persistent = &pop->stats_persistent;
+	VALGRIND_ADD_TO_GLOBAL_TX_IGNORE(s->persistent, sizeof(*s->persistent));
 	s->transient = Zalloc(sizeof(struct stats_transient));
 	if (s->transient == NULL)
 		goto error_transient_alloc;
@@ -111,7 +116,7 @@ void
 stats_delete(PMEMobjpool *pop, struct stats *s)
 {
 	pmemops_persist(&pop->p_ops, s->persistent,
-		sizeof(struct stats_persistent));
+	sizeof(struct stats_persistent));
 	Free(s->transient);
 	Free(s);
 }

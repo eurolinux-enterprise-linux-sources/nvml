@@ -205,9 +205,6 @@ pmem_drain(void)
 	LOG(15, NULL);
 
 	Funcs.predrain_fence();
-
-	VALGRIND_DO_COMMIT;
-	VALGRIND_DO_FENCE;
 }
 
 /*
@@ -307,12 +304,16 @@ pmem_msync(const void *addr, size_t len)
 }
 
 /*
- * is_pmem_always -- (internal) always true version of pmem_is_pmem()
+ * is_pmem_always -- (internal) always true (for meaningful parameters) version
+ *	of pmem_is_pmem()
  */
 static int
 is_pmem_always(const void *addr, size_t len)
 {
 	LOG(3, "addr %p len %zu", addr, len);
+
+	if (len == 0)
+		return 0;
 
 	return 1;
 }
@@ -421,7 +422,10 @@ pmem_map_fileU(const char *path, size_t len, int flags,
 	int fd;
 	int open_flags = O_RDWR;
 	int delete_on_err = 0;
-	int is_dev_dax = util_file_is_device_dax(path);
+	int file_type = util_file_get_type(path);
+
+	if (file_type == OTHER_ERROR)
+		return NULL;
 
 	if (flags & ~(PMEM_FILE_ALL_FLAGS)) {
 		ERR("invalid flag specified %x", flags);
@@ -429,7 +433,7 @@ pmem_map_fileU(const char *path, size_t len, int flags,
 		return NULL;
 	}
 
-	if (is_dev_dax) {
+	if (file_type == TYPE_DEVDAX) {
 		if (flags & ~(PMEM_DAX_VALID_FLAGS)) {
 			ERR("flag unsupported for Device DAX %x", flags);
 			errno = EINVAL;
@@ -528,7 +532,7 @@ pmem_map_fileU(const char *path, size_t len, int flags,
 		len = (size_t)actual_size;
 	}
 
-	void *addr = pmem_map_register(fd, len, path, is_dev_dax);
+	void *addr = pmem_map_register(fd, len, path, file_type == TYPE_DEVDAX);
 	if (addr == NULL)
 		goto err;
 
@@ -600,14 +604,65 @@ pmem_unmap(void *addr, size_t len)
 }
 
 /*
+ * pmem_memmove --  memmove to pmem
+ */
+void *
+pmem_memmove(void *pmemdest, const void *src, size_t len, unsigned flags)
+{
+	LOG(15, "pmemdest %p src %p len %zu flags 0x%x",
+			pmemdest, src, len, flags);
+
+#ifdef DEBUG
+	if (flags & ~PMEM_F_MEM_VALID_FLAGS)
+		ERR("invalid flags 0x%x", flags);
+#endif
+
+	Funcs.memmove_nodrain(pmemdest, src, len, flags & ~PMEM_F_MEM_NODRAIN);
+
+	if ((flags & (PMEM_F_MEM_NODRAIN | PMEM_F_MEM_NOFLUSH)) == 0)
+		pmem_drain();
+
+	return pmemdest;
+}
+
+/*
+ * pmem_memcpy --  memcpy to pmem
+ */
+void *
+pmem_memcpy(void *pmemdest, const void *src, size_t len, unsigned flags)
+{
+	return pmem_memmove(pmemdest, src, len, flags);
+}
+
+/*
+ * pmem_memset -- memset to pmem
+ */
+void *
+pmem_memset(void *pmemdest, int c, size_t len, unsigned flags)
+{
+	LOG(15, "pmemdest %p c 0x%x len %zu flags 0x%x",
+			pmemdest, c, len, flags);
+
+#ifdef DEBUG
+	if (flags & ~PMEM_F_MEM_VALID_FLAGS)
+		ERR("invalid flags 0x%x", flags);
+#endif
+
+	Funcs.memset_nodrain(pmemdest, c, len, flags & ~PMEM_F_MEM_NODRAIN);
+
+	if ((flags & (PMEM_F_MEM_NODRAIN | PMEM_F_MEM_NOFLUSH)) == 0)
+		pmem_drain();
+
+	return pmemdest;
+}
+
+/*
  * pmem_memmove_nodrain -- memmove to pmem without hw drain
  */
 void *
 pmem_memmove_nodrain(void *pmemdest, const void *src, size_t len)
 {
-	LOG(15, "pmemdest %p src %p len %zu", pmemdest, src, len);
-
-	return Funcs.memmove_nodrain(pmemdest, src, len);
+	return pmem_memmove(pmemdest, src, len, PMEM_F_MEM_NODRAIN);
 }
 
 /*
@@ -616,9 +671,7 @@ pmem_memmove_nodrain(void *pmemdest, const void *src, size_t len)
 void *
 pmem_memcpy_nodrain(void *pmemdest, const void *src, size_t len)
 {
-	LOG(15, "pmemdest %p src %p len %zu", pmemdest, src, len);
-
-	return pmem_memmove_nodrain(pmemdest, src, len);
+	return pmem_memcpy(pmemdest, src, len, PMEM_F_MEM_NODRAIN);
 }
 
 /*
@@ -627,11 +680,7 @@ pmem_memcpy_nodrain(void *pmemdest, const void *src, size_t len)
 void *
 pmem_memmove_persist(void *pmemdest, const void *src, size_t len)
 {
-	LOG(15, "pmemdest %p src %p len %zu", pmemdest, src, len);
-
-	pmem_memmove_nodrain(pmemdest, src, len);
-	pmem_drain();
-	return pmemdest;
+	return pmem_memmove(pmemdest, src, len, 0);
 }
 
 /*
@@ -640,11 +689,7 @@ pmem_memmove_persist(void *pmemdest, const void *src, size_t len)
 void *
 pmem_memcpy_persist(void *pmemdest, const void *src, size_t len)
 {
-	LOG(15, "pmemdest %p src %p len %zu", pmemdest, src, len);
-
-	pmem_memcpy_nodrain(pmemdest, src, len);
-	pmem_drain();
-	return pmemdest;
+	return pmem_memcpy(pmemdest, src, len, 0);
 }
 
 /*
@@ -653,9 +698,7 @@ pmem_memcpy_persist(void *pmemdest, const void *src, size_t len)
 void *
 pmem_memset_nodrain(void *pmemdest, int c, size_t len)
 {
-	LOG(15, "pmemdest %p c 0x%x len %zu", pmemdest, c, len);
-
-	return Funcs.memset_nodrain(pmemdest, c, len);
+	return pmem_memset(pmemdest, c, len, PMEM_F_MEM_NODRAIN);
 }
 
 /*
@@ -664,11 +707,7 @@ pmem_memset_nodrain(void *pmemdest, int c, size_t len)
 void *
 pmem_memset_persist(void *pmemdest, int c, size_t len)
 {
-	LOG(15, "pmemdest %p c 0x%x len %zu", pmemdest, c, len);
-
-	pmem_memset_nodrain(pmemdest, c, len);
-	pmem_drain();
-	return pmemdest;
+	return pmem_memset(pmemdest, c, len, 0);
 }
 
 /*

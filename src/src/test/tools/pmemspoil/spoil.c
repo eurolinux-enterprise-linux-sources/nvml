@@ -137,21 +137,6 @@ if (pmemspoil_check_field(_pfp, STR(_name))) {\
 }\
 } while (0)
 
-/* _max - size of _arg if it is array (if not it must be 1) */
-#define PROCESS_NAME(_name, _func, _arg, _max) do {\
-if (pmemspoil_check_field(_pfp, (_name))) {\
-	PROCESS_STATE = PROCESS_STATE_FOUND;\
-	if (_pfp->cur->index >= (_max)) {\
-		PROCESS_STATE = PROCESS_STATE_ERROR_MSG;\
-	} else {\
-		pmemspoil_next_field(_pfp);\
-		if (pmemspoil_process_##_func(_psp, _pfp, _arg))\
-			PROCESS_STATE = PROCESS_STATE_ERROR;\
-	}\
-	goto _process_end;\
-}\
-} while (0)
-
 #define PROCESS_FIELD(_ptr, _name, _type) do {\
 	if (pmemspoil_check_field(_pfp, STR(_name))) {\
 		pmemspoil_next_field(_pfp);\
@@ -290,8 +275,8 @@ static const struct pmemspoil pmemspoil_default = {
 /*
  * help_str -- string for help message
  */
-static const char *help_str =
-"Common options:\n"
+static const char * const  help_str =
+"%s common options:\n"
 "  -v, --verbose        Increase verbose level\n"
 "  -?, --help           Display this help and exit\n"
 "  -r, --replica <num>  Replica index\n"
@@ -339,7 +324,7 @@ print_version(char *appname)
 }
 
 /*
- * pmempool_check_help -- print help message for check command
+ * pmemspoil_help -- print help message for spoil command
  */
 static void
 pmemspoil_help(char *appname)
@@ -612,6 +597,24 @@ pmemspoil_process_char(struct pmemspoil *psp, struct pmemspoil_list *pfp,
 }
 
 /*
+ * pmemspoil_process_uint8_t -- process value as uint8
+ */
+static int
+pmemspoil_process_uint8_t(struct pmemspoil *psp, struct pmemspoil_list *pfp,
+		uint8_t *valp, size_t size, int le)
+{
+	uint8_t v;
+	if (sscanf(pfp->value, "0x%" SCNx8, &v) != 1 &&
+	    sscanf(pfp->value, "%" SCNu8, &v) != 1)
+		return -1;
+	*valp = v;
+
+	pmemspoil_persist(valp, sizeof(*valp));
+
+	return 0;
+}
+
+/*
  * pmemspoil_process_uint16_t -- process value as uint16
  */
 static int
@@ -736,6 +739,23 @@ pmemspoil_process_shutdown_state(struct pmemspoil *psp,
 }
 
 /*
+ * pmemspoil_process_features -- process features fields
+ */
+static int
+pmemspoil_process_features(struct pmemspoil *psp,
+	struct pmemspoil_list *pfp, void *arg)
+{
+	features_t *features = arg;
+	PROCESS_BEGIN(psp, pfp) {
+		PROCESS_FIELD_LE(features, compat, uint32_t);
+		PROCESS_FIELD_LE(features, incompat, uint32_t);
+		PROCESS_FIELD_LE(features, ro_compat, uint32_t);
+	} PROCESS_END;
+
+	return PROCESS_RET;
+}
+
+/*
  * pmemspoil_process_pool_hdr -- process pool_hdr fields
  */
 static int
@@ -751,7 +771,7 @@ pmemspoil_process_pool_hdr(struct pmemspoil *psp,
 			.ptr = &pool_hdr,
 			.len = sizeof(pool_hdr),
 			.checksum = &pool_hdr.checksum,
-			.skip_off = POOL_HDR_CSUM_END_OFF,
+			.skip_off = POOL_HDR_CSUM_END_OFF(&pool_hdr),
 		};
 
 		PROCESS_FIELD(&pool_hdr, signature, char);
@@ -764,9 +784,7 @@ pmemspoil_process_pool_hdr(struct pmemspoil *psp,
 		PROCESS_FIELD(&pool_hdr, unused, char);
 		PROCESS_FIELD(&pool_hdr, unused2, char);
 		PROCESS_FIELD_LE(&pool_hdr, major, uint32_t);
-		PROCESS_FIELD_LE(&pool_hdr, compat_features, uint32_t);
-		PROCESS_FIELD_LE(&pool_hdr, incompat_features, uint32_t);
-		PROCESS_FIELD_LE(&pool_hdr, ro_compat_features, uint32_t);
+		PROCESS(features, &pool_hdr.features, 1, features_t *);
 		PROCESS_FIELD_LE(&pool_hdr, crtime, uint64_t);
 		PROCESS_FIELD(&pool_hdr, arch_flags, char); /* XXX */
 		PROCESS(shutdown_state, &pool_hdr.sds, 1,
@@ -1092,8 +1110,8 @@ pmemspoil_process_run(struct pmemspoil *psp, struct pmemspoil_list *pfp,
 	}
 
 	PROCESS_BEGIN(psp, pfp) {
-		PROCESS_FIELD(run, block_size, uint64_t);
-		PROCESS_FIELD_ARRAY(run, bitmap, uint64_t, MAX_BITMAP_VALUES);
+		PROCESS_FIELD(run, hdr.block_size, uint64_t);
+		PROCESS_FIELD_ARRAY(run, content, uint8_t, RUN_CONTENT_SIZE);
 	} PROCESS_END
 
 	return PROCESS_RET;
@@ -1172,107 +1190,19 @@ pmemspoil_process_heap(struct pmemspoil *psp, struct pmemspoil_list *pfp,
 }
 
 /*
- * pmemspoil_process_redo_log -- process redo log
- */
-static int
-pmemspoil_process_redo_log(struct pmemspoil *psp,
-	struct pmemspoil_list *pfp, struct redo_log *redo)
-{
-	PROCESS_BEGIN(psp, pfp) {
-		PROCESS_FIELD(redo, offset, uint64_t);
-		PROCESS_FIELD(redo, value, uint64_t);
-	} PROCESS_END
-
-	return PROCESS_RET;
-}
-
-/*
- * pmemspoil_process_allocator -- process lane allocator section
- */
-static int
-pmemspoil_process_sec_allocator(struct pmemspoil *psp,
-	struct pmemspoil_list *pfp, struct lane_alloc_layout *sec)
-{
-	PROCESS_BEGIN(psp, pfp) {
-		PROCESS(redo_log, &sec->redo[PROCESS_INDEX],
-			ALLOC_REDO_LOG_SIZE, struct redo_log *);
-	} PROCESS_END
-
-	return PROCESS_RET;
-}
-
-/*
- * pmemspoil_process_vector -- process vector
- */
-static int
-pmemspoil_process_vector(struct pmemspoil *psp,
-	struct pmemspoil_list *pfp, struct pvector *vec)
-{
-	PROCESS_BEGIN(psp, pfp) {
-		PROCESS_FIELD_ARRAY(vec, embedded, uint64_t, PVECTOR_INIT_SIZE);
-		PROCESS_FIELD_ARRAY(vec, arrays, uint64_t, PVECTOR_MAX_ARRAYS);
-	} PROCESS_END
-
-	return PROCESS_RET;
-}
-
-/*
- * pmemspoil_process_tx -- process lane transaction section
- */
-static int
-pmemspoil_process_sec_tx(struct pmemspoil *psp,
-	struct pmemspoil_list *pfp, struct lane_tx_layout *sec)
-{
-	PROCESS_BEGIN(psp, pfp) {
-		PROCESS_FIELD(sec, state, uint64_t);
-
-		PROCESS_NAME("undo_alloc", vector,
-			&sec->undo_log[UNDO_ALLOC], 1);
-		PROCESS_NAME("undo_set", vector,
-			&sec->undo_log[UNDO_SET], 1);
-		PROCESS_NAME("undo_free", vector,
-			&sec->undo_log[UNDO_FREE], 1);
-	} PROCESS_END
-
-	return PROCESS_RET;
-}
-
-/*
- * pmemspoil_process_list -- process lane list section
- */
-static int
-pmemspoil_process_sec_list(struct pmemspoil *psp,
-	struct pmemspoil_list *pfp, struct lane_list_layout *sec)
-{
-	size_t redo_size = REDO_NUM_ENTRIES;
-	PROCESS_BEGIN(psp, pfp) {
-		PROCESS_FIELD(sec, obj_offset, uint64_t);
-		PROCESS(redo_log, &sec->redo[PROCESS_INDEX], redo_size,
-			struct redo_log *);
-	} PROCESS_END
-
-	return PROCESS_RET;
-}
-
-/*
  * pmemspoil_process_lane -- process pmemobj lanes
  */
 static int
 pmemspoil_process_lane(struct pmemspoil *psp, struct pmemspoil_list *pfp,
 		struct lane_layout *lane)
 {
-	struct lane_tx_layout *sec_tx = (struct lane_tx_layout *)
-		&lane->sections[LANE_SECTION_TRANSACTION];
-	struct lane_list_layout *sec_list = (struct lane_list_layout *)
-		&lane->sections[LANE_SECTION_LIST];
-	struct lane_alloc_layout *sec_alloc =
-		(struct lane_alloc_layout *)
-		&lane->sections[LANE_SECTION_ALLOCATOR];
-
 	PROCESS_BEGIN(psp, pfp) {
-		PROCESS_NAME("allocator", sec_allocator, sec_alloc, 1);
-		PROCESS_NAME("tx", sec_tx, sec_tx, 1);
-		PROCESS_NAME("list", sec_list, sec_list, 1);
+		PROCESS_FIELD_ARRAY(lane, undo.data,
+			uint8_t, LANE_UNDO_SIZE);
+		PROCESS_FIELD_ARRAY(lane, internal.data,
+			uint8_t, LANE_REDO_INTERNAL_SIZE);
+		PROCESS_FIELD_ARRAY(lane, external.data,
+			uint8_t, LANE_REDO_EXTERNAL_SIZE);
 	} PROCESS_END
 
 	return PROCESS_RET;

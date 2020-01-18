@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Copyright 2017-2018, Intel Corporation
+# Copyright 2017-2019, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -60,9 +60,6 @@ export EXTRA_CFLAGS=${EXTRA_CFLAGS}
 export EXTRA_CXXFLAGS=${EXTRA_CXXFLAGS:-}
 export PMDK_CC=${PMDK_CC:-gcc}
 export PMDK_CXX=${PMDK_CXX:-g++}
-export USE_LLVM_LIBCPP=${USE_LLVM_LIBCPP:-}
-export LIBCPP_LIBDIR=${LIBCPP_LIBDIR:-}
-export LIBCPP_INCDIR=${LIBCPP_INCDIR:-}
 export EXPERIMENTAL=${EXPERIMENTAL:-n}
 export VALGRIND=${VALGRIND:-1}
 
@@ -81,7 +78,7 @@ if [[ "$KEEP_CONTAINER" != "1" ]]; then
 	RM_SETTING=" --rm"
 fi
 
-imageName=pmem/pmdk:${OS}-${OS_VER}
+imageName=pmem/pmdk:1.5-${OS}-${OS_VER}
 containerName=pmdk-${OS}-${OS_VER}
 
 if [[ $MAKE_PKG -eq 1 ]] ; then
@@ -91,6 +88,7 @@ else
 fi
 
 if [ -n "$DNS_SERVER" ]; then DNS_SETTING=" --dns=$DNS_SERVER "; fi
+if [ -z "$NDCTL_ENABLE" ]; then ndctl_enable=; else ndctl_enable="--env NDCTL_ENABLE=$NDCTL_ENABLE"; fi
 
 WORKDIR=/pmdk
 SCRIPTSDIR=$WORKDIR/utils/docker
@@ -111,18 +109,14 @@ docker run --privileged=true --name=$containerName -ti \
 	--env VALGRIND=$VALGRIND \
 	--env EXTRA_CFLAGS=$EXTRA_CFLAGS \
 	--env EXTRA_CXXFLAGS=$EXTRA_CXXFLAGS \
-	--env USE_LLVM_LIBCPP=$USE_LLVM_LIBCPP \
-	--env LIBCPP_LIBDIR=$LIBCPP_LIBDIR \
-	--env LIBCPP_INCDIR=$LIBCPP_INCDIR \
 	--env REMOTE_TESTS=$REMOTE_TESTS \
 	--env CONFIGURE_TESTS=$CONFIGURE_TESTS \
 	--env TEST_BUILD=$TEST_BUILD \
 	--env WORKDIR=$WORKDIR \
 	--env EXPERIMENTAL=$EXPERIMENTAL \
 	--env SCRIPTSDIR=$SCRIPTSDIR \
-	--env CLANG_FORMAT=clang-format-3.8 \
 	--env KEEP_TEST_CONFIG=$KEEP_TEST_CONFIG \
-	--env NDCTL_ENABLE=$NDCTL_ENABLE \
+	$ndctl_enable \
 	-v $HOST_WORKDIR:$WORKDIR \
 	-v /etc/localtime:/etc/localtime \
 	$DAX_SETTING \

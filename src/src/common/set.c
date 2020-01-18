@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2018, Intel Corporation
+ * Copyright 2015-2019, Intel Corporation
  * Copyright (c) 2016, Microsoft Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -69,6 +69,7 @@
 #include "util_pmem.h"
 #include "fs.h"
 #include "os_deep.h"
+#include "badblock.h"
 
 #define LIBRARY_REMOTE "librpmem.so.1"
 #define SIZE_AUTODETECT_STR "AUTO"
@@ -87,7 +88,7 @@ static RPMEMpool *(*Rpmem_open)(const char *target, const char *pool_set_name,
 			struct rpmem_pool_attr *rpmem_attr);
 int (*Rpmem_close)(RPMEMpool *rpp);
 int (*Rpmem_persist)(RPMEMpool *rpp, size_t offset, size_t length,
-			unsigned lane);
+			unsigned lane, unsigned flags);
 int (*Rpmem_deep_persist)(RPMEMpool *rpp, size_t offset, size_t length,
 			unsigned lane);
 int (*Rpmem_read)(RPMEMpool *rpp, void *buff, size_t offset,
@@ -101,6 +102,8 @@ static void *Rpmem_handle_remote;
 
 int Prefault_at_open = 0;
 int Prefault_at_create = 0;
+int SDS_at_create = POOL_FEAT_INCOMPAT_DEFAULT & POOL_E_FEAT_SDS ? 1 : 0;
+
 
 /* list of pool set option names and flags */
 static struct pool_set_option Options[] = {
@@ -384,7 +387,7 @@ util_map_hdr(struct pool_set_part *part, int flags, int rdonly)
 		/* this is required only for Device DAX & memcheck */
 		addr = util_map_hint(hdrsize, hdrsize);
 		if (addr == MAP_FAILED) {
-			ERR("cannot find a contiguous region of given size");
+			LOG(1, "cannot find a contiguous region of given size");
 			/* there's nothing we can do */
 			return -1;
 		}
@@ -411,20 +414,19 @@ util_map_hdr(struct pool_set_part *part, int flags, int rdonly)
 /*
  * util_unmap_hdr -- unmap pool set part header
  */
-int
+void
 util_unmap_hdr(struct pool_set_part *part)
 {
-	if (part->hdr != NULL && part->hdrsize != 0) {
-		LOG(4, "munmap: addr %p size %zu", part->hdr, part->hdrsize);
-		VALGRIND_REMOVE_PMEM_MAPPING(part->hdr, part->hdrsize);
-		if (munmap(part->hdr, part->hdrsize) != 0) {
-			ERR("!munmap: %s", part->path);
-		}
-		part->hdr = NULL;
-		part->hdrsize = 0;
-	}
+	if (part->hdr == NULL || part->hdrsize == 0)
+		return;
 
-	return 0;
+	LOG(4, "munmap: addr %p size %zu", part->hdr, part->hdrsize);
+	VALGRIND_REMOVE_PMEM_MAPPING(part->hdr, part->hdrsize);
+	if (munmap(part->hdr, part->hdrsize) != 0)
+		/* this means there's a bug on the caller side */
+		FATAL("!munmap: %s", part->path);
+	part->hdr = NULL;
+	part->hdrsize = 0;
 }
 
 /*
@@ -539,6 +541,7 @@ util_poolset_free(struct pool_set *set)
 		VEC_DELETE(&rep->directory);
 		Free(set->replica[r]);
 	}
+	Free(set->path);
 	Free(set);
 }
 
@@ -728,7 +731,11 @@ util_poolset_fdclose(struct pool_set *set)
 static ssize_t
 util_autodetect_size(const char *path)
 {
-	if (!util_file_is_device_dax(path)) {
+	enum file_type type = util_file_get_type(path);
+	if (type < 0)
+		return -1;
+
+	if (type == TYPE_NORMAL) {
 		ERR("size autodetection is supported only for device dax");
 		return -1;
 	}
@@ -929,7 +936,15 @@ util_replica_add_part_by_idx(struct pool_replica **repp,
 	struct pool_replica *rep = *repp;
 	ASSERTne(rep, NULL);
 
-	int is_dev_dax = util_file_is_device_dax(path);
+	int is_dev_dax = 0;
+
+	if (path != NULL) {
+		enum file_type type = util_file_get_type(path);
+		if (type == OTHER_ERROR)
+			return -1;
+
+		is_dev_dax = type == TYPE_DEVDAX;
+	}
 
 	rep->part[p].path = path;
 	rep->part[p].filesize = filesize;
@@ -939,6 +954,7 @@ util_replica_add_part_by_idx(struct pool_replica **repp,
 	rep->part[p].hdr = NULL;
 	rep->part[p].addr = NULL;
 	rep->part[p].remote_hdr = NULL;
+	rep->part[p].has_bad_blocks = 0;
 
 	if (is_dev_dax)
 		rep->part[p].alignment = util_file_device_dax_alignment(path);
@@ -1038,7 +1054,8 @@ util_parse_add_directory(struct pool_set *set, const char *path,
 	d.path = path;
 	d.resvsize = filesize;
 
-	VEC_PUSH_BACK(&rep->directory, d);
+	if (VEC_PUSH_BACK(&rep->directory, d) != 0)
+		return -1;
 
 	rep->resvsize += filesize;
 
@@ -1090,7 +1107,7 @@ util_parse_add_replica(struct pool_set **setp)
 	struct pool_replica *rep;
 	rep = Zalloc(sizeof(struct pool_replica));
 	if (rep == NULL) {
-		ERR("!Malloc");
+		ERR("!Zalloc");
 		return -1;
 	}
 
@@ -1452,12 +1469,14 @@ util_poolset_directories_load(struct pool_set *set)
 	 */
 	struct pool_replica *rep;
 	struct pool_replica *mrep = set->replica[max_parts_rep];
+
 	for (unsigned r = 0; r < set->nreplicas; r++) {
 		if (set->replica[r]->nparts == mrep->nparts)
 			continue;
 
 		if (VEC_SIZE(&set->replica[r]->directory) == 0) {
-			ERR("no directories in replica");
+			errno = ENOENT;
+			ERR("!no directories in replica");
 			return -1;
 		}
 
@@ -1545,6 +1564,12 @@ util_poolset_parse(struct pool_set **setp, const char *path, int fd)
 	set = Zalloc(sizeof(struct pool_set));
 	if (set == NULL) {
 		ERR("!Malloc for pool set");
+		goto err;
+	}
+
+	set->path = Strdup(path);
+	if (set->path == NULL)  {
+		ERR("!Strdup");
 		goto err;
 	}
 
@@ -1714,6 +1739,10 @@ util_poolset_single(const char *path, size_t filesize, int create,
 	LOG(3, "path %s filesize %zu create %d",
 			path, filesize, create);
 
+	enum file_type type = util_file_get_type(path);
+	if (type == OTHER_ERROR)
+		return NULL;
+
 	struct pool_set *set;
 	set = Zalloc(sizeof(struct pool_set) +
 			sizeof(struct pool_replica *));
@@ -1722,11 +1751,19 @@ util_poolset_single(const char *path, size_t filesize, int create,
 		return NULL;
 	}
 
+	set->path = Strdup(path);
+	if (set->path == NULL)  {
+		ERR("!Strdup");
+		Free(set);
+		return NULL;
+	}
+
 	struct pool_replica *rep;
 	rep = Zalloc(sizeof(struct pool_replica) +
 			sizeof(struct pool_set_part));
 	if (rep == NULL) {
 		ERR("!Malloc for pool set replica");
+		Free(set->path);
 		Free(set);
 		return NULL;
 	}
@@ -1738,10 +1775,11 @@ util_poolset_single(const char *path, size_t filesize, int create,
 	rep->part[0].filesize = filesize;
 	rep->part[0].path = Strdup(path);
 	rep->part[0].fd = -1;	/* will be filled out by util_poolset_file() */
-	rep->part[0].is_dev_dax = util_file_is_device_dax(path);
+	rep->part[0].is_dev_dax = type == TYPE_DEVDAX;
 	rep->part[0].created = create;
 	rep->part[0].hdr = NULL;
 	rep->part[0].addr = NULL;
+	rep->part[0].has_bad_blocks = 0;
 
 	if (rep->part[0].is_dev_dax)
 		rep->part[0].alignment = util_file_device_dax_alignment(path);
@@ -1766,7 +1804,8 @@ util_poolset_single(const char *path, size_t filesize, int create,
 	set->resvsize = rep->resvsize;
 
 	set->nreplicas = 1;
-	set->ignore_sds = ignore_sds;
+	set->ignore_sds = ignore_sds || (set->options & OPTION_NOHDRS);
+
 	return set;
 }
 
@@ -1778,8 +1817,11 @@ util_part_open(struct pool_set_part *part, size_t minsize, int create)
 {
 	LOG(3, "part %p minsize %zu create %d", part, minsize, create);
 
-	/* check if file exists */
-	if (os_access(part->path, F_OK) == 0)
+	int exists = util_file_exists(part->path);
+	if (exists < 0)
+		return -1;
+
+	if (exists)
 		create = 0;
 
 	part->created = 0;
@@ -1837,9 +1879,9 @@ util_set_rpmem_attr(struct pool_hdr *hdrp, const struct rpmem_pool_attr *rattr)
 	LOG(5, "hdrp %p rattr %p", hdrp, rattr);
 	memcpy(hdrp->signature, rattr->signature, POOL_HDR_SIG_LEN);
 	hdrp->major = rattr->major;
-	hdrp->compat_features = rattr->compat_features;
-	hdrp->incompat_features = rattr->incompat_features;
-	hdrp->ro_compat_features = rattr->ro_compat_features;
+	hdrp->features.compat = rattr->compat_features;
+	hdrp->features.incompat = rattr->incompat_features;
+	hdrp->features.ro_compat = rattr->ro_compat_features;
 	memcpy(hdrp->poolset_uuid, rattr->poolset_uuid, POOL_HDR_UUID_LEN);
 	memcpy(hdrp->next_repl_uuid, rattr->next_uuid, POOL_HDR_UUID_LEN);
 	memcpy(hdrp->prev_repl_uuid, rattr->prev_uuid, POOL_HDR_UUID_LEN);
@@ -1856,9 +1898,9 @@ util_get_rpmem_attr(struct rpmem_pool_attr *rattr, const struct pool_hdr *hdrp)
 	ASSERTne(rattr, NULL);
 	memcpy(rattr->signature, hdrp->signature, POOL_HDR_SIG_LEN);
 	rattr->major = hdrp->major;
-	rattr->compat_features = hdrp->compat_features;
-	rattr->incompat_features = hdrp->incompat_features;
-	rattr->ro_compat_features = hdrp->ro_compat_features;
+	rattr->compat_features = hdrp->features.compat;
+	rattr->incompat_features = hdrp->features.incompat;
+	rattr->ro_compat_features = hdrp->features.ro_compat;
 	memcpy(rattr->poolset_uuid, hdrp->poolset_uuid, POOL_HDR_UUID_LEN);
 	memcpy(rattr->uuid, hdrp->uuid, POOL_HDR_UUID_LEN);
 	memcpy(rattr->next_uuid, hdrp->next_repl_uuid, POOL_HDR_UUID_LEN);
@@ -2110,10 +2152,12 @@ util_poolset_create_set(struct pool_set **setp, const char *path,
 	int fd;
 	size_t size = 0;
 
-	int is_dev_dax = util_file_is_device_dax(path);
+	enum file_type type = util_file_get_type(path);
+	if (type == OTHER_ERROR)
+		return -1;
 
 	if (poolsize != 0) {
-		if (is_dev_dax) {
+		if (type == TYPE_DEVDAX) {
 			ERR("size must be zero for device dax");
 			return -1;
 		}
@@ -2129,7 +2173,7 @@ util_poolset_create_set(struct pool_set **setp, const char *path,
 		return -1;
 
 	char signature[POOLSET_HDR_SIG_LEN];
-	if (!is_dev_dax) {
+	if (type == TYPE_NORMAL) {
 		/*
 		 * read returns ssize_t, but we know it will return value
 		 * between -1 and POOLSET_HDR_SIG_LEN (11), so we can safely
@@ -2142,7 +2186,7 @@ util_poolset_create_set(struct pool_set **setp, const char *path,
 		}
 	}
 
-	if (is_dev_dax || ret < POOLSET_HDR_SIG_LEN ||
+	if (type == TYPE_DEVDAX || ret < POOLSET_HDR_SIG_LEN ||
 	    strncmp(signature, POOLSET_HDR_SIG, POOLSET_HDR_SIG_LEN)) {
 		LOG(4, "not a pool set header");
 		(void) os_close(fd);
@@ -2164,7 +2208,7 @@ util_poolset_create_set(struct pool_set **setp, const char *path,
 	if (ret)
 		goto err;
 
-	(*setp)->ignore_sds = ignore_sds;
+	(*setp)->ignore_sds = ignore_sds || ((*setp)->options & OPTION_NOHDRS);
 #ifdef _WIN32
 	/* remote replication is not supported on Windows */
 	if ((*setp)->remote) {
@@ -2231,23 +2275,23 @@ util_header_create(struct pool_set *set, unsigned repidx, unsigned partidx,
 	util_pool_attr2hdr(hdrp, attr);
 
 	if (set->options & OPTION_SINGLEHDR)
-		hdrp->incompat_features |= POOL_FEAT_SINGLEHDR;
+		hdrp->features.incompat |= POOL_FEAT_SINGLEHDR;
 
 	memcpy(hdrp->poolset_uuid, set->uuid, POOL_HDR_UUID_LEN);
-	memcpy(hdrp->uuid, PART(rep, partidx).uuid, POOL_HDR_UUID_LEN);
+	memcpy(hdrp->uuid, PART(rep, partidx)->uuid, POOL_HDR_UUID_LEN);
 
 	/* link parts */
 	if (set->options & OPTION_SINGLEHDR) {
 		/* next/prev part point to part #0 */
 		ASSERTeq(partidx, 0);
-		memcpy(hdrp->prev_part_uuid, PART(rep, 0).uuid,
+		memcpy(hdrp->prev_part_uuid, PART(rep, 0)->uuid,
 							POOL_HDR_UUID_LEN);
-		memcpy(hdrp->next_part_uuid, PART(rep, 0).uuid,
+		memcpy(hdrp->next_part_uuid, PART(rep, 0)->uuid,
 							POOL_HDR_UUID_LEN);
 	} else {
-		memcpy(hdrp->prev_part_uuid, PARTP(rep, partidx).uuid,
+		memcpy(hdrp->prev_part_uuid, PARTP(rep, partidx)->uuid,
 							POOL_HDR_UUID_LEN);
-		memcpy(hdrp->next_part_uuid, PARTN(rep, partidx).uuid,
+		memcpy(hdrp->next_part_uuid, PARTN(rep, partidx)->uuid,
 							POOL_HDR_UUID_LEN);
 	}
 
@@ -2256,14 +2300,14 @@ util_header_create(struct pool_set *set, unsigned repidx, unsigned partidx,
 		memcpy(hdrp->prev_repl_uuid, attr->prev_repl_uuid,
 				POOL_HDR_UUID_LEN);
 	} else {
-		memcpy(hdrp->prev_repl_uuid, PART(REPP(set, repidx), 0).uuid,
+		memcpy(hdrp->prev_repl_uuid, PART(REPP(set, repidx), 0)->uuid,
 			POOL_HDR_UUID_LEN);
 	}
 	if (!util_is_zeroed(attr->next_repl_uuid, POOL_HDR_UUID_LEN)) {
 		memcpy(hdrp->next_repl_uuid, attr->next_repl_uuid,
 				POOL_HDR_UUID_LEN);
 	} else {
-		memcpy(hdrp->next_repl_uuid, PART(REPN(set, repidx), 0).uuid,
+		memcpy(hdrp->next_repl_uuid, PART(REPN(set, repidx), 0)->uuid,
 			POOL_HDR_UUID_LEN);
 	}
 
@@ -2290,17 +2334,17 @@ util_header_create(struct pool_set *set, unsigned repidx, unsigned partidx,
 	}
 
 	if (!set->ignore_sds && partidx == 0 && !rep->remote) {
-		shutdown_state_init(&hdrp->sds, &PART(rep, 0));
+		shutdown_state_init(&hdrp->sds, rep);
 		for (unsigned p = 0; p < rep->nparts; p++) {
 			if (shutdown_state_add_part(&hdrp->sds,
-					PART(rep, p).path, &PART(rep, 0)))
+					PART(rep, p)->path, rep))
 				return -1;
 		}
-		shutdown_state_set_flag(&hdrp->sds, &PART(rep, 0));
+		shutdown_state_set_dirty(&hdrp->sds, rep);
 	}
 
 	util_checksum(hdrp, sizeof(*hdrp), &hdrp->checksum,
-		1, POOL_HDR_CSUM_END_OFF);
+		1, POOL_HDR_CSUM_END_OFF(hdrp));
 
 	/* store pool's header */
 	util_persist_auto(rep->is_pmem, hdrp, sizeof(*hdrp));
@@ -2350,18 +2394,16 @@ util_header_check(struct pool_set *set, unsigned repidx, unsigned partidx,
 	if (hdr.major != attr->major) {
 		ERR("pool version %d (library expects %d)", hdr.major,
 				attr->major);
-		if (hdr.major < attr->major) {
-			ERR("Please run the pmempool convert utility to "
-				"upgrade the pool.");
-		}
+		if (hdr.major < attr->major)
+			ERR(
+				"Please run the pmdk-convert utility to upgrade the pool.");
 		errno = EINVAL;
 		return -1;
 	}
 
 	rep->part[partidx].rdonly = 0;
 
-	int retval = util_feature_check(&hdr, attr->incompat_features,
-			attr->ro_compat_features, attr->compat_features);
+	int retval = util_feature_check(&hdr, attr->features);
 	if (retval < 0)
 		return -1;
 
@@ -2378,7 +2420,7 @@ util_header_check(struct pool_set *set, unsigned repidx, unsigned partidx,
 		 * invalid checksum.
 		 */
 		if (!util_checksum(&hdr, sizeof(hdr), &hdr.checksum,
-				0, POOL_HDR_CSUM_END_OFF)) {
+				0, POOL_HDR_CSUM_END_OFF(&hdr))) {
 			ERR("invalid checksum of pool header");
 			errno = EINVAL;
 			return -1;
@@ -2419,9 +2461,9 @@ util_header_check(struct pool_set *set, unsigned repidx, unsigned partidx,
 	}
 
 	/* check compatibility features */
-	if (HDR(rep, 0)->compat_features != hdrp->compat_features ||
-	    HDR(rep, 0)->incompat_features != hdrp->incompat_features ||
-	    HDR(rep, 0)->ro_compat_features != hdrp->ro_compat_features) {
+	if (HDR(rep, 0)->features.compat != hdrp->features.compat ||
+	    HDR(rep, 0)->features.incompat != hdrp->features.incompat ||
+	    HDR(rep, 0)->features.ro_compat != hdrp->features.ro_compat) {
 		ERR("incompatible feature flags");
 		errno = EINVAL;
 		return -1;
@@ -2429,7 +2471,7 @@ util_header_check(struct pool_set *set, unsigned repidx, unsigned partidx,
 
 	/* check poolset options */
 	if (util_poolset_check_header_options(set,
-			HDR(rep, 0)->incompat_features))
+			HDR(rep, 0)->features.incompat))
 		return -1;
 
 	return 0;
@@ -2475,19 +2517,19 @@ util_header_check_remote(struct pool_set *set, unsigned partidx)
 	}
 
 	/* check compatibility features */
-	if (HDR(rep, 0)->compat_features != hdrp->compat_features) {
+	if (HDR(rep, 0)->features.compat != hdrp->features.compat) {
 		ERR("'may have' compatibility flags mismatch in part %d",
 								partidx);
 		errno = EINVAL;
 		return -1;
 	}
-	if (HDR(rep, 0)->incompat_features != hdrp->incompat_features) {
+	if (HDR(rep, 0)->features.incompat != hdrp->features.incompat) {
 		ERR("'must support' compatibility flags mismatch in part %d",
 								partidx);
 		errno = EINVAL;
 		return -1;
 	}
-	if (HDR(rep, 0)->ro_compat_features != hdrp->ro_compat_features) {
+	if (HDR(rep, 0)->features.ro_compat != hdrp->features.ro_compat) {
 		ERR("'force read-only' compatibility flags mismatch in part %d",
 								partidx);
 		errno = EINVAL;
@@ -2503,7 +2545,7 @@ util_header_check_remote(struct pool_set *set, unsigned partidx)
 	 * checksum.
 	 */
 	if (!util_checksum(&hdr, sizeof(hdr), &hdr.checksum,
-			0, POOL_HDR_CSUM_END_OFF)) {
+			0, POOL_HDR_CSUM_END_OFF(&hdr))) {
 		ERR("invalid checksum of pool header");
 		return -1;
 	}
@@ -2551,22 +2593,24 @@ util_header_check_remote(struct pool_set *set, unsigned partidx)
 		return -1;
 	}
 
+	/* read shutdown state toggle from header */
+	set->ignore_sds |= IGNORE_SDS(HDR(rep, 0));
+
 	if (!set->ignore_sds && partidx == 0) {
 		struct shutdown_state sds;
 		shutdown_state_init(&sds, NULL);
 		for (unsigned p = 0; p < rep->nparts; p++) {
 			if (shutdown_state_add_part(&sds,
-					PART(rep, p).path, NULL))
+					PART(rep, p)->path, NULL))
 				return -1;
 		}
 
-		if (shutdown_state_check(&sds, &hdrp->sds,
-				&PART(rep, 0))) {
+		if (shutdown_state_check(&sds, &hdrp->sds, rep)) {
 			errno = EINVAL;
 			return -1;
 		}
 
-		shutdown_state_set_flag(&hdrp->sds, &PART(rep, 0));
+		shutdown_state_set_dirty(&hdrp->sds, rep);
 	}
 
 
@@ -2631,7 +2675,7 @@ util_replica_map_local(struct pool_set *set, unsigned repidx, int flags)
 		/* determine a hint address for mmap() */
 		addr = util_map_hint(rep->resvsize, 0);
 		if (addr == MAP_FAILED) {
-			ERR("cannot find a contiguous region of given size");
+			LOG(1, "cannot find a contiguous region of given size");
 			return -1;
 		}
 
@@ -2791,7 +2835,7 @@ util_replica_create_local(struct pool_set *set, unsigned repidx, int flags,
 	 * the first replica has to be mapped prior to remote ones so if
 	 * a replica is already mapped skip mapping creation
 	 */
-	if (PART(REP(set, repidx), 0).addr == NULL) {
+	if (PART(REP(set, repidx), 0)->addr == NULL) {
 		if (util_replica_map_local(set, repidx, flags) != 0) {
 			LOG(2, "replica #%u map failed", repidx);
 			return -1;
@@ -2868,13 +2912,24 @@ util_replica_close(struct pool_set *set, unsigned repidx)
 	struct pool_replica *rep = set->replica[repidx];
 
 	if (rep->remote == NULL) {
-		struct pool_set_part *part = &PART(rep, 0);
+		struct pool_set_part *part = PART(rep, 0);
 		if (!set->ignore_sds && part->addr != NULL &&
 				part->size != 0) {
-			/* XXX: DEEP DRAIN */
 			struct pool_hdr *hdr = part->addr;
 			RANGE_RW(hdr, sizeof(*hdr), part->is_dev_dax);
-			shutdown_state_clear_flag(&hdr->sds, part);
+			/*
+			 * deep drain will call msync on one page in each
+			 * part in replica to trigger WPQ flush.
+			 * This pages may have been marked as
+			 * undefined/inaccessible, but msyncing such memory
+			 * is not a bug, so as a workaround temporarily
+			 * disable error reporting.
+			 */
+			VALGRIND_DO_DISABLE_ERROR_REPORTING;
+			util_replica_deep_drain(part->addr, rep->repsize,
+				set, repidx);
+			VALGRIND_DO_ENABLE_ERROR_REPORTING;
+			shutdown_state_clear_dirty(&hdr->sds, rep);
 		}
 		for (unsigned p = 0; p < rep->nhdrs; p++)
 			util_unmap_hdr(&rep->part[p]);
@@ -3053,6 +3108,19 @@ err:
 }
 
 /*
+ * util_print_bad_files_cb -- (internal) callback printing names of pool files
+ *                            containing bad blocks
+ */
+static int
+util_print_bad_files_cb(struct part_file *pf, void *arg)
+{
+	if (!pf->is_remote && pf->part && pf->part->has_bad_blocks)
+		ERR("file contains bad blocks -- '%s'", pf->part->path);
+
+	return 0;
+}
+
+/*
  * util_pool_create_uuids -- create a new memory pool (set or a single file)
  *                           with given uuids
  *
@@ -3076,14 +3144,19 @@ util_pool_create_uuids(struct pool_set **setp, const char *path,
 	int flags = MAP_SHARED;
 	int oerrno;
 
+	int exists = util_file_exists(path);
+	if (exists < 0)
+		return -1;
+
 	/* check if file exists */
-	if (poolsize > 0 && os_access(path, F_OK) == 0) {
+	if (poolsize > 0 && exists) {
 		ERR("file %s already exists", path);
 		errno = EEXIST;
 		return -1;
 	}
 
-	int ret = util_poolset_create_set(setp, path, poolsize, minsize, 0);
+	int ret = util_poolset_create_set(setp, path, poolsize, minsize,
+			IGNORE_SDS(attr));
 	if (ret < 0) {
 		LOG(2, "cannot create pool set -- '%s'", path);
 		return -1;
@@ -3095,85 +3168,97 @@ util_pool_create_uuids(struct pool_set **setp, const char *path,
 
 	if (!remote && (set->options & OPTION_NOHDRS)) {
 		ERR(
-		"the NOHDRS poolset option is not supported for local poolsets");
-		util_poolset_free(set);
+			"the NOHDRS poolset option is not supported for local poolsets");
 		errno = EINVAL;
-		return -1;
+		goto err_poolset_free;
 	}
 
 	if ((attr == NULL) != ((set->options & OPTION_NOHDRS) != 0)) {
 		ERR(
-		"pool attributes are not supported for poolsets without headers (with the NOHDRS option)");
-		util_poolset_free(set);
+			"pool attributes are not supported for poolsets without headers (with the NOHDRS option)");
 		errno = EINVAL;
-		return -1;
+		goto err_poolset_free;
 	}
 
 	if (set->directory_based && ((set->options & OPTION_SINGLEHDR) == 0)) {
 		ERR(
-		"directory based pools are not supported for poolsets with headers (without SINGLEHDR option)");
-		util_poolset_free(set);
+			"directory based pools are not supported for poolsets with headers (without SINGLEHDR option)");
 		errno = EINVAL;
-		return -1;
+		goto err_poolset_free;
 	}
 
 	if (set->resvsize < minsize) {
-		ERR("reservation pool size %zu smaller than %zu", set->resvsize,
-			minsize);
-		util_poolset_free(set);
+		ERR("reservation pool size %zu smaller than %zu",
+			set->resvsize, minsize);
 		errno = EINVAL;
-		return -1;
+		goto err_poolset_free;
 	}
 
 	if (set->directory_based && set->poolsize == 0 &&
 			util_poolset_append_new_part(set, minsize) != 0) {
 		ERR("cannot create a new part in provided directories");
-		util_poolset_free(set);
-		return -1;
+		goto err_poolset_free;
+	}
+
+	if (attr != NULL &&
+	    (attr->features.compat & POOL_FEAT_CHECK_BAD_BLOCKS)) {
+		int bbs = badblocks_check_poolset(set, 1 /* create */);
+		if (bbs < 0) {
+			LOG(1,
+				"failed to check pool set for bad blocks -- '%s'",
+				path);
+			goto err_poolset_free;
+		}
+
+		if (bbs > 0) {
+			util_poolset_foreach_part_struct(set,
+							util_print_bad_files_cb,
+							NULL);
+			ERR(
+				"pool set contains bad blocks and cannot be created, run 'pmempool create --bad-blocks' utility to clear bad blocks and create a pool");
+			errno = EIO;
+			goto err_poolset_free;
+		}
 	}
 
 	if (set->poolsize < minsize) {
-		ERR("net pool size %zu smaller than %zu", set->poolsize,
-			minsize);
-		util_poolset_free(set);
+		ERR("net pool size %zu smaller than %zu",
+			set->poolsize, minsize);
 		errno = EINVAL;
-		return -1;
+		goto err_poolset_free;
 	}
 
 	if (remote) {
 		/* it is a remote replica - it cannot have replicas */
 		if (set->nreplicas > 1) {
 			LOG(2, "remote pool set cannot have replicas");
-			util_poolset_free(set);
 			errno = EINVAL;
-			return -1;
+			goto err_poolset_free;
 		}
 
 		/* check if poolset options match remote pool attributes */
 		if (attr != NULL &&
 				((set->options & OPTION_SINGLEHDR) == 0) !=
-				((attr->incompat_features &
+				((attr->features.incompat &
 						POOL_FEAT_SINGLEHDR) == 0)) {
 			ERR(
-			"pool incompat feature flags and remote poolset options do not match");
+				"pool incompat feature flags and remote poolset options do not match");
 			errno = EINVAL;
-			return -1;
+			goto err_poolset_free;
 		}
 	}
 
 	if (!can_have_rep && set->nreplicas > 1) {
 		ERR("replication not supported");
-		util_poolset_free(set);
 		errno = ENOTSUP;
-		return -1;
+		goto err_poolset_free;
 	}
 
 	if (set->remote && util_remote_load()) {
 		ERR(
-		"the pool set requires a remote replica, but the '%s' library cannot be loaded",
+			"the pool set requires a remote replica, but the '%s' library cannot be loaded",
 			LIBRARY_REMOTE);
-		util_poolset_free(set);
-		return -1;
+		goto err_poolset_free;
 	}
 
 	set->zeroed = 1;
@@ -3270,6 +3355,12 @@ err_poolset:
 	util_poolset_close(set, DELETE_CREATED_PARTS);
 	errno = oerrno;
 	return -1;
+
+err_poolset_free:
+	oerrno = errno;
+	util_poolset_free(set);
+	errno = oerrno;
+	return -1;
 }
 
 /*
@@ -3305,10 +3396,7 @@ util_replica_open_local(struct pool_set *set, unsigned repidx, int flags)
 	size_t hdrsize = (set->options & (OPTION_SINGLEHDR | OPTION_NOHDRS)) ?
 			0 : Mmap_align;
 	struct pool_replica *rep = set->replica[repidx];
-	void *addr = rep->mapaddr;
-
-	/* mapaddr can be set for master replica only */
-	ASSERT(repidx == 0 || addr == NULL);
+	void *addr = NULL;
 
 	do {
 		retry_for_contiguous_addr = 0;
@@ -3317,7 +3405,7 @@ util_replica_open_local(struct pool_set *set, unsigned repidx, int flags)
 		if (addr == NULL)
 			addr = util_map_hint(rep->resvsize, 0);
 		if (addr == MAP_FAILED) {
-			ERR("cannot find a contiguous region of given size");
+			LOG(1, "cannot find a contiguous region of given size");
 			return -1;
 		}
 
@@ -3351,8 +3439,19 @@ util_replica_open_local(struct pool_set *set, unsigned repidx, int flags)
 		 * (aligned to memory mapping granularity)
 		 */
 		for (unsigned p = 1; p < rep->nparts; p++) {
+			struct pool_set_part *part = &rep->part[p];
+			size_t targetsize = mapsize +
+				ALIGN_DOWN(part->filesize - hdrsize,
+				part->alignment);
+			if (targetsize > rep->resvsize) {
+				ERR(
+					"pool mapping failed - address space reservation too small");
+				errno = EINVAL;
+				goto err;
+			}
+
 			/* map data part */
-			if (util_map_part(&rep->part[p], addr, 0, hdrsize,
+			if (util_map_part(part, addr, 0, hdrsize,
 					flags | MAP_FIXED, 0) != 0) {
 				/*
 				 * if we can't map the part at the address we
@@ -3378,12 +3477,11 @@ util_replica_open_local(struct pool_set *set, unsigned repidx, int flags)
 				goto err;
 			}
 
-			VALGRIND_REGISTER_PMEM_FILE(rep->part[p].fd,
-				rep->part[p].addr, rep->part[p].size,
-				hdrsize);
+			VALGRIND_REGISTER_PMEM_FILE(part->fd,
+				part->addr, part->size, hdrsize);
 
-			mapsize += rep->part[p].size;
-			addr = (char *)addr + rep->part[p].size;
+			mapsize += part->size;
+			addr = (char *)addr + part->size;
 		}
 	} while (retry_for_contiguous_addr);
 
@@ -3525,7 +3623,7 @@ util_replica_set_attr(struct pool_replica *rep,
 		util_convert2le_hdr(hdrp);
 
 		util_checksum(hdrp, sizeof(*hdrp), &hdrp->checksum,
-			1, POOL_HDR_CSUM_END_OFF);
+			1, POOL_HDR_CSUM_END_OFF(hdrp));
 
 		/* store pool's header */
 		util_persist_auto(rep->is_pmem, hdrp, sizeof(*hdrp));
@@ -3555,9 +3653,9 @@ util_pool_hdr2attr(struct pool_attr *attr, struct pool_hdr *hdr)
 	memset(attr, 0, sizeof(*attr));
 	memcpy(attr->signature, hdr->signature, POOL_HDR_SIG_LEN);
 	attr->major = hdr->major;
-	attr->compat_features = hdr->compat_features;
-	attr->incompat_features = hdr->incompat_features;
-	attr->ro_compat_features = hdr->ro_compat_features;
+	attr->features.compat = hdr->features.compat;
+	attr->features.incompat = hdr->features.incompat;
+	attr->features.ro_compat = hdr->features.ro_compat;
 	memcpy(attr->poolset_uuid, hdr->poolset_uuid, POOL_HDR_UUID_LEN);
 }
 
@@ -3572,9 +3670,9 @@ util_pool_attr2hdr(struct pool_hdr *hdr, const struct pool_attr *attr)
 	ASSERTne(attr, NULL);
 	memcpy(hdr->signature, attr->signature, POOL_HDR_SIG_LEN);
 	hdr->major = attr->major;
-	hdr->compat_features = attr->compat_features;
-	hdr->incompat_features = attr->incompat_features;
-	hdr->ro_compat_features = attr->ro_compat_features;
+	hdr->features.compat = attr->features.compat;
+	hdr->features.incompat = attr->features.incompat;
+	hdr->features.ro_compat = attr->features.ro_compat;
 }
 
 /*
@@ -3610,6 +3708,9 @@ util_replica_check(struct pool_set *set, const struct pool_attr *attr)
 {
 	LOG(3, "set %p attr %p", set, attr);
 
+	/* read shutdown state toggle from header */
+	set->ignore_sds |= IGNORE_SDS(HDR(REP(set, 0), 0));
+
 	for (unsigned r = 0; r < set->nreplicas; r++) {
 		struct pool_replica *rep = set->replica[r];
 		for (unsigned p = 0; p < rep->nhdrs; p++) {
@@ -3635,21 +3736,36 @@ util_replica_check(struct pool_set *set, const struct pool_attr *attr)
 			shutdown_state_init(&sds, NULL);
 			for (unsigned p = 0; p < rep->nparts; p++) {
 				if (shutdown_state_add_part(&sds,
-						PART(rep, p).path, NULL))
+						PART(rep, p)->path, NULL))
 					return -1;
 			}
 
 			ASSERTne(rep->nhdrs, 0);
 			ASSERTne(rep->nparts, 0);
 			if (shutdown_state_check(&sds, &HDR(rep, 0)->sds,
-					&PART(rep, 0))) {
+					rep)) {
 				LOG(2, "ADR failure detected");
 				errno = EINVAL;
 				return -1;
 			}
-			shutdown_state_set_flag(&HDR(rep, 0)->sds,
-				&PART(rep, 0));
+			shutdown_state_set_dirty(&HDR(rep, 0)->sds,
+				rep);
 		}
+	}
+	return 0;
+}
+
+/*
+ * util_pool_has_device_dax -- (internal) check if poolset has any device dax
+ */
+int
+util_pool_has_device_dax(struct pool_set *set)
+{
+	for (unsigned r = 0; r < set->nreplicas; ++r) {
+		struct pool_replica *rep = REP(set, r);
+		/* either all the parts must be Device DAX or none */
+		if (PART(rep, 0)->is_dev_dax)
+			return 1;
 	}
 	return 0;
 }
@@ -3657,24 +3773,54 @@ util_replica_check(struct pool_set *set, const struct pool_attr *attr)
 /*
  * util_pool_open_nocheck -- open a memory pool (set or a single file)
  *
- * This function opens opens a pool set without checking the header values.
+ * This function opens a pool set without checking the header values.
  */
 int
-util_pool_open_nocheck(struct pool_set *set, int cow)
+util_pool_open_nocheck(struct pool_set *set, unsigned flags)
 {
-	LOG(3, "set %p cow %i", set, cow);
+	LOG(3, "set %p flags 0x%x", set, flags);
 
-	if (cow && set->replica[0]->part[0].is_dev_dax) {
+	int cow = flags & POOL_OPEN_COW;
+
+	if (cow && util_pool_has_device_dax(set)) {
 		ERR("device dax cannot be mapped privately");
 		errno = ENOTSUP;
 		return -1;
 	}
 
-	int flags = cow ? MAP_PRIVATE|MAP_NORESERVE : MAP_SHARED;
+	int mmap_flags = cow ? MAP_PRIVATE|MAP_NORESERVE : MAP_SHARED;
 	int oerrno;
 
 	ASSERTne(set, NULL);
 	ASSERT(set->nreplicas > 0);
+
+	if (flags & POOL_OPEN_CHECK_BAD_BLOCKS) {
+		/* check if any bad block recovery file exists */
+		if (badblocks_recovery_file_exists(set)) {
+			ERR(
+				"error: a bad block recovery file exists, run 'pmempool sync --bad-blocks' utility to try to recover the pool");
+			errno = EINVAL;
+			return -1;
+		}
+
+		int bbs = badblocks_check_poolset(set, 0 /* not create */);
+		if (bbs < 0) {
+			LOG(1, "failed to check pool set for bad blocks");
+			return -1;
+		}
+
+		if (bbs > 0) {
+			if (flags & POOL_OPEN_IGNORE_BAD_BLOCKS) {
+				LOG(1,
+					"WARNING: pool set contains bad blocks, ignoring");
+			} else {
+				ERR(
+					"pool set contains bad blocks and cannot be opened, run 'pmempool sync --bad-blocks' utility to try to recover the pool");
+				errno = EIO;
+				return -1;
+			}
+		}
+	}
 
 	if (set->remote && util_remote_load()) {
 		ERR("the pool set requires a remote replica, "
@@ -3690,7 +3836,7 @@ util_pool_open_nocheck(struct pool_set *set, int cow)
 	set->rdonly = 0;
 
 	for (unsigned r = 0; r < set->nreplicas; r++) {
-		if (util_replica_open(set, r, flags) != 0) {
+		if (util_replica_open(set, r, mmap_flags) != 0) {
 			LOG(2, "replica #%u open failed", r);
 			goto err_replica;
 		}
@@ -3720,50 +3866,139 @@ err_poolset:
 }
 
 /*
+ * util_read_compat_features -- (internal) read compat features from the header
+ */
+static int
+util_read_compat_features(struct pool_set *set, uint32_t *compat_features)
+{
+	LOG(3, "set %p pcompat_features %p", set, compat_features);
+
+	*compat_features = 0;
+
+	for (unsigned r = 0; r < set->nreplicas; r++) {
+		struct pool_replica *rep = set->replica[r];
+
+		if (rep->remote)
+			continue;
+
+		for (unsigned p = 0; p < rep->nparts; p++) {
+			struct pool_set_part *part = &rep->part[p];
+
+			if (util_part_open(part, 0, 0 /* create */)) {
+				LOG(1, "!cannot open the part -- \"%s\"",
+					part->path);
+				/* try to open the next part */
+				continue;
+			}
+
+			if (util_map_hdr(part, MAP_SHARED, 0) != 0) {
+				LOG(1, "header mapping failed -- \"%s\"",
+					part->path);
+				util_part_fdclose(part);
+				return -1;
+			}
+
+			struct pool_hdr *hdrp = part->hdr;
+			*compat_features = hdrp->features.compat;
+
+			util_unmap_hdr(part);
+			util_part_fdclose(part);
+
+			/* exit on the first successfully opened part */
+			return 0;
+		}
+	}
+
+	return 0;
+}
+
+/*
  * util_pool_open -- open a memory pool (set or a single file)
  *
  * This routine does all the work, but takes a rdonly flag so internal
  * calls can map a read-only pool if required.
  */
 int
-util_pool_open(struct pool_set **setp, const char *path, int cow,
-	size_t minpartsize, const struct pool_attr *attr, unsigned *nlanes,
-	int ignore_sds, void *addr)
+util_pool_open(struct pool_set **setp, const char *path, size_t minpartsize,
+	const struct pool_attr *attr, unsigned *nlanes, void *addr,
+	unsigned flags)
 {
-	LOG(3, "setp %p path %s cow %d minpartsize %zu attr %p nlanes %p "
-		"ignore_sds %d addr %p", setp, path, cow, minpartsize, attr,
-		nlanes, ignore_sds, addr);
+	LOG(3, "setp %p path %s minpartsize %zu attr %p nlanes %p "
+		"addr %p flags 0x%x ", setp, path, minpartsize, attr, nlanes,
+		addr, flags);
 
-	int flags = cow ? MAP_PRIVATE|MAP_NORESERVE : MAP_SHARED;
+	int cow = flags & POOL_OPEN_COW;
+	int mmap_flags = cow ? MAP_PRIVATE|MAP_NORESERVE : MAP_SHARED;
 	int oerrno;
 
 	/* do not check minsize */
-	int ret = util_poolset_create_set(setp, path, 0, 0, ignore_sds);
+	int ret = util_poolset_create_set(setp, path, 0, 0,
+						flags & POOL_OPEN_IGNORE_SDS);
 	if (ret < 0) {
 		LOG(2, "cannot open pool set -- '%s'", path);
 		return -1;
 	}
 
-	/* configure base mapping address for master replica */
-	(*setp)->replica[0]->mapaddr = addr;
+	if ((*setp)->replica[0]->nparts == 0) {
+		errno = ENOENT;
+		ERR("!no parts in replicas");
+		return -1;
+	}
 
 	if (cow && (*setp)->replica[0]->part[0].is_dev_dax) {
 		ERR("device dax cannot be mapped privately");
 		errno = ENOTSUP;
-		util_poolset_free(*setp);
-		return -1;
+		goto err_poolset_free;
 	}
 
 	struct pool_set *set = *setp;
 
 	ASSERT(set->nreplicas > 0);
 
+	uint32_t compat_features;
+
+	if (util_read_compat_features(set, &compat_features)) {
+		LOG(1, "reading compat features failed");
+		goto err_poolset_free;
+	}
+
+	if (compat_features & POOL_FEAT_CHECK_BAD_BLOCKS) {
+		/* check if any bad block recovery file exists */
+		if (badblocks_recovery_file_exists(set)) {
+			ERR(
+				"error: a bad block recovery file exists, run 'pmempool sync --bad-blocks' utility to try to recover the pool");
+			errno = EINVAL;
+			goto err_poolset_free;
+		}
+
+		int bbs = badblocks_check_poolset(set, 0 /* not create */);
+		if (bbs < 0) {
+			LOG(1,
+				"failed to check pool set for bad blocks -- '%s'",
+				path);
+			goto err_poolset_free;
+		}
+
+		if (bbs > 0) {
+			if (flags & POOL_OPEN_IGNORE_BAD_BLOCKS) {
+				LOG(1,
+					"WARNING: pool set contains bad blocks, ignoring -- '%s'",
+					path);
+			} else {
+				ERR(
+					"pool set contains bad blocks and cannot be opened, run 'pmempool sync --bad-blocks' utility to try to recover the pool -- '%s'",
+					path);
+				errno = EIO;
+				goto err_poolset_free;
+			}
+		}
+	}
+
 	if (set->remote && util_remote_load()) {
-		ERR("the pool set requires a remote replica, "
-			"but the '%s' library cannot be loaded",
+		ERR(
+			"the pool set requires a remote replica, but the '%s' library cannot be loaded",
 			LIBRARY_REMOTE);
-		util_poolset_free(*setp);
-		return -1;
+		goto err_poolset_free;
 	}
 
 	ret = util_poolset_files_local(set, minpartsize, 0);
@@ -3771,7 +4006,7 @@ util_pool_open(struct pool_set **setp, const char *path, int cow,
 		goto err_poolset;
 
 	for (unsigned r = 0; r < set->nreplicas; r++) {
-		if (util_replica_open(set, r, flags) != 0) {
+		if (util_replica_open(set, r, mmap_flags) != 0) {
 			LOG(2, "replica #%u open failed", r);
 			goto err_replica;
 		}
@@ -3802,6 +4037,12 @@ err_replica:
 err_poolset:
 	oerrno = errno;
 	util_poolset_close(set, DO_NOT_DELETE_PARTS);
+	errno = oerrno;
+	return -1;
+
+err_poolset_free:
+	oerrno = errno;
+	util_poolset_free(*setp);
 	errno = oerrno;
 	return -1;
 }
@@ -3840,6 +4081,32 @@ util_pool_open_remote(struct pool_set **setp, const char *path, int cow,
 	if (set->nreplicas > 1) {
 		LOG(2, "remote pool set cannot have replicas");
 		goto err_poolset;
+	}
+
+	uint32_t compat_features;
+
+	if (util_read_compat_features(set, &compat_features)) {
+		LOG(1, "reading compat features failed");
+		goto err_poolset;
+	}
+
+	if (compat_features & POOL_FEAT_CHECK_BAD_BLOCKS) {
+		/* check if there are any bad blocks */
+		int bbs = badblocks_check_poolset(set, 0 /* not create */);
+		if (bbs < 0) {
+			LOG(1,
+				"failed to check the remote replica for bad blocks -- '%s'",
+				path);
+			goto err_poolset;
+		}
+
+		if (bbs > 0) {
+			ERR(
+				"remote replica contains bad blocks and cannot be opened, run 'pmempool sync --bad-blocks' utility to recreate it -- '%s'",
+				path);
+			errno = EIO;
+			goto err_poolset;
+		}
 	}
 
 	ret = util_poolset_files_local(set, minpartsize, 0);
@@ -3902,7 +4169,11 @@ err_poolset:
 int
 util_is_poolset_file(const char *path)
 {
-	if (util_file_is_device_dax(path))
+	enum file_type type = util_file_get_type(path);
+	if (type < 0)
+		return -1;
+
+	if (type == TYPE_DEVDAX)
 		return 0;
 
 	int fd = util_file_open(path, NULL, 0, O_RDONLY);
@@ -3933,6 +4204,46 @@ out:
 	os_close(fd);
 	return ret;
 }
+/*
+ * util_poolset_foreach_part_struct -- walk through all poolset file parts
+ *                                  of the given set
+ *
+ * Stops processing if callback returns non-zero value.
+ * The value returned by callback is returned to the caller.
+ */
+int
+util_poolset_foreach_part_struct(struct pool_set *set,
+	int (*callback)(struct part_file *pf, void *arg), void *arg)
+{
+	LOG(3, "set %p callback %p arg %p", set, callback, arg);
+
+	ASSERTne(callback, NULL);
+
+	int ret;
+
+	for (unsigned r = 0; r < set->nreplicas; r++) {
+		struct part_file cbdata;
+		if (set->replica[r]->remote) {
+			cbdata.is_remote = 1;
+			cbdata.remote = set->replica[r]->remote;
+			cbdata.part = NULL;
+			ret = (*callback)(&cbdata, arg);
+			if (ret)
+				return ret;
+		} else {
+			cbdata.is_remote = 0;
+			cbdata.remote = NULL;
+			for (unsigned p = 0; p < set->replica[r]->nparts; p++) {
+				cbdata.part = &set->replica[r]->part[p];
+				ret = (*callback)(&cbdata, arg);
+				if (ret)
+					return ret;
+			}
+		}
+	}
+
+	return 0;
+}
 
 /*
  * util_poolset_foreach_part -- walk through all poolset file parts
@@ -3946,39 +4257,28 @@ out:
  */
 int
 util_poolset_foreach_part(const char *path,
-	int (*cb)(struct part_file *pf, void *arg), void *arg)
+	int (*callback)(struct part_file *pf, void *arg), void *arg)
 {
+	LOG(3, "path %s callback %p arg %p", path, callback, arg);
+
+	ASSERTne(callback, NULL);
+
 	int fd = os_open(path, O_RDONLY);
-	if (fd < 0)
+	if (fd < 0) {
+		ERR("!open: path \"%s\"", path);
 		return -1;
+	}
 
 	struct pool_set *set;
 	int ret = util_poolset_parse(&set, path, fd);
 	if (ret) {
+		ERR("util_poolset_parse failed -- '%s'", path);
 		ret = -1;
 		goto err_close;
 	}
 
-	for (unsigned r = 0; r < set->nreplicas; r++) {
-		struct part_file part;
-		if (set->replica[r]->remote) {
-			part.is_remote = 1;
-			part.node_addr = set->replica[r]->remote->node_addr;
-			part.pool_desc = set->replica[r]->remote->pool_desc;
-			ret = cb(&part, arg);
-			if (ret)
-				goto out;
-		} else {
-			part.is_remote = 0;
-			for (unsigned p = 0; p < set->replica[r]->nparts; p++) {
-				part.path = set->replica[r]->part[p].path;
-				ret = cb(&part, arg);
-				if (ret)
-					goto out;
-			}
-		}
-	}
-out:
+	ret = util_poolset_foreach_part_struct(set, callback, arg);
+
 	/*
 	 * Make sure callback does not return -1,
 	 * because this value is reserved for parsing
@@ -3986,6 +4286,7 @@ out:
 	 */
 	ASSERTne(ret, -1);
 	util_poolset_free(set);
+
 err_close:
 	os_close(fd);
 	return ret;
@@ -4068,7 +4369,7 @@ util_replica_deep_common(const void *addr, size_t len, struct pool_set *set,
 		LOG(15, "perform deep flushing for replica %u "
 			"part %p, addr %p, len %lu",
 			replica_id, part, (void *)range_start, range_len);
-		if (os_part_deep_common(part, (void *)range_start,
+		if (os_part_deep_common(rep, p, (void *)range_start,
 				range_len, flush)) {
 			LOG(1, "os_part_deep_common(%p, %p, %lu)",
 				part, (void *)range_start, range_len);

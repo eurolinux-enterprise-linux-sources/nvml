@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -68,12 +68,12 @@ static const struct pmempool_sync_context pmempool_sync_default = {
 /*
  * help_str -- string for help message
  */
-static const char *help_str =
+static const char * const help_str =
 "Check consistency of a pool\n"
 "\n"
 "Common options:\n"
-"  -d, --dry-run        do not apply changes, only check for viability of"
-" synchronization\n"
+"  -b, --bad-blocks     fix bad blocks - it requires creating or reading special recovery files\n"
+"  -d, --dry-run        do not apply changes, only check for viability of synchronization\n"
 "  -v, --verbose        increase verbosity level\n"
 "  -h, --help           display this help and exit\n"
 "\n"
@@ -84,6 +84,7 @@ static const char *help_str =
  * long_options -- command line options
  */
 static const struct option long_options[] = {
+	{"bad-blocks",	no_argument,		NULL,	'b'},
 	{"dry-run",	no_argument,		NULL,	'd'},
 	{"help",	no_argument,		NULL,	'h'},
 	{"verbose",	no_argument,		NULL,	'v'},
@@ -94,7 +95,7 @@ static const struct option long_options[] = {
  * print_usage -- (internal) print application usage short description
  */
 static void
-print_usage(char *appname)
+print_usage(const char *appname)
 {
 	printf("usage: %s sync [<options>] <poolset_file>\n", appname);
 }
@@ -103,7 +104,7 @@ print_usage(char *appname)
  * print_version -- (internal) print version string
  */
 static void
-print_version(char *appname)
+print_version(const char *appname)
 {
 	printf("%s %s\n", appname, SRCVERSION);
 }
@@ -112,7 +113,7 @@ print_version(char *appname)
  * pmempool_sync_help -- print help message for the sync command
  */
 void
-pmempool_sync_help(char *appname)
+pmempool_sync_help(const char *appname)
 {
 	print_usage(appname);
 	print_version(appname);
@@ -123,15 +124,18 @@ pmempool_sync_help(char *appname)
  * pmempool_sync_parse_args -- (internal) parse command line arguments
  */
 static int
-pmempool_sync_parse_args(struct pmempool_sync_context *ctx, char *appname,
+pmempool_sync_parse_args(struct pmempool_sync_context *ctx, const char *appname,
 		int argc, char *argv[])
 {
 	int opt;
-	while ((opt = getopt_long(argc, argv, "dhv",
+	while ((opt = getopt_long(argc, argv, "bdhv",
 			long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'd':
-			ctx->flags = PMEMPOOL_DRY_RUN;
+			ctx->flags |= PMEMPOOL_SYNC_DRY_RUN;
+			break;
+		case 'b':
+			ctx->flags |= PMEMPOOL_SYNC_FIX_BAD_BLOCKS;
 			break;
 		case 'h':
 			pmempool_sync_help(appname);
@@ -159,7 +163,7 @@ pmempool_sync_parse_args(struct pmempool_sync_context *ctx, char *appname,
  * pmempool_sync_func -- main function for the sync command
  */
 int
-pmempool_sync_func(char *appname, int argc, char *argv[])
+pmempool_sync_func(const char *appname, int argc, char *argv[])
 {
 	int ret = 0;
 	struct pmempool_sync_context ctx = pmempool_sync_default;

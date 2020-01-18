@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -54,7 +54,6 @@
 #include "output.h"
 #include "libpmemblk.h"
 #include "libpmemlog.h"
-#include "libpmemcto.h"
 #include "libpmempool.h"
 
 
@@ -79,6 +78,7 @@ struct pmempool_create {
 	int force;
 	char *layout;
 	struct options *opts;
+	int clearbadblocks;
 };
 
 /*
@@ -96,6 +96,7 @@ static const struct pmempool_create pmempool_create_default = {
 	.write_btt_layout = 0,
 	.force		= 0,
 	.layout		= NULL,
+	.clearbadblocks	= 0,
 	.params		= {
 		.type	= PMEM_POOL_TYPE_UNKNOWN,
 		.size	= 0,
@@ -106,7 +107,7 @@ static const struct pmempool_create pmempool_create_default = {
 /*
  * help_str -- string for help message
  */
-static const char *help_str =
+static const char * const help_str =
 "Create pmem pool of specified size, type and name\n"
 "\n"
 "Common options:\n"
@@ -114,6 +115,7 @@ static const char *help_str =
 "  -M, --max-size       use maximum available space on file system\n"
 "  -m, --mode <octal>   set permissions to <octal> (the default is 0664)\n"
 "  -i, --inherit <file> take required parameters from specified pool file\n"
+"  -b, --clearbadblocks clear bad blocks in existing files\n"
 "  -f, --force          remove the pool first\n"
 "  -v, --verbose        increase verbosity level\n"
 "  -h, --help           display this help and exit\n"
@@ -121,7 +123,7 @@ static const char *help_str =
 "Options for PMEMBLK:\n"
 "  -w, --write-layout force writing the BTT layout\n"
 "\n"
-"Options for PMEMOBJ and PMEMCTO:\n"
+"Options for PMEMOBJ:\n"
 "  -l, --layout <name>  layout name stored in pool's header\n"
 "\n"
 "For complete documentation see %s-create(1) manual page.\n"
@@ -138,9 +140,9 @@ static const struct option long_options[] = {
 	{"inherit",	required_argument,	NULL,	'i' | OPT_ALL},
 	{"mode",	required_argument,	NULL,	'm' | OPT_ALL},
 	{"write-layout", no_argument,		NULL,	'w' | OPT_BLK},
-	{"layout",	required_argument,	NULL,	'l' | OPT_OBJ |
-								OPT_CTO},
+	{"layout",	required_argument,	NULL,	'l' | OPT_OBJ},
 	{"force",	no_argument,		NULL,	'f' | OPT_ALL},
+	{"clearbadblocks", no_argument,		NULL,	'b' | OPT_ALL},
 	{NULL,		0,			NULL,	 0 },
 };
 
@@ -148,9 +150,9 @@ static const struct option long_options[] = {
  * print_usage -- print application usage short description
  */
 static void
-print_usage(char *appname)
+print_usage(const char *appname)
 {
-	printf("Usage: %s create [<args>] <blk|log|obj|cto> [<bsize>] <file>\n",
+	printf("Usage: %s create [<args>] <blk|log|obj> [<bsize>] <file>\n",
 			appname);
 }
 
@@ -158,7 +160,7 @@ print_usage(char *appname)
  * print_version -- print version string
  */
 static void
-print_version(char *appname)
+print_version(const char *appname)
 {
 	printf("%s %s\n", appname, SRCVERSION);
 }
@@ -167,7 +169,7 @@ print_version(char *appname)
  * pmempool_create_help -- print help message for create command
  */
 void
-pmempool_create_help(char *appname)
+pmempool_create_help(const char *appname)
 {
 	print_usage(appname);
 	print_version(appname);
@@ -188,24 +190,6 @@ pmempool_create_obj(struct pmempool_create *pcp)
 	}
 
 	pmemobj_close(pop);
-
-	return 0;
-}
-
-/*
- * pmempool_create_cto -- create pmem cto pool
- */
-static int
-pmempool_create_cto(struct pmempool_create *pcp)
-{
-	PMEMctopool *ptp = pmemcto_create(pcp->fname, pcp->layout,
-			pcp->params.size, pcp->params.mode);
-	if (!ptp) {
-		outv_err("'%s' -- %s\n", pcp->fname, pmemcto_errormsg());
-		return -1;
-	}
-
-	pmemcto_close(ptp);
 
 	return 0;
 }
@@ -336,9 +320,6 @@ print_pool_params(struct pmem_pool_params *params)
 	case PMEM_POOL_TYPE_OBJ:
 		outv(1, "\tlayout: '%s'\n", params->obj.layout);
 		break;
-	case PMEM_POOL_TYPE_CTO:
-		outv(1, "\tlayout: '%s'\n", params->cto.layout);
-		break;
 	default:
 		break;
 	}
@@ -381,11 +362,11 @@ inherit_pool_params(struct pmempool_create *pcp)
  * pmempool_create_parse_args -- parse command line args
  */
 static int
-pmempool_create_parse_args(struct pmempool_create *pcp, char *appname,
+pmempool_create_parse_args(struct pmempool_create *pcp, const char *appname,
 		int argc, char *argv[], struct options *opts)
 {
 	int opt, ret;
-	while ((opt = util_options_getopt(argc, argv, "vhi:s:Mm:l:wf",
+	while ((opt = util_options_getopt(argc, argv, "vhi:s:Mm:l:wfb",
 			opts)) != -1) {
 		switch (opt) {
 		case 'v':
@@ -427,6 +408,9 @@ pmempool_create_parse_args(struct pmempool_create *pcp, char *appname,
 		case 'f':
 			pcp->force = 1;
 			break;
+		case 'b':
+			pcp->clearbadblocks = 1;
+			break;
 		default:
 			print_usage(appname);
 			return -1;
@@ -456,7 +440,7 @@ pmempool_create_parse_args(struct pmempool_create *pcp, char *appname,
  * pmempool_create_func -- main function for create command
  */
 int
-pmempool_create_func(char *appname, int argc, char *argv[])
+pmempool_create_func(const char *appname, int argc, char *argv[])
 {
 	int ret = 0;
 	struct pmempool_create pc = pmempool_create_default;
@@ -473,7 +457,11 @@ pmempool_create_func(char *appname, int argc, char *argv[])
 
 	umask(0);
 
-	pc.fexists = os_access(pc.fname, F_OK) == 0;
+	int exists = util_file_exists(pc.fname);
+	if (exists < 0)
+		return -1;
+
+	pc.fexists = exists;
 	int is_poolset = util_is_poolset_file(pc.fname) == 1;
 
 	if (pc.inherit_fname)  {
@@ -549,8 +537,7 @@ pmempool_create_func(char *appname, int argc, char *argv[])
 		return -1;
 	}
 
-	size_t max_layout = pc.params.type == PMEM_POOL_TYPE_OBJ ?
-			PMEMOBJ_MAX_LAYOUT : PMEMCTO_MAX_LAYOUT;
+	size_t max_layout = PMEMOBJ_MAX_LAYOUT;
 
 	if (pc.layout && strlen(pc.layout) >= max_layout) {
 		outv_err("Layout name is to long, maximum number of characters"
@@ -580,18 +567,6 @@ pmempool_create_func(char *appname, int argc, char *argv[])
 				strncpy(pc.params.obj.layout, pc.layout,
 						len - 1);
 				pc.params.obj.layout[len - 1] = '\0';
-			}
-			break;
-		case PMEM_POOL_TYPE_CTO:
-			if (!pc.layout) {
-				memcpy(pc.params.cto.layout,
-					pc.inherit_params.cto.layout,
-					sizeof(pc.params.cto.layout));
-			} else {
-				size_t len = sizeof(pc.params.cto.layout);
-				strncpy(pc.params.cto.layout, pc.layout,
-						len - 1);
-				pc.params.cto.layout[len - 1] = '\0';
 			}
 			break;
 		default:
@@ -640,6 +615,16 @@ pmempool_create_func(char *appname, int argc, char *argv[])
 	outv(1, "Creating pool: %s\n", pc.fname);
 	print_pool_params(&pc.params);
 
+	if (pc.clearbadblocks) {
+		int ret = util_pool_clear_badblocks(pc.fname,
+						1 /* ignore non-existing */);
+		if (ret) {
+			outv_err("'%s' -- clearing bad blocks failed\n",
+					pc.fname);
+			return -1;
+		}
+	}
+
 	switch (pc.params.type) {
 	case PMEM_POOL_TYPE_BLK:
 		ret = pmempool_create_blk(&pc);
@@ -649,9 +634,6 @@ pmempool_create_func(char *appname, int argc, char *argv[])
 		break;
 	case PMEM_POOL_TYPE_OBJ:
 		ret = pmempool_create_obj(&pc);
-		break;
-	case PMEM_POOL_TYPE_CTO:
-		ret = pmempool_create_cto(&pc);
 		break;
 	default:
 		ret = -1;

@@ -89,9 +89,9 @@ void
 util_convert2le_hdr(struct pool_hdr *hdrp)
 {
 	hdrp->major = htole32(hdrp->major);
-	hdrp->compat_features = htole32(hdrp->compat_features);
-	hdrp->incompat_features = htole32(hdrp->incompat_features);
-	hdrp->ro_compat_features = htole32(hdrp->ro_compat_features);
+	hdrp->features.compat = htole32(hdrp->features.compat);
+	hdrp->features.incompat = htole32(hdrp->features.incompat);
+	hdrp->features.ro_compat = htole32(hdrp->features.ro_compat);
 	hdrp->arch_flags.alignment_desc =
 		htole64(hdrp->arch_flags.alignment_desc);
 	hdrp->arch_flags.machine = htole16(hdrp->arch_flags.machine);
@@ -106,9 +106,9 @@ void
 util_convert2h_hdr_nocheck(struct pool_hdr *hdrp)
 {
 	hdrp->major = le32toh(hdrp->major);
-	hdrp->compat_features = le32toh(hdrp->compat_features);
-	hdrp->incompat_features = le32toh(hdrp->incompat_features);
-	hdrp->ro_compat_features = le32toh(hdrp->ro_compat_features);
+	hdrp->features.compat = le32toh(hdrp->features.compat);
+	hdrp->features.incompat = le32toh(hdrp->features.incompat);
+	hdrp->features.ro_compat = le32toh(hdrp->features.ro_compat);
 	hdrp->crtime = le64toh(hdrp->crtime);
 	hdrp->arch_flags.machine = le16toh(hdrp->arch_flags.machine);
 	hdrp->arch_flags.alignment_desc =
@@ -157,43 +157,214 @@ util_check_arch_flags(const struct arch_flags *arch_flags)
 }
 
 /*
+ * util_get_unknown_features -- filter out unknown features flags
+ */
+features_t
+util_get_unknown_features(features_t features, features_t known)
+{
+	features_t unknown;
+	unknown.compat = util_get_not_masked_bits(
+			features.compat, known.compat);
+	unknown.incompat = util_get_not_masked_bits(
+			features.incompat, known.incompat);
+	unknown.ro_compat = util_get_not_masked_bits(
+			features.ro_compat, known.ro_compat);
+	return unknown;
+}
+
+/*
  * util_feature_check -- check features masks
  */
 int
-util_feature_check(struct pool_hdr *hdrp, uint32_t incompat,
-			uint32_t ro_compat, uint32_t compat)
+util_feature_check(struct pool_hdr *hdrp, features_t known)
 {
-	LOG(3, "hdrp %p incompat %#x ro_compat %#x compat %#x",
-			hdrp, incompat, ro_compat, compat);
+	LOG(3, "hdrp %p features {incompat %#x ro_compat %#x compat %#x}",
+			hdrp,
+			known.incompat, known.ro_compat, known.compat);
 
-#define GET_NOT_MASKED_BITS(x, mask) ((x) & ~(mask))
-
-	uint32_t ubits;	/* unsupported bits */
+	features_t unknown = util_get_unknown_features(hdrp->features, known);
 
 	/* check incompatible ("must support") features */
-	ubits = GET_NOT_MASKED_BITS(hdrp->incompat_features, incompat);
-	if (ubits) {
+	if (unknown.incompat) {
 		ERR("unsafe to continue due to unknown incompat "\
-							"features: %#x", ubits);
+				"features: %#x", unknown.incompat);
 		errno = EINVAL;
 		return -1;
 	}
 
 	/* check RO-compatible features (force RO if unsupported) */
-	ubits = GET_NOT_MASKED_BITS(hdrp->ro_compat_features, ro_compat);
-	if (ubits) {
+	if (unknown.ro_compat) {
 		ERR("switching to read-only mode due to unknown ro_compat "\
-							"features: %#x", ubits);
+				"features: %#x", unknown.ro_compat);
 		return 0;
 	}
 
 	/* check compatible ("may") features */
-	ubits = GET_NOT_MASKED_BITS(hdrp->compat_features, compat);
-	if (ubits) {
-		LOG(3, "ignoring unknown compat features: %#x", ubits);
+	if (unknown.compat) {
+		LOG(3, "ignoring unknown compat features: %#x", unknown.compat);
 	}
 
-#undef	GET_NOT_MASKED_BITS
-
 	return 1;
+}
+
+/*
+ * util_feature_cmp -- compares features with reference
+ *
+ * returns 1 if features and reference match and 0 otherwise
+ */
+int
+util_feature_cmp(features_t features, features_t ref)
+{
+	LOG(3, "features {incompat %#x ro_compat %#x compat %#x} "
+			"ref {incompat %#x ro_compat %#x compat %#x}",
+			features.incompat, features.ro_compat, features.compat,
+			ref.incompat, ref.ro_compat, ref.compat);
+
+	return features.compat == ref.compat &&
+			features.incompat == ref.incompat &&
+			features.ro_compat == ref.ro_compat;
+}
+
+/*
+ * util_feature_is_zero -- check if features flags are zeroed
+ *
+ * returns 1 if features is zeroed and 0 otherwise
+ */
+int
+util_feature_is_zero(features_t features)
+{
+	const uint32_t bits =
+			features.compat | features.incompat |
+			features.ro_compat;
+	return bits ? 0 : 1;
+}
+
+/*
+ * util_feature_is_set -- check if feature flag is set in features
+ *
+ * returns 1 if feature flag is set and 0 otherwise
+ */
+int
+util_feature_is_set(features_t features, features_t flag)
+{
+	uint32_t bits = 0;
+	bits |= features.compat & flag.compat;
+	bits |= features.incompat & flag.incompat;
+	bits |= features.ro_compat & flag.ro_compat;
+	return bits ? 1 : 0;
+}
+
+/*
+ * util_feature_enable -- enable feature
+ */
+void
+util_feature_enable(features_t *features, features_t new_feature)
+{
+#define FEATURE_ENABLE(flags, X) \
+	(flags) |= (X)
+
+	FEATURE_ENABLE(features->compat, new_feature.compat);
+	FEATURE_ENABLE(features->incompat, new_feature.incompat);
+	FEATURE_ENABLE(features->ro_compat, new_feature.ro_compat);
+
+#undef FEATURE_ENABLE
+}
+
+/*
+ * util_feature_disable -- (internal) disable feature
+ */
+void
+util_feature_disable(features_t *features, features_t old_feature)
+{
+#define FEATURE_DISABLE(flags, X) \
+	(flags) &= ~(X)
+
+	FEATURE_DISABLE(features->compat, old_feature.compat);
+	FEATURE_DISABLE(features->incompat, old_feature.incompat);
+	FEATURE_DISABLE(features->ro_compat, old_feature.ro_compat);
+
+#undef FEATURE_DISABLE
+}
+
+static const features_t feature_2_pmempool_feature_map[] = {
+	FEAT_INCOMPAT(SINGLEHDR),	/* PMEMPOOL_FEAT_SINGLEHDR */
+	FEAT_INCOMPAT(CKSUM_2K),	/* PMEMPOOL_FEAT_CKSUM_2K */
+	FEAT_INCOMPAT(SDS),		/* PMEMPOOL_FEAT_SHUTDOWN_STATE */
+	FEAT_COMPAT(CHECK_BAD_BLOCKS),	/* PMEMPOOL_FEAT_CHECK_BAD_BLOCKS */
+};
+
+#define FEAT_2_PMEMPOOL_FEATURE_MAP_SIZE \
+	ARRAY_SIZE(feature_2_pmempool_feature_map)
+
+static const char *str_2_pmempool_feature_map[] = {
+	"SINGLEHDR",
+	"CKSUM_2K",
+	"SHUTDOWN_STATE",
+	"CHECK_BAD_BLOCKS",
+};
+
+#define PMEMPOOL_FEATURE_2_STR_MAP_SIZE ARRAY_SIZE(str_2_pmempool_feature_map)
+
+/*
+ * util_str2feature -- convert string to feat_flags value
+ */
+features_t
+util_str2feature(const char *str)
+{
+	/* all features have to be named in incompat_features_str array */
+	COMPILE_ERROR_ON(FEAT_2_PMEMPOOL_FEATURE_MAP_SIZE !=
+			PMEMPOOL_FEATURE_2_STR_MAP_SIZE);
+
+	for (uint32_t f = 0; f < PMEMPOOL_FEATURE_2_STR_MAP_SIZE; ++f) {
+		if (strcmp(str, str_2_pmempool_feature_map[f]) == 0) {
+			return feature_2_pmempool_feature_map[f];
+		}
+	}
+	return features_zero;
+}
+
+/*
+ * util_feature2pmempool_feature -- convert feature to pmempool_feature
+ */
+uint32_t
+util_feature2pmempool_feature(features_t feat)
+{
+	for (uint32_t pf = 0; pf < FEAT_2_PMEMPOOL_FEATURE_MAP_SIZE; ++pf) {
+		const features_t *record =
+				&feature_2_pmempool_feature_map[pf];
+		if (util_feature_cmp(feat, *record)) {
+			return pf;
+		}
+	}
+	return UINT32_MAX;
+}
+
+/*
+ * util_str2pmempool_feature -- convert string to uint32_t enum pmempool_feature
+ * equivalent
+ */
+uint32_t
+util_str2pmempool_feature(const char *str)
+{
+	features_t fval = util_str2feature(str);
+	if (util_feature_is_zero(fval))
+		return UINT32_MAX;
+	return util_feature2pmempool_feature(fval);
+}
+
+/*
+ * util_feature2str -- convert uint32_t feature to string
+ */
+const char *
+util_feature2str(features_t features, features_t *found)
+{
+	for (uint32_t i = 0; i < FEAT_2_PMEMPOOL_FEATURE_MAP_SIZE; ++i) {
+		const features_t *record = &feature_2_pmempool_feature_map[i];
+		if (util_feature_is_set(features, *record)) {
+			if (found)
+				memcpy(found, record, sizeof(features_t));
+			return str_2_pmempool_feature_map[i];
+		}
+	}
+	return NULL;
 }

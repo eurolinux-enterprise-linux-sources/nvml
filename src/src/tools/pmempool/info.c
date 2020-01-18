@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018, Intel Corporation
+ * Copyright 2014-2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -45,9 +45,6 @@
 #include <inttypes.h>
 #include <assert.h>
 #include <sys/param.h>
-#ifndef __FreeBSD__
-#define __USE_UNIX98
-#endif
 #include <unistd.h>
 #include <sys/mman.h>
 
@@ -57,16 +54,13 @@
 #include "info.h"
 #include "set.h"
 #include "file.h"
+#include "os_badblock.h"
+#include "badblock.h"
 
 #define DEFAULT_CHUNK_TYPES\
 	((1<<CHUNK_TYPE_FREE)|\
 	(1<<CHUNK_TYPE_USED)|\
 	(1<<CHUNK_TYPE_RUN))
-
-#define DEFAULT_LANE_SECTIONS\
-	((1<<LANE_SECTION_ALLOCATOR)|\
-	(1<<LANE_SECTION_TRANSACTION)|\
-	(1<<LANE_SECTION_LIST))
 
 #define GET_ALIGNMENT(ad, x)\
 (1 + (((ad) >> (ALIGNMENT_DESC_BITS * (x))) & ((1 << ALIGNMENT_DESC_BITS) - 1)))
@@ -86,6 +80,7 @@ static const struct pmempool_info_args pmempool_info_args_default = {
 	.col_width	= 24,
 	.human		= false,
 	.force		= false,
+	.badblocks	= PRINT_BAD_BLOCKS_NOT_SET,
 	.type		= PMEM_POOL_TYPE_UNKNOWN,
 	.vlevel		= VERBOSE_DEFAULT,
 	.vdata		= VERBOSE_SILENT,
@@ -112,7 +107,6 @@ static const struct pmempool_info_args pmempool_info_args_default = {
 		.vzonehdr	= VERBOSE_SILENT,
 		.vchunkhdr	= VERBOSE_SILENT,
 		.vbitmap	= VERBOSE_SILENT,
-		.lane_sections	= DEFAULT_LANE_SECTIONS,
 		.lanes_recovery	= false,
 		.ignore_empty_obj = false,
 		.chunk_types	= DEFAULT_CHUNK_TYPES,
@@ -133,6 +127,7 @@ static const struct option long_options[] = {
 	{"headers-hex",	no_argument,		NULL, 'x' | OPT_ALL},
 	{"stats",	no_argument,		NULL, 's' | OPT_ALL},
 	{"range",	required_argument,	NULL, 'r' | OPT_ALL},
+	{"bad-blocks",	required_argument,	NULL, 'k' | OPT_ALL},
 	{"walk",	required_argument,	NULL, 'w' | OPT_LOG},
 	{"skip-zeros",	no_argument,		NULL, 'z' | OPT_BLK | OPT_BTT},
 	{"skip-error",	no_argument,		NULL, 'e' | OPT_BLK | OPT_BTT},
@@ -256,7 +251,7 @@ static const struct option_requirement option_requirements[] = {
 /*
  * help_str -- string for help message
  */
-static const char *help_str =
+static const char * const help_str =
 "Show information about pmem pool from specified file.\n"
 "\n"
 "Common options:\n"
@@ -269,6 +264,7 @@ static const char *help_str =
 "  -d, --data                      Dump log data and blocks.\n"
 "  -s, --stats                     Print statistics.\n"
 "  -r, --range <range>             Range of blocks/chunks/objects.\n"
+"  -k, --bad-blocks=<yes|no>       Print bad blocks.\n"
 "\n"
 "Options for PMEMLOG:\n"
 "  -w, --walk <size>               Chunk size.\n"
@@ -312,7 +308,7 @@ static const char *help_str =
  * print_usage -- print application usage short description
  */
 static void
-print_usage(char *appname)
+print_usage(const char *appname)
 {
 	printf("Usage: %s info [<args>] <file>\n", appname);
 }
@@ -321,7 +317,7 @@ print_usage(char *appname)
  * print_version -- print version string
  */
 static void
-print_version(char *appname)
+print_version(const char *appname)
 {
 	printf("%s %s\n", appname, SRCVERSION);
 }
@@ -330,7 +326,7 @@ print_version(char *appname)
  * pmempool_info_help -- print application usage detailed description
  */
 void
-pmempool_info_help(char *appname)
+pmempool_info_help(const char *appname)
 {
 	print_usage(appname);
 	print_version(appname);
@@ -345,7 +341,7 @@ pmempool_info_help(char *appname)
  * Terminates process if invalid arguments passed.
  */
 static int
-parse_args(char *appname, int argc, char *argv[],
+parse_args(const char *appname, int argc, char *argv[],
 		struct pmempool_info_args *argsp,
 		struct options *opts)
 {
@@ -359,7 +355,7 @@ parse_args(char *appname, int argc, char *argv[],
 
 	struct ranges *rangesp = &argsp->ranges;
 	while ((opt = util_options_getopt(argc, argv,
-			"vhnf:ezuF:L:c:dmxVw:gBsr:lRS:OECZHT:bot:aAp:",
+			"vhnf:ezuF:L:c:dmxVw:gBsr:lRS:OECZHT:bot:aAp:k:",
 			opts)) != -1) {
 
 		switch (opt) {
@@ -382,6 +378,18 @@ parse_args(char *appname, int argc, char *argv[],
 				return -1;
 			}
 			argsp->force = true;
+			break;
+		case 'k':
+			if (strcmp(optarg, "no") == 0) {
+				argsp->badblocks = PRINT_BAD_BLOCKS_NO;
+			} else if (strcmp(optarg, "yes") == 0) {
+				argsp->badblocks = PRINT_BAD_BLOCKS_YES;
+			} else {
+				ERR(
+					"'%s' -- invalid argument of the '--bad-blocks' option\n",
+					optarg);
+				return -1;
+			}
 			break;
 		case 'e':
 			argsp->blk.skip_error = true;
@@ -436,15 +444,6 @@ parse_args(char *appname, int argc, char *argv[],
 			break;
 		case 'R':
 			argsp->obj.lanes_recovery = true;
-			break;
-		case 'S':
-			argsp->obj.lane_sections = 0;
-			if (util_parse_lane_sections(optarg,
-						&argsp->obj.lane_sections)) {
-				outv_err("'%s' -- cannot parse"
-					" lane section(s)\n", optarg);
-				return -1;
-			}
 			break;
 		case 'O':
 			argsp->obj.vobjects = VERBOSE_DEFAULT;
@@ -552,6 +551,52 @@ pmempool_info_read(struct pmem_info *pip, void *buff, size_t nbytes,
 }
 
 /*
+ * pmempool_info_badblocks -- (internal) prints info about file badblocks
+ */
+static int
+pmempool_info_badblocks(struct pmem_info *pip, const char *file_name, int v)
+{
+	int ret;
+
+	if (pip->args.badblocks != PRINT_BAD_BLOCKS_YES)
+		return 0;
+
+	struct badblocks *bbs = badblocks_new();
+	if (bbs == NULL)
+		return -1;
+
+	ret = os_badblocks_get(file_name, bbs);
+	if (ret) {
+		if (errno == ENOTSUP) {
+			outv(v, BB_NOT_SUPP "\n");
+			ret = -1;
+			goto exit_free;
+		}
+
+		outv_err("checking bad blocks failed -- '%s'", file_name);
+		goto exit_free;
+	}
+
+	if (bbs->bb_cnt == 0 || bbs->bbv == NULL)
+		goto exit_free;
+
+	outv(v, "bad blocks:\n");
+	outv(v, "\toffset\t\tlength\n");
+
+	unsigned b;
+	for (b = 0; b < bbs->bb_cnt; b++) {
+		outv(v, "\t%llu\t\t%u\n",
+			B2SEC(bbs->bbv[b].offset),
+			B2SEC(bbs->bbv[b].length));
+	}
+
+exit_free:
+	badblocks_delete(bbs);
+
+	return ret;
+}
+
+/*
  * pmempool_info_part -- (internal) print info about poolset part
  */
 static int
@@ -570,9 +615,12 @@ pmempool_info_part(struct pmem_info *pip, unsigned repn, unsigned partn, int v)
 	}
 	outv_field(v, "path", "%s", path);
 
-	/* get type of the part file */
-	int is_dev_dax = util_file_is_device_dax(path);
-	const char *type_str = is_dev_dax ? "device dax" : "regular file";
+	enum file_type type = util_file_get_type(path);
+	if (type < 0)
+		return -1;
+
+	const char *type_str = type == TYPE_DEVDAX ? "device dax" :
+				"regular file";
 	outv_field(v, "type", "%s", type_str);
 
 	/* get size of the part file */
@@ -585,10 +633,16 @@ pmempool_info_part(struct pmem_info *pip, unsigned repn, unsigned partn, int v)
 			pip->args.human));
 
 	/* get alignment of device dax */
-	if (is_dev_dax) {
+	if (type == TYPE_DEVDAX) {
 		size_t alignment = util_file_device_dax_alignment(path);
 		outv_field(v, "alignment", "%s", out_get_size_str(alignment,
 				pip->args.human));
+	}
+
+	/* look for bad blocks */
+	if (pmempool_info_badblocks(pip, path, VERBOSE_DEFAULT)) {
+		outv_err("Unable to retrieve badblock info");
+		return -1;
 	}
 
 	return 0;
@@ -717,9 +771,9 @@ pmempool_info_pool_hdr(struct pmem_info *pip, int v)
 			" [part file]" : "");
 	outv_field(v, "Major", "%d", hdr->major);
 	outv_field(v, "Mandatory features", "%s",
-			out_get_incompat_features_str(hdr->incompat_features));
-	outv_field(v, "Not mandatory features", "0x%x", hdr->compat_features);
-	outv_field(v, "Forced RO", "0x%x", hdr->ro_compat_features);
+			out_get_incompat_features_str(hdr->features.incompat));
+	outv_field(v, "Not mandatory features", "0x%x", hdr->features.compat);
+	outv_field(v, "Forced RO", "0x%x", hdr->features.ro_compat);
 	outv_field(v, "Pool set UUID", "%s",
 				out_get_uuid_str(hdr->poolset_uuid));
 	outv_field(v, "UUID", "%s", out_get_uuid_str(hdr->uuid));
@@ -764,9 +818,10 @@ pmempool_info_pool_hdr(struct pmem_info *pip, int v)
 			out_get_arch_data_str(hdr->arch_flags.data));
 	outv_field(v, "Machine", "%s",
 			out_get_arch_machine_str(hdr->arch_flags.machine));
-
+	outv_field(v, "Last shutdown", "%s",
+			out_get_last_shutdown_str(hdr->sds.dirty));
 	outv_field(v, "Checksum", "%s", out_get_checksum(hdr, sizeof(*hdr),
-			&hdr->checksum, POOL_HDR_CSUM_END_OFF));
+			&hdr->checksum, POOL_HDR_CSUM_END_OFF(hdr)));
 
 	free(hdr);
 
@@ -818,6 +873,20 @@ pmempool_info_file(struct pmem_info *pip, const char *file_name)
 		if (!pip->pfile) {
 			perror(file_name);
 			return -1;
+		}
+
+		/* check if we should check and print bad blocks */
+		if (pip->args.badblocks == PRINT_BAD_BLOCKS_NOT_SET) {
+			struct pool_hdr hdr;
+			if (pmempool_info_read(pip, &hdr, sizeof(hdr), 0)) {
+				outv_err("cannot read pool header\n");
+				goto out_close;
+			}
+			util_convert2h_hdr_nocheck(&hdr);
+			if (hdr.features.compat & POOL_FEAT_CHECK_BAD_BLOCKS)
+				pip->args.badblocks = PRINT_BAD_BLOCKS_YES;
+			else
+				pip->args.badblocks = PRINT_BAD_BLOCKS_NO;
 		}
 
 		if (pip->type != PMEM_POOL_TYPE_BTT) {
@@ -949,8 +1018,12 @@ pmempool_info_alloc(void)
 static void
 pmempool_info_free(struct pmem_info *pip)
 {
-	if (pip->obj.stats.zone_stats)
+	if (pip->obj.stats.zone_stats) {
+		for (uint64_t i = 0; i < pip->obj.stats.n_zones; ++i)
+			VEC_DELETE(&pip->obj.stats.zone_stats[i].class_stats);
+
 		free(pip->obj.stats.zone_stats);
+	}
 	util_options_free(pip->opts);
 	util_ranges_clear(&pip->args.ranges);
 	util_ranges_clear(&pip->args.obj.type_ranges);
@@ -969,7 +1042,7 @@ pmempool_info_free(struct pmem_info *pip)
 }
 
 int
-pmempool_info_func(char *appname, int argc, char *argv[])
+pmempool_info_func(const char *appname, int argc, char *argv[])
 {
 	int ret = 0;
 	struct pmem_info *pip = pmempool_info_alloc();

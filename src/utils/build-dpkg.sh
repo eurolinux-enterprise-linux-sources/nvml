@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Copyright 2014-2018, Intel Corporation
+# Copyright 2014-2019, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -86,6 +86,10 @@ do
 		TEST_CONFIG_FILE="$2"
 		shift 2
 		;;
+	-r)
+		BUILD_RPMEM="$2"
+		shift 2
+		;;
 	-n)
 		NDCTL_ENABLE="$2"
 		shift 2
@@ -136,7 +140,7 @@ if [ "$EXTRA_CFLAGS_RELEASE" = "" ]; then
 fi
 
 LIBFABRIC_MIN_VERSION=1.4.2
-NDCTL_MIN_VERSION=58.2.37
+NDCTL_MIN_VERSION=60.1
 
 function convert_changelog() {
 	while read line
@@ -176,8 +180,8 @@ $LIB_DIR/pmdk_debug/librpmem.so.* $LIB_DIR/pmdk_dbg/
 $LIB_DIR/librpmem.so
 $LIB_DIR/pkgconfig/librpmem.pc
 $INC_DIR/librpmem.h
-$MAN7_DIR/librpmem.7.gz
-$MAN3_DIR/rpmem_*.3.gz
+$MAN7_DIR/librpmem.7
+$MAN3_DIR/rpmem_*.3
 EOF
 
 cat << EOF > debian/librpmem-dev.triggers
@@ -197,7 +201,7 @@ EOF
 
 cat << EOF > debian/rpmemd.install
 usr/bin/rpmemd
-$MAN1_DIR/rpmemd.1.gz
+$MAN1_DIR/rpmemd.1
 EOF
 
 cat << EOF > debian/rpmemd.triggers
@@ -216,15 +220,29 @@ cat << EOF >> $CONTROL_FILE
 Package: librpmem
 Architecture: any
 Depends: libfabric (>= $LIBFABRIC_MIN_VERSION), \${shlibs:Depends}, \${misc:Depends}
-Description: PMDK librpmem library
- PMDK Library for Remote Persistent Memory support
+Description: Persistent Memory remote access support library
+ librpmem provides low-level support for remote access to persistent memory
+ (pmem) utilizing RDMA-capable RNICs. The library can be used to replicate
+ remotely a memory region over RDMA protocol. It utilizes appropriate
+ persistency mechanism based on remote node’s platform capabilities. The
+ librpmem utilizes the ssh client to authenticate a user on remote node and for
+ encryption of connection’s out-of-band configuration data.
+ .
+ This library is for applications that use remote persistent memory directly,
+ without the help of any library-supplied transactions or memory allocation.
+ Higher-level libraries that build on libpmem are available and are recommended
+ for most applications.
 
 Package: librpmem-dev
 Section: libdevel
 Architecture: any
 Depends: librpmem (=\${binary:Version}), libpmem-dev, \${shlibs:Depends}, \${misc:Depends}
 Description: Development files for librpmem
- Development files for librpmem library.
+ librpmem provides low-level support for remote access to persistent memory
+ (pmem) utilizing RDMA-capable RNICs.
+ .
+ This package contains libraries and header files used for linking programs
+ against librpmem.
 
 Package: rpmemd
 Section: misc
@@ -239,7 +257,7 @@ EOF
 function daxio_install_triggers_overrides() {
 cat << EOF > debian/daxio.install
 usr/bin/daxio
-$MAN1_DIR/daxio.1.gz
+$MAN1_DIR/daxio.1
 EOF
 
 cat << EOF > debian/daxio.triggers
@@ -260,8 +278,6 @@ Section: misc
 Architecture: any
 Priority: optional
 Depends: libpmem (=\${binary:Version}), \${shlibs:Depends}, \${misc:Depends}
-Depends: libndctl (>= $NDCTL_MIN_VERSION), \${shlibs:Depends}, \${misc:Depends}
-Depends: libdaxctl (>= $NDCTL_MIN_VERSION), \${shlibs:Depends}, \${misc:Depends}
 Description: daxio utility
  The daxio utility performs I/O on Device DAX devices or zero
  a Device DAX device.  Since the standard I/O APIs (read/write) cannot be used
@@ -281,7 +297,10 @@ override_dh_auto_test:
 	if [ -f $TEST_CONFIG_FILE ]; then\
 		cp $TEST_CONFIG_FILE src/test/testconfig.sh;\
 	else\
-	        cp src/test/testconfig.sh.example src/test/testconfig.sh;\
+		echo 'PMEM_FS_DIR=/tmp' > src/test/testconfig.sh; \
+		echo 'PMEM_FS_DIR_FORCE_PMEM=1' >> src/test/testconfig.sh; \
+		echo 'TEST_BUILD=\"debug nondebug\"' >> src/test/testconfig.sh; \
+		echo 'TEST_FS=\"pmem any none\"' >> src/test/testconfig.sh; \
 	fi
 	make pcheck ${PCHECK_OPTS}
 "
@@ -305,8 +324,6 @@ PACKAGE_TARBALL_ORIG=${PACKAGE_NAME}_${PACKAGE_VERSION}.orig.tar.gz
 MAGIC_INSTALL=utils/magic-install.sh
 MAGIC_UNINSTALL=utils/magic-uninstall.sh
 CONTROL_FILE=debian/control
-OBJ_CPP_NAME=libpmemobj++-dev
-OBJ_CPP_DOC_DIR=${OBJ_CPP_NAME}-${PACKAGE_VERSION}
 
 [ -d $WORKING_DIR ] || mkdir $WORKING_DIR
 [ -d $OUT_DIR ] || mkdir $OUT_DIR
@@ -333,120 +350,151 @@ EOF
 cat << EOF > $CONTROL_FILE
 Source: $PACKAGE_NAME
 Maintainer: $PACKAGE_MAINTAINER
-Section: misc
+Section: libs
 Priority: optional
-Standards-version: 3.9.4
-Build-Depends: debhelper (>= 9), doxygen
+Standards-version: 4.1.4
+Build-Depends: debhelper (>= 9)
+Homepage: http://pmem.io/pmdk/
 
 Package: libpmem
 Architecture: any
 Depends: \${shlibs:Depends}, \${misc:Depends}
-Description: PMDK libpmem library
- PMDK Library for Persistent Memory support
+Description: Persistent Memory low level support library
+ libpmem provides low level persistent memory support. In particular, support
+ for the persistent memory instructions for flushing changes to pmem is
+ provided.
 
 Package: libpmem-dev
 Section: libdevel
 Architecture: any
 Depends: libpmem (=\${binary:Version}), \${shlibs:Depends}, \${misc:Depends}
 Description: Development files for libpmem
- Development files for libpmem library.
+ libpmem provides low level persistent memory support. In particular, support
+ for the persistent memory instructions for flushing changes to pmem is
+ provided.
 
 Package: libpmemblk
 Architecture: any
 Depends: libpmem (=\${binary:Version}), \${shlibs:Depends}, \${misc:Depends}
-Description: PMDK libpmemblk library
- PMDK Library for Persistent Memory support - block memory pool.
+Description: Persistent Memory block array support library
+ libpmemblk implements a pmem-resident array of blocks, all the same size, where
+ a block is updated atomically with respect to power failure or program
+ interruption (no torn blocks).
 
 Package: libpmemblk-dev
 Section: libdevel
 Architecture: any
 Depends: libpmemblk (=\${binary:Version}), libpmem-dev, \${shlibs:Depends}, \${misc:Depends}
 Description: Development files for libpmemblk
- Development files for libpmemblk library.
+ libpmemblk implements a pmem-resident array of blocks, all the same size, where
+ a block is updated atomically with respect to power failure or program
+ interruption (no torn blocks).
 
 Package: libpmemlog
 Architecture: any
 Depends: libpmem (=\${binary:Version}), \${shlibs:Depends}, \${misc:Depends}
-Description: PMDK libpmemlog library
- PMDK Library for Persistent Memory support - log memory pool.
+Description: Persistent Memory log file support library
+ libpmemlog implements a pmem-resident log file.
 
 Package: libpmemlog-dev
 Section: libdevel
 Architecture: any
 Depends: libpmemlog (=\${binary:Version}), libpmem-dev,  \${shlibs:Depends}, \${misc:Depends}
 Description: Development files for libpmemlog
- Development files for libpmemlog library.
-
-Package: libpmemcto
-Architecture: any
-Depends: libpmem (=\${binary:Version}), \${shlibs:Depends}, \${misc:Depends}
-Description: PMDK libpmemcto library
- PMDK Library for Persistent Memory support - close-to-open pesistence.
-
-Package: libpmemcto-dev
-Section: libdevel
-Architecture: any
-Depends: libpmemcto (=\${binary:Version}), libpmem-dev, \${shlibs:Depends}, \${misc:Depends}
-Description: Development files for libpmemcto
- Development files for libpmemcto library.
+ libpmemlog implements a pmem-resident log file.
 
 Package: libpmemobj
 Architecture: any
 Depends: libpmem (=\${binary:Version}), \${shlibs:Depends}, \${misc:Depends}
-Description: PMDK libpmemobj library
- PMDK Library for Persistent Memory support - transactional object store.
+Description: Persistent Memory object store support library
+ libpmemobj turns a persistent memory file into a flexible object store,
+ supporting transactions, memory management, locking, lists, and a number of
+ other features.
 
 Package: libpmemobj-dev
 Section: libdevel
 Architecture: any
 Depends: libpmemobj (=\${binary:Version}), libpmem-dev, \${shlibs:Depends}, \${misc:Depends}
 Description: Development files for libpmemobj
- Development files for libpmemobj library.
+ libpmemobj turns a persistent memory file into a flexible object store,
+ supporting transactions, memory management, locking, lists, and a number of
+ other features.
+ .
+ This package contains libraries and header files used for linking programs
+ against libpmemobj.
 
 Package: libpmempool
 Architecture: any
 Depends: libpmem (=\${binary:Version}), \${shlibs:Depends}, \${misc:Depends}
-Description: PMDK libpmempool library
- PMDK Library for Persistent Memory support - pool management library.
+Description: Persistent Memory pool management support library
+ libpmempool provides a set of utilities for management, diagnostics and repair
+ of persistent memory pools. A pool in this context means a pmemobj pool,
+ pmemblk pool, pmemlog pool or BTT layout, independent of the underlying
+ storage. The libpmempool is for applications that need high reliability or
+ built-in troubleshooting. It may be useful for testing and debugging purposes
+ also.
 
 Package: libpmempool-dev
 Section: libdevel
 Architecture: any
 Depends: libpmempool (=\${binary:Version}), libpmem-dev, \${shlibs:Depends}, \${misc:Depends}
 Description: Development files for libpmempool
- Development files for libpmempool library.
+ libpmempool provides a set of utilities for management, diagnostics and repair
+ of persistent memory pools.
+ .
+ This package contains libraries and header files used for linking programs
+ against libpmempool.
 
 Package: libvmem
 Architecture: any
 Depends: \${shlibs:Depends}, \${misc:Depends}
-Description: PMDK libvmem library
- PMDK Library for volatile-memory support on top of Persistent Memory.
+Description: Persistent Memory volatile memory support library
+ The libvmem library turns a pool of persistent memory into a volatile memory
+ pool, similar to the system heap but kept separate and with its own
+ malloc-style API.
+ .
+ libvmem supports the traditional malloc/free interfaces on a memory mapped
+ file. This allows the use of persistent memory as volatile memory, for cases
+ where the pool of persistent memory is useful to an application, but when the
+ application doesn’t need it to be persistent.
 
 Package: libvmem-dev
 Section: libdevel
 Architecture: any
 Depends: libvmem (=\${binary:Version}), \${shlibs:Depends}, \${misc:Depends}
 Description: Development files for libvmem
- Development files for libvmem library.
+ The libvmem library turns a pool of persistent memory into a volatile memory
+ pool, similar to the system heap but kept separate and with its own
+ malloc-style API.
+ .
+ This package contains libraries and header files used for linking programs
+ against libvmem.
 
 Package: libvmmalloc
 Architecture: any
 Depends: \${shlibs:Depends}, \${misc:Depends}
-Description: PMDK libvmmalloc library
- PMDK general purpose volatile-memory allocation library on top of Persistent Memory.
+Description: Persistent Memory dynamic allocation support library
+ The libvmmalloc library transparently converts all the dynamic memory
+ allocations into persistent memory allocations. This allows the use of
+ persistent memory as volatile memory without modifying the target
+ application.
 
 Package: libvmmalloc-dev
 Section: libdevel
 Architecture: any
 Depends: libvmmalloc (=\${binary:Version}), \${shlibs:Depends}, \${misc:Depends}
 Description: Development files for libvmmalloc
- Development files for libvmmalloc library.
+ The libvmmalloc library transparently converts all the dynamic memory
+ allocations into persistent memory allocations.
+ .
+ This package contains libraries and header files used for linking programs
+ against libvmalloc.
 
 Package: $PACKAGE_NAME-dbg
 Section: debug
-Priority: extra
+Priority: optional
 Architecture: any
-Depends: libvmem (=\${binary:Version}), libvmmalloc (=\${binary:Version}), libpmem (=\${binary:Version}), libpmemblk (=\${binary:Version}), libpmemlog (=\${binary:Version}), libpmemobj (=\${binary:Version}), libpmemcto (=\${binary:Version}), libpmempool (=\${binary:Version}), \${misc:Depends}
+Depends: libvmem (=\${binary:Version}), libvmmalloc (=\${binary:Version}), libpmem (=\${binary:Version}), libpmemblk (=\${binary:Version}), libpmemlog (=\${binary:Version}), libpmemobj (=\${binary:Version}), libpmempool (=\${binary:Version}), \${misc:Depends}
 Description: Debug symbols for PMDK libraries
  Debug symbols for all PMDK libraries.
 
@@ -455,22 +503,32 @@ Section: misc
 Architecture: any
 Priority: optional
 Depends: \${shlibs:Depends}, \${misc:Depends}
-Description: pmempool utility
- Pmempool is a standalone utility for management and off-line analysis
+Description: Standalone utility for management and off-line analysis
  of Persistent Memory pools created by PMDK libraries. It provides a set
  of utilities for administration and diagnostics of Persistent Memory pools.
  Pmempool may be useful for troubleshooting by system administrators
  and users of the applications based on PMDK libraries.
 
-Package: ${OBJ_CPP_NAME}
-Section: libdevel
+Package: pmreorder
+Section: misc
 Architecture: any
-Depends: libpmemobj-dev (=\${binary:Version}), \${shlibs:Depends}, \${misc:Depends}
-Description: C++ bindings for libpmemobj
- Headers-only C++ library for libpmemobj.
+Priority: optional
+Depends: \${shlibs:Depends}, \${misc:Depends}
+Description: Standalone tool which is a collection of python scripts designed
+ to parse and replay operations logged by pmemcheck - a persistent memory
+ checking tool. Pmreorder performs the store reordering between persistent
+ memory barriers - a sequence of flush-fence operations. It uses a
+ consistency checking routine provided in the command line options to check
+ whether files are in a consistent state.
 EOF
 
 cp LICENSE debian/copyright
+
+if [ -n "$NDCTL_ENABLE" ]; then
+	pass_ndctl_enable="NDCTL_ENABLE=$NDCTL_ENABLE"
+else
+	pass_ndctl_enable=""
+fi
 
 cat << EOF > debian/rules
 #!/usr/bin/make -f
@@ -481,8 +539,12 @@ cat << EOF > debian/rules
 override_dh_strip:
 	dh_strip --dbg-package=$PACKAGE_NAME-dbg
 
+override_dh_auto_build:
+	dh_auto_build -- EXPERIMENTAL=${EXPERIMENTAL} prefix=/$PREFIX libdir=/$LIB_DIR includedir=/$INC_DIR docdir=/$DOC_DIR man1dir=/$MAN1_DIR man3dir=/$MAN3_DIR man5dir=/$MAN5_DIR man7dir=/$MAN7_DIR sysconfdir=/etc bashcompdir=/usr/share/bash-completion/completions NORPATH=1 ${pass_ndctl_enable} SRCVERSION=$SRCVERSION
+
 override_dh_auto_install:
-	dh_auto_install -- EXPERIMENTAL=${EXPERIMENTAL} CPP_DOC_DIR="${OBJ_CPP_DOC_DIR}" prefix=/$PREFIX libdir=/$LIB_DIR includedir=/$INC_DIR docdir=/$DOC_DIR man1dir=/$MAN1_DIR man3dir=/$MAN3_DIR man5dir=/$MAN5_DIR man7dir=/$MAN7_DIR sysconfdir=/etc NORPATH=1
+	dh_auto_install -- EXPERIMENTAL=${EXPERIMENTAL} prefix=/$PREFIX libdir=/$LIB_DIR includedir=/$INC_DIR docdir=/$DOC_DIR man1dir=/$MAN1_DIR man3dir=/$MAN3_DIR man5dir=/$MAN5_DIR man7dir=/$MAN7_DIR sysconfdir=/etc bashcompdir=/usr/share/bash-completion/completions NORPATH=1 ${pass_ndctl_enable} SRCVERSION=$SRCVERSION
+	find -path './debian/*usr/share/man/man*/*.gz' -exec gunzip {} \;
 
 override_dh_install:
 	mkdir -p debian/tmp/usr/share/pmdk/
@@ -507,10 +569,15 @@ EOF
 cat << EOF > debian/libpmem.install
 $LIB_DIR/libpmem.so.*
 usr/share/pmdk/pmdk.magic
+$MAN5_DIR/poolset.5
 EOF
 
 cat $MAGIC_INSTALL > debian/libpmem.postinst
+sed -i '1s/.*/\#\!\/bin\/bash/' debian/libpmem.postinst
+echo $'\n#DEBHELPER#\n' >> debian/libpmem.postinst
 cat $MAGIC_UNINSTALL > debian/libpmem.prerm
+sed -i '1s/.*/\#\!\/bin\/bash/' debian/libpmem.prerm
+echo $'\n#DEBHELPER#\n' >> debian/libpmem.prerm
 
 cat << EOF > debian/libpmem.lintian-overrides
 $ITP_BUG_EXCUSE
@@ -525,12 +592,8 @@ $LIB_DIR/pmdk_debug/libpmem.so.* $LIB_DIR/pmdk_dbg/
 $LIB_DIR/libpmem.so
 $LIB_DIR/pkgconfig/libpmem.pc
 $INC_DIR/libpmem.h
-$MAN7_DIR/libpmem.7.gz
-$MAN3_DIR/pmem_*.3.gz
-EOF
-
-cat << EOF > debian/libpmem-dev.triggers
-interest man-db
+$MAN7_DIR/libpmem.7
+$MAN3_DIR/pmem_*.3
 EOF
 
 cat << EOF > debian/libpmem-dev.lintian-overrides
@@ -542,6 +605,11 @@ postinst-has-useless-call-to-ldconfig
 postrm-has-useless-call-to-ldconfig
 # We do not want to compile with -O2 for debug version
 hardening-no-fortify-functions $LIB_DIR/pmdk_dbg/*
+# pmdk provides second set of libraries for debugging.
+# These are in /usr/lib/$arch/pmdk_dbg/, but still trigger ldconfig.
+# Related issue: https://github.com/pmem/issues/issues/841
+libpmem-dev: package-has-unnecessary-activation-of-ldconfig-trigger
+
 EOF
 
 cat << EOF > debian/libpmemblk.install
@@ -561,13 +629,8 @@ $LIB_DIR/pmdk_debug/libpmemblk.so.* $LIB_DIR/pmdk_dbg/
 $LIB_DIR/libpmemblk.so
 $LIB_DIR/pkgconfig/libpmemblk.pc
 $INC_DIR/libpmemblk.h
-$MAN7_DIR/libpmemblk.7.gz
-$MAN5_DIR/poolset.5.gz
-$MAN3_DIR/pmemblk_*.3.gz
-EOF
-
-cat << EOF > debian/libpmemblk-dev.triggers
-interest man-db
+$MAN7_DIR/libpmemblk.7
+$MAN3_DIR/pmemblk_*.3
 EOF
 
 cat << EOF > debian/libpmemblk-dev.lintian-overrides
@@ -579,6 +642,10 @@ postinst-has-useless-call-to-ldconfig
 postrm-has-useless-call-to-ldconfig
 # We do not want to compile with -O2 for debug version
 hardening-no-fortify-functions $LIB_DIR/pmdk_dbg/*
+# pmdk provides second set of libraries for debugging.
+# These are in /usr/lib/$arch/pmdk_dbg/, but still trigger ldconfig.
+# Related issue: https://github.com/pmem/issues/issues/841
+libpmemblk-dev: package-has-unnecessary-activation-of-ldconfig-trigger
 EOF
 
 cat << EOF > debian/libpmemlog.install
@@ -598,13 +665,8 @@ $LIB_DIR/pmdk_debug/libpmemlog.so.* $LIB_DIR/pmdk_dbg/
 $LIB_DIR/libpmemlog.so
 $LIB_DIR/pkgconfig/libpmemlog.pc
 $INC_DIR/libpmemlog.h
-$MAN7_DIR/libpmemlog.7.gz
-$MAN5_DIR/poolset.5.gz
-$MAN3_DIR/pmemlog_*.3.gz
-EOF
-
-cat << EOF > debian/libpmemlog-dev.triggers
-interest man-db
+$MAN7_DIR/libpmemlog.7
+$MAN3_DIR/pmemlog_*.3
 EOF
 
 cat << EOF > debian/libpmemlog-dev.lintian-overrides
@@ -616,43 +678,10 @@ postinst-has-useless-call-to-ldconfig
 postrm-has-useless-call-to-ldconfig
 # We do not want to compile with -O2 for debug version
 hardening-no-fortify-functions $LIB_DIR/pmdk_dbg/*
-EOF
-
-cat << EOF > debian/libpmemcto.install
-$LIB_DIR/libpmemcto.so.*
-EOF
-
-cat << EOF > debian/libpmemcto.lintian-overrides
-$ITP_BUG_EXCUSE
-new-package-should-close-itp-bug
-libpmemcto: package-name-doesnt-match-sonames
-EOF
-
-cat << EOF > debian/libpmemcto-dev.install
-$LIB_DIR/pmdk_debug/libpmemcto.a $LIB_DIR/pmdk_dbg/
-$LIB_DIR/pmdk_debug/libpmemcto.so $LIB_DIR/pmdk_dbg/
-$LIB_DIR/pmdk_debug/libpmemcto.so.* $LIB_DIR/pmdk_dbg/
-$LIB_DIR/libpmemcto.so
-$LIB_DIR/pkgconfig/libpmemcto.pc
-$INC_DIR/libpmemcto.h
-$MAN7_DIR/libpmemcto.7.gz
-$MAN5_DIR/poolset.5.gz
-$MAN3_DIR/pmemcto*.3.gz
-EOF
-
-cat << EOF > debian/libpmemcto-dev.triggers
-interest man-db
-EOF
-
-cat << EOF > debian/libpmemcto-dev.lintian-overrides
-$ITP_BUG_EXCUSE
-new-package-should-close-itp-bug
-# The following warnings are triggered by a bug in debhelper:
-# http://bugs.debian.org/204975
-postinst-has-useless-call-to-ldconfig
-postrm-has-useless-call-to-ldconfig
-# We do not want to compile with -O2 for debug version
-hardening-no-fortify-functions $LIB_DIR/pmdk_dbg/*
+# pmdk provides second set of libraries for debugging.
+# These are in /usr/lib/$arch/pmdk_dbg/, but still trigger ldconfig.
+# Related issue: https://github.com/pmem/issues/issues/841
+libpmemlog-dev: package-has-unnecessary-activation-of-ldconfig-trigger
 EOF
 
 cat << EOF > debian/libpmemobj.install
@@ -673,19 +702,14 @@ $LIB_DIR/libpmemobj.so
 $LIB_DIR/pkgconfig/libpmemobj.pc
 $INC_DIR/libpmemobj.h
 $INC_DIR/libpmemobj/*.h
-$MAN7_DIR/libpmemobj.7.gz
-$MAN5_DIR/poolset.5.gz
-$MAN3_DIR/pmemobj_*.3.gz
-$MAN3_DIR/pobj_*.3.gz
-$MAN3_DIR/oid_*.3.gz
-$MAN3_DIR/toid*.3.gz
-$MAN3_DIR/direct_*.3.gz
-$MAN3_DIR/d_r*.3.gz
-$MAN3_DIR/tx_*.3.gz
-EOF
-
-cat << EOF > debian/libpmemobj-dev.triggers
-interest man-db
+$MAN7_DIR/libpmemobj.7
+$MAN3_DIR/pmemobj_*.3
+$MAN3_DIR/pobj_*.3
+$MAN3_DIR/oid_*.3
+$MAN3_DIR/toid*.3
+$MAN3_DIR/direct_*.3
+$MAN3_DIR/d_r*.3
+$MAN3_DIR/tx_*.3
 EOF
 
 cat << EOF > debian/libpmemobj-dev.lintian-overrides
@@ -697,6 +721,10 @@ postinst-has-useless-call-to-ldconfig
 postrm-has-useless-call-to-ldconfig
 # We do not want to compile with -O2 for debug version
 hardening-no-fortify-functions $LIB_DIR/pmdk_dbg/*
+# pmdk provides second set of libraries for debugging.
+# These are in /usr/lib/$arch/pmdk_dbg/, but still trigger ldconfig.
+# Related issue: https://github.com/pmem/issues/issues/841
+libpmemobj-dev: package-has-unnecessary-activation-of-ldconfig-trigger
 EOF
 
 cat << EOF > debian/libpmempool.install
@@ -716,13 +744,8 @@ $LIB_DIR/pmdk_debug/libpmempool.so.* $LIB_DIR/pmdk_dbg/
 $LIB_DIR/libpmempool.so
 $LIB_DIR/pkgconfig/libpmempool.pc
 $INC_DIR/libpmempool.h
-$MAN7_DIR/libpmempool.7.gz
-$MAN5_DIR/poolset.5.gz
-$MAN3_DIR/pmempool_*.3.gz
-EOF
-
-cat << EOF > debian/libpmempool-dev.triggers
-interest man-db
+$MAN7_DIR/libpmempool.7
+$MAN3_DIR/pmempool_*.3
 EOF
 
 cat << EOF > debian/libpmempool-dev.lintian-overrides
@@ -734,6 +757,10 @@ postinst-has-useless-call-to-ldconfig
 postrm-has-useless-call-to-ldconfig
 # We do not want to compile with -O2 for debug version
 hardening-no-fortify-functions $LIB_DIR/pmdk_dbg/*
+# pmdk provides second set of libraries for debugging.
+# These are in /usr/lib/$arch/pmdk_dbg/, but still trigger ldconfig.
+# Related issue: https://github.com/pmem/issues/issues/841
+libpmempool-dev: package-has-unnecessary-activation-of-ldconfig-trigger
 EOF
 
 cat << EOF > debian/libvmem.install
@@ -753,8 +780,8 @@ $LIB_DIR/pmdk_debug/libvmem.so.* $LIB_DIR/pmdk_dbg/
 $LIB_DIR/libvmem.so
 $LIB_DIR/pkgconfig/libvmem.pc
 $INC_DIR/libvmem.h
-$MAN7_DIR/libvmem.7.gz
-$MAN3_DIR/vmem_*.3.gz
+$MAN7_DIR/libvmem.7
+$MAN3_DIR/vmem_*.3
 EOF
 
 cat << EOF > debian/libvmem-dev.lintian-overrides
@@ -766,10 +793,10 @@ postinst-has-useless-call-to-ldconfig
 postrm-has-useless-call-to-ldconfig
 # We do not want to compile with -O2 for debug version
 hardening-no-fortify-functions $LIB_DIR/pmdk_dbg/*
-EOF
-
-cat << EOF > debian/libvmem-dev.triggers
-interest man-db
+# pmdk provides second set of libraries for debugging.
+# These are in /usr/lib/$arch/pmdk_dbg/, but still trigger ldconfig.
+# Related issue: https://github.com/pmem/issues/issues/841
+libvmem-dev: package-has-unnecessary-activation-of-ldconfig-trigger
 EOF
 
 cat << EOF > debian/libvmmalloc.install
@@ -789,7 +816,7 @@ $LIB_DIR/pmdk_debug/libvmmalloc.so.* $LIB_DIR/pmdk_dbg/
 $LIB_DIR/libvmmalloc.so
 $LIB_DIR/pkgconfig/libvmmalloc.pc
 $INC_DIR/libvmmalloc.h
-$MAN7_DIR/libvmmalloc.7.gz
+$MAN7_DIR/libvmmalloc.7
 EOF
 
 cat << EOF > debian/libvmmalloc-dev.lintian-overrides
@@ -801,10 +828,10 @@ postinst-has-useless-call-to-ldconfig
 postrm-has-useless-call-to-ldconfig
 # We do not want to compile with -O2 for debug version
 hardening-no-fortify-functions $LIB_DIR/pmdk_dbg/*
-EOF
-
-cat << EOF > debian/libvmmalloc-dev.triggers
-interest man-db
+# pmdk provides second set of libraries for debugging.
+# These are in /usr/lib/$arch/pmdk_dbg/, but still trigger ldconfig.
+# Related issue: https://github.com/pmem/issues/issues/841
+libvmmalloc-dev: package-has-unnecessary-activation-of-ldconfig-trigger
 EOF
 
 cat << EOF > debian/$PACKAGE_NAME-dbg.lintian-overrides
@@ -814,13 +841,9 @@ EOF
 
 cat << EOF > debian/pmempool.install
 usr/bin/pmempool
-$MAN1_DIR/pmempool.1.gz
-$MAN1_DIR/pmempool-*.1.gz
-etc/bash_completion.d/pmempool.sh
-EOF
-
-cat << EOF > debian/pmempool.triggers
-interest man-db
+$MAN1_DIR/pmempool.1
+$MAN1_DIR/pmempool-*.1
+usr/share/bash-completion/completions/pmempool
 EOF
 
 cat << EOF > debian/pmempool.lintian-overrides
@@ -828,36 +851,15 @@ $ITP_BUG_EXCUSE
 new-package-should-close-itp-bug
 EOF
 
-cat << EOF > debian/${OBJ_CPP_NAME}.install
-$INC_DIR/libpmemobj++/*.hpp
-$INC_DIR/libpmemobj++/detail/*.hpp
-$DOC_DIR/${OBJ_CPP_DOC_DIR}/*
-$LIB_DIR/pkgconfig/libpmemobj++.pc
+cat << EOF > debian/pmreorder.install
+usr/bin/pmreorder
+usr/share/pmreorder/*.py
+$MAN1_DIR/pmreorder.1
 EOF
 
-cat << EOF > debian/${OBJ_CPP_NAME}.triggers
-interest doc-base
-EOF
-
-cat << EOF > debian/${OBJ_CPP_NAME}.lintian-overrides
+cat << EOF > debian/pmreorder.lintian-overrides
 $ITP_BUG_EXCUSE
 new-package-should-close-itp-bug
-# The following warnings are triggered by a bug in debhelper:
-# http://bugs.debian.org/204975
-postinst-has-useless-call-to-ldconfig
-postrm-has-useless-call-to-ldconfig
-EOF
-
-cat << EOF > debian/${OBJ_CPP_NAME}.doc-base
-Document: ${OBJ_CPP_NAME}
-Title: PMDK libpmemobj C++ bindings Manual
-Author: PMDK Developers
-Abstract: This is the HTML docs for the C++ bindings for PMDK's libpmemobj.
-Section: Programming
-
-Format: HTML
-Index: /$DOC_DIR/${OBJ_CPP_DOC_DIR}/index.html
-Files: /$DOC_DIR/${OBJ_CPP_DOC_DIR}/*
 EOF
 
 # librpmem & rpmemd
@@ -868,7 +870,7 @@ then
 fi
 
 # daxio
-if [ "${NDCTL_ENABLE}" = "y" ]
+if [ "${NDCTL_ENABLE}" != "n" ]
 then
 	append_daxio_control;
 	daxio_install_triggers_overrides;

@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2018, Intel Corporation
+# Copyright 2014-2019, Intel Corporation
 # Copyright (c) 2016, Microsoft Corporation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -76,25 +76,39 @@ fi
 
 export UNITTEST_LOG_LEVEL GREP TEST FS BUILD CHECK_TYPE CHECK_POOL VERBOSE SUFFIX
 
+VMMALLOC=libvmmalloc.so.1
 TOOLS=../tools
+LIB_TOOLS="../../tools"
 # Paths to some useful tools
-[ "$PMEMPOOL" ] || PMEMPOOL=../../tools/pmempool/pmempool
-[ "$DAXIO" ] || DAXIO=../../tools/daxio/daxio
+[ "$PMEMPOOL" ] || PMEMPOOL=$LIB_TOOLS/pmempool/pmempool
+[ "$DAXIO" ] || DAXIO=$LIB_TOOLS/daxio/daxio
 [ "$PMEMSPOIL" ] || PMEMSPOIL=$TOOLS/pmemspoil/pmemspoil.static-nondebug
 [ "$BTTCREATE" ] || BTTCREATE=$TOOLS/bttcreate/bttcreate.static-nondebug
 [ "$PMEMWRITE" ] || PMEMWRITE=$TOOLS/pmemwrite/pmemwrite
 [ "$PMEMALLOC" ] || PMEMALLOC=$TOOLS/pmemalloc/pmemalloc
 [ "$PMEMOBJCLI" ] || PMEMOBJCLI=$TOOLS/pmemobjcli/pmemobjcli
 [ "$PMEMDETECT" ] || PMEMDETECT=$TOOLS/pmemdetect/pmemdetect.static-nondebug
+[ "$PMREORDER" ] || PMREORDER=$LIB_TOOLS/pmreorder/pmreorder.py
 [ "$FIP" ] || FIP=$TOOLS/fip/fip
 [ "$DDMAP" ] || DDMAP=$TOOLS/ddmap/ddmap
 [ "$CMPMAP" ] || CMPMAP=$TOOLS/cmpmap/cmpmap
+[ "$EXTENTS" ] || EXTENTS=$TOOLS/extents/extents
+[ "$FALLOCATE_DETECT" ] || FALLOCATE_DETECT=$TOOLS/fallocate_detect/fallocate_detect.static-nondebug
+[ "$OBJ_VERIFY" ] || OBJ_VERIFY=$TOOLS/obj_verify/obj_verify
+[ "$USC_PERMISSION" ] || USC_PERMISSION=$TOOLS/usc_permission_check/usc_permission_check.static-nondebug
 
 # force globs to fail if they don't match
 shopt -s failglob
 
 # number of remote nodes required in the current unit test
 NODES_MAX=-1
+
+# sizes of aligments
+SIZE_4KB=4096
+SIZE_2MB=2097152
+
+# PMEMOBJ limitations
+PMEMOBJ_MAX_ALLOC_SIZE=17177771968
 
 # SSH and SCP options
 SSH_OPTS="-o BatchMode=yes"
@@ -106,14 +120,17 @@ FILES_COMMON_DIR="\
 $DIR_SRC/test/*.supp \
 $DIR_SRC/tools/rpmemd/rpmemd \
 $DIR_SRC/tools/pmempool/pmempool \
+$DIR_SRC/test/tools/extents/extents \
+$DIR_SRC/test/tools/obj_verify/obj_verify \
 $DIR_SRC/test/tools/ctrld/ctrld \
 $DIR_SRC/test/tools/fip/fip"
 
 # Portability
-VALGRIND_SUPP="--suppressions=../ld.supp --suppressions=../memcheck-libunwind.supp --suppressions=../ndctl.supp"
+VALGRIND_SUPP="--suppressions=../ld.supp --suppressions=../memcheck-libunwind.supp"
 if [ "$(uname -s)" = "FreeBSD" ]; then
 	DATE="gdate"
 	DD="gdd"
+	FALLOCATE="mkfile"
 	VM_OVERCOMMIT="[ $(sysctl vm.overcommit | awk '{print $2}') == 0 ]"
 	RM_ONEFS="-x"
 	STAT_MODE="-f%Lp"
@@ -124,6 +141,7 @@ if [ "$(uname -s)" = "FreeBSD" ]; then
 else
 	DATE="date"
 	DD="dd"
+	FALLOCATE="fallocate -l"
 	VM_OVERCOMMIT="[ $(cat /proc/sys/vm/overcommit_memory) != 2 ]"
 	RM_ONEFS="--one-file-system"
 	STAT_MODE="-c%a"
@@ -136,11 +154,10 @@ fi
 NODE_PID_FILES[0]=""
 
 #
-# For non-static build testing, the variable TEST_LD_LIBRARY_PATH is
-# constructed so the test pulls in the appropriate library from this
-# source tree.  To override this behavior (i.e. to force the test to
-# use the libraries installed elsewhere on the system), set
-# TEST_LD_LIBRARY_PATH and this script will not override it.
+# The variable TEST_LD_LIBRARY_PATH is constructed so the test pulls in
+# the appropriate library from this source tree.  To override this behavior
+# (i.e. to force the test to use the libraries installed elsewhere on
+# the system), set TEST_LD_LIBRARY_PATH and this script will not override it.
 #
 # For example, in a test directory, run:
 #	TEST_LD_LIBRARY_PATH=/usr/lib ./TEST0
@@ -148,13 +165,23 @@ NODE_PID_FILES[0]=""
 [ "$TEST_LD_LIBRARY_PATH" ] || {
 	case "$BUILD"
 	in
-	debug)
-		TEST_LD_LIBRARY_PATH=../../debug
-		REMOTE_LD_LIBRARY_PATH=../debug
+	debug|static-debug)
+		if [ -z "$PMDK_LIB_PATH_DEBUG" ]; then
+			TEST_LD_LIBRARY_PATH=../../debug
+			REMOTE_LD_LIBRARY_PATH=../debug
+		else
+			TEST_LD_LIBRARY_PATH=$PMDK_LIB_PATH_DEBUG
+			REMOTE_LD_LIBRARY_PATH=$PMDK_LIB_PATH_DEBUG
+		fi
 		;;
-	nondebug)
-		TEST_LD_LIBRARY_PATH=../../nondebug
-		REMOTE_LD_LIBRARY_PATH=../nondebug
+	nondebug|static-nondebug)
+		if [ -z "$PMDK_LIB_PATH_NONDEBUG" ]; then
+			TEST_LD_LIBRARY_PATH=../../nondebug
+			REMOTE_LD_LIBRARY_PATH=../nondebug
+		else
+			TEST_LD_LIBRARY_PATH=$PMDK_LIB_PATH_NONDEBUG
+			REMOTE_LD_LIBRARY_PATH=$PMDK_LIB_PATH_NONDEBUG
+		fi
 		;;
 	esac
 }
@@ -197,7 +224,7 @@ fi
 
 REAL_FS=$FS
 if [ "$DIR" ]; then
-	DIR=$DIR/$curtestdir$UNITTEST_NUM$SUFFIX
+	DIR=$DIR/$curtestdir$UNITTEST_NUM
 else
 	case "$FS"
 	in
@@ -206,7 +233,7 @@ else
 		if [ "$PMEM_FS_DIR" == "" ]; then
 			fatal "$UNITTEST_NAME: PMEM_FS_DIR is not set"
 		fi
-		DIR=$PMEM_FS_DIR/$DIRSUFFIX/$curtestdir$UNITTEST_NUM$SUFFIX
+		DIR=$PMEM_FS_DIR/$DIRSUFFIX/$curtestdir$UNITTEST_NUM
 		if [ "$PMEM_FS_DIR_FORCE_PMEM" = "1" ] || [ "$PMEM_FS_DIR_FORCE_PMEM" = "2" ]; then
 			export PMEM_IS_PMEM_FORCE=1
 		fi
@@ -216,24 +243,24 @@ else
 		if [ "$NON_PMEM_FS_DIR" == "" ]; then
 			fatal "$UNITTEST_NAME: NON_PMEM_FS_DIR is not set"
 		fi
-		DIR=$NON_PMEM_FS_DIR/$DIRSUFFIX/$curtestdir$UNITTEST_NUM$SUFFIX
+		DIR=$NON_PMEM_FS_DIR/$DIRSUFFIX/$curtestdir$UNITTEST_NUM
 		;;
 	any)
 		if [ "$PMEM_FS_DIR" != "" ]; then
-			DIR=$PMEM_FS_DIR/$DIRSUFFIX/$curtestdir$UNITTEST_NUM$SUFFIX
+			DIR=$PMEM_FS_DIR/$DIRSUFFIX/$curtestdir$UNITTEST_NUM
 			REAL_FS=pmem
 			if [ "$PMEM_FS_DIR_FORCE_PMEM" = "1" ] || [ "$PMEM_FS_DIR_FORCE_PMEM" = "2" ]; then
 				export PMEM_IS_PMEM_FORCE=1
 			fi
 		elif [ "$NON_PMEM_FS_DIR" != "" ]; then
-			DIR=$NON_PMEM_FS_DIR/$DIRSUFFIX/$curtestdir$UNITTEST_NUM$SUFFIX
+			DIR=$NON_PMEM_FS_DIR/$DIRSUFFIX/$curtestdir$UNITTEST_NUM
 			REAL_FS=non-pmem
 		else
 			fatal "$UNITTEST_NAME: fs-type=any and both env vars are empty"
 		fi
 		;;
 	none)
-		DIR=/dev/null/not_existing_dir/$DIRSUFFIX/$curtestdir$UNITTEST_NUM$SUFFIX
+		DIR=/dev/null/not_existing_dir/$DIRSUFFIX/$curtestdir$UNITTEST_NUM
 		;;
 	*)
 		verbose_msg "$UNITTEST_NAME: SKIP fs-type $FS (not configured)"
@@ -241,13 +268,6 @@ else
 		;;
 	esac
 fi
-
-# writes test working directory to temporary file
-# that allows read location of data after test failure
-if [ -f "$TEMP_LOC" ]; then
-	echo "$DIR" > $TEMP_LOC
-fi
-
 
 #
 # The default is to turn on library logging to level 3 and save it to local files.
@@ -263,12 +283,10 @@ export PMEMLOG_LOG_LEVEL=3
 export PMEMLOG_LOG_FILE=pmemlog$UNITTEST_NUM.log
 export PMEMOBJ_LOG_LEVEL=3
 export PMEMOBJ_LOG_FILE=pmemobj$UNITTEST_NUM.log
-export PMEMCTO_LOG_LEVEL=3
-export PMEMCTO_LOG_FILE=pmemcto$UNITTEST_NUM.log
 export PMEMPOOL_LOG_LEVEL=3
 export PMEMPOOL_LOG_FILE=pmempool$UNITTEST_NUM.log
+export PMREORDER_LOG_FILE=pmreorder$UNITTEST_NUM.log
 
-export VMMALLOC_POOL_DIR="$DIR"
 export VMMALLOC_POOL_SIZE=$((16 * 1024 * 1024))
 export VMMALLOC_LOG_LEVEL=3
 export VMMALLOC_LOG_FILE=vmmalloc$UNITTEST_NUM.log
@@ -643,6 +661,9 @@ function valgrind_ignore_warnings() {
 		-e "parse_CU_Header: is neither DWARF2 nor DWARF3 nor DWARF4" \
 		-e "brk segment overflow" \
 		-e "see section Limitations in user manual" \
+		-e "Warning: set address range perms: large range"\
+		-e "further instances of this message will not be shown"\
+		-e "get_Form_contents: DW_FORM_GNU_strp_alt used, but no alternate .debug_str"\
 		>  $1.tmp
 	mv $1.tmp $1
 }
@@ -666,10 +687,35 @@ function get_trace() {
 	if [ "$check_type" = "memcheck" -a "$MEMCHECK_DONT_CHECK_LEAKS" != "1" ]; then
 		opts="$opts --leak-check=full"
 	fi
+	if [ "$check_type" = "pmemcheck" ]; then
+		# Before Skylake, Intel CPUs did not have clflushopt instruction, so
+		# pmem_flush and pmem_persist both translated to clflush.
+		# This means that missing pmem_drain after pmem_flush could only be
+		# detected on Skylake+ CPUs.
+		# This option tells pmemcheck to expect fence (sfence or
+		# VALGRIND_PMC_DO_FENCE client request, used by pmem_drain) after
+		# clflush and makes pmemcheck output the same on pre-Skylake and
+		# post-Skylake CPUs.
+		opts="$opts --expect-fence-after-clflush=yes"
+	fi
+
 	opts="$opts $VALGRIND_SUPP"
 	if [ "$node" -ne -1 ]; then
 		exe=${NODE_VALGRINDEXE[$node]}
 		opts="$opts"
+
+		case "$check_type" in
+		memcheck)
+			opts="$opts --suppressions=../memcheck-libibverbs.supp"
+			;;
+		helgrind)
+			opts="$opts --suppressions=../helgrind-cxgb4.supp"
+			opts="$opts --suppressions=../helgrind-libfabric.supp"
+			;;
+		drd)
+			opts="$opts --suppressions=../drd-libfabric.supp"
+			;;
+		esac
 	fi
 
 	echo "$exe --tool=$check_type --log-file=$log_file $opts $TRACE"
@@ -682,10 +728,16 @@ function get_trace() {
 #
 function validate_valgrind_log() {
 	[ "$VALIDATE_VALGRIND_LOG" != "1" ] && return
-	if [ ! -e "$1.match" ] && grep "ERROR SUMMARY: [^0]" $1 >/dev/null; then
+	# fail if there are valgrind errors found or
+	# if it detects overlapping chunks
+	if [ ! -e "$1.match" ] && grep \
+		-e "ERROR SUMMARY: [^0]" \
+		-e "Bad mempool" \
+		$1 >/dev/null ;
+	then
 		msg="failed"
 		[ -t 2 ] && command -v tput >/dev/null && msg="$(tput setaf 1)$msg$(tput sgr0)"
-		echo -e "$UNITTEST_NAME $msg with Valgrind. See $1. First 20 lines below." >&2
+		echo -e "$UNITTEST_NAME $msg with Valgrind. See $1. Last 20 lines below." >&2
 		paste -d " " <(yes $UNITTEST_NAME $1 | head -n 20) <(tail -n 20 $1) >&2
 		false
 	fi
@@ -694,6 +746,8 @@ function validate_valgrind_log() {
 #
 # expect_normal_exit -- run a given command, expect it to exit 0
 #
+# if VALGRIND_DISABLED is not empty valgrind tool will be omitted
+#
 function expect_normal_exit() {
 	local VALGRIND_LOG_FILE=${CHECK_TYPE}${UNITTEST_NUM}.log
 	local N=$2
@@ -701,6 +755,9 @@ function expect_normal_exit() {
 	# in case of a remote execution disable valgrind check if valgrind is not
 	# enabled on node
 	local _CHECK_TYPE=$CHECK_TYPE
+	if [ "x$VALGRIND_DISABLED" != "x" ]; then
+		_CHECK_TYPE=none
+	fi
 	if [ "$1" == "run_on_node" -o "$1" == "run_on_node_background" ]; then
 		if [ -z $(is_valgrind_enabled_on_node $N) ]; then
 			_CHECK_TYPE="none"
@@ -729,12 +786,16 @@ function expect_normal_exit() {
 		export VALGRIND_OPTS="--suppressions=../helgrind-log.supp"
 	fi
 
-	# in case of preloading libvmmalloc.so force valgrind to not override malloc
+	if [ "$CHECK_TYPE" = "memcheck" ]; then
+		export VALGRIND_OPTS="$VALGRIND_OPTS --suppressions=../memcheck-dlopen.supp"
+	fi
+
+	# in case of preloading libvmmalloc.so.1 force valgrind to not override malloc
 	if [ -n "$VALGRINDEXE" -a -n "$TEST_LD_PRELOAD" ]; then
 		if [ $(valgrind_version) -ge 312 ]; then
 			preload=`basename $TEST_LD_PRELOAD`
 		fi
-		if [ "$preload" == "libvmmalloc.so" ]; then
+		if [ "$preload" == "$VMMALLOC" ]; then
 			export VALGRIND_OPTS="$VALGRIND_OPTS --soname-synonyms=somalloc=nouserintercepts"
 		fi
 	fi
@@ -767,7 +828,7 @@ function expect_normal_exit() {
 	disable_exit_on_error
 
 	eval $ECHO LD_LIBRARY_PATH=$TEST_LD_LIBRARY_PATH LD_PRELOAD=$TEST_LD_PRELOAD \
-		$trace $*
+		$trace "$*"
 	ret=$?
 
 	if [ $REMOTE_VALGRIND_LOG -eq 1 ]; then
@@ -813,7 +874,6 @@ function expect_normal_exit() {
 			dump_last_n_lines $PMEMOBJ_LOG_FILE
 			dump_last_n_lines $PMEMLOG_LOG_FILE
 			dump_last_n_lines $PMEMBLK_LOG_FILE
-			dump_last_n_lines $PMEMCTO_LOG_FILE
 			dump_last_n_lines $PMEMPOOL_LOG_FILE
 			dump_last_n_lines $VMEM_LOG_FILE
 			dump_last_n_lines $VMMALLOC_LOG_FILE
@@ -859,12 +919,12 @@ function expect_abnormal_exit() {
 		esac
 	fi
 
-	# in case of preloading libvmmalloc.so force valgrind to not override malloc
+	# in case of preloading libvmmalloc.so.1 force valgrind to not override malloc
 	if [ -n "$VALGRINDEXE" -a -n "$TEST_LD_PRELOAD" ]; then
 		if [ $(valgrind_version) -ge 312 ]; then
 			preload=`basename $TEST_LD_PRELOAD`
 		fi
-		if [ "$preload" == "libvmmalloc.so" ]; then
+		if [ "$preload" == "$VMMALLOC" ]; then
 			export VALGRIND_OPTS="$VALGRIND_OPTS --soname-synonyms=somalloc=nouserintercepts"
 		fi
 	fi
@@ -875,7 +935,7 @@ function expect_abnormal_exit() {
 
 	disable_exit_on_error
 	eval $ECHO ASAN_OPTIONS="detect_leaks=0 ${ASAN_OPTIONS}" \
-		LD_LIBRARY_PATH=$TEST_LD_LIBRARY_PATH LD_PRELOAD=$TEST_LD_PRELOAD $TRACE $*
+		LD_LIBRARY_PATH=$TEST_LD_LIBRARY_PATH LD_PRELOAD=$TEST_LD_PRELOAD $TRACE "$*"
 	ret=$?
 	restore_exit_on_error
 
@@ -929,6 +989,54 @@ function require_unlimited_vm() {
 	$VM_OVERCOMMIT && [ $(ulimit -v) = "unlimited" ] && return
 	msg "$UNITTEST_NAME: SKIP required: overcommit_memory enabled and unlimited virtual memory"
 	exit 0
+}
+
+#
+# require_linked_with_ndctl -- require an executable linked with libndctl
+#
+# usage: require_linked_with_ndctl <executable-file>
+#
+function require_linked_with_ndctl() {
+	[ "$1" == "" -o ! -x "$1" ] && \
+		fatal "$UNITTEST_NAME: ERROR: require_linked_with_ndctl() requires one argument - an executable file"
+	local lddndctl=$(LD_LIBRARY_PATH=$TEST_LD_LIBRARY_PATH ldd $1 | $GREP -ce "libndctl")
+	[ "$lddndctl" == "1" ] && return
+	msg "$UNITTEST_NAME: SKIP required: executable $1 linked with libndctl"
+	exit 0
+}
+
+#
+# require_sudo_allowed -- require sudo command is allowed
+#
+function require_sudo_allowed() {
+	if [ "$ENABLE_SUDO_TESTS" != "y" ]; then
+		msg "$UNITTEST_NAME: SKIP: tests using 'sudo' are not enabled in testconfig.sh (ENABLE_SUDO_TESTS)"
+		exit 0
+	fi
+
+	if ! timeout --signal=SIGKILL --kill-after=3s 3s sudo date >/dev/null 2>&1
+	then
+		msg "$UNITTEST_NAME: SKIP required: sudo allowed"
+		exit 0
+	fi
+}
+
+#
+# require_sudo_allowed_node -- require sudo command on a remote node
+#
+# usage: require_sudo_allowed_node <node-number>
+#
+function require_sudo_allowed_node() {
+	if [ "$ENABLE_SUDO_TESTS" != "y" ]; then
+		msg "$UNITTEST_NAME: SKIP: tests using 'sudo' are not enabled in testconfig.sh (ENABLE_SUDO_TESTS)"
+		exit 0
+	fi
+
+	if ! run_on_node $1 "timeout --signal=SIGKILL --kill-after=3s 3s sudo date" >/dev/null 2>&1
+	then
+		msg "$UNITTEST_NAME: SKIP required: sudo allowed on node $1"
+		exit 0
+	fi
 }
 
 #
@@ -1108,6 +1216,13 @@ function require_node_dax_device() {
 }
 
 #
+# require_no_unicode -- overwrite unicode suffix to empty string
+#
+function require_no_unicode() {
+	export SUFFIX=""
+}
+
+#
 # get_node_devdax_path -- get path of a Device DAX device on a node
 #
 # usage: get_node_devdax_path <node> <device>
@@ -1186,7 +1301,7 @@ function get_node_devdax_size() {
 	ret=$?
 	restore_exit_on_error
 	if [ "$ret" != "0" ]; then
-		fatal "UNITTEST_NAME: stat on node $node: $out"
+		fatal "$UNITTEST_NAME: stat on node $node: $out"
 	fi
 	local major=$((16#$out))
 
@@ -1322,6 +1437,69 @@ function require_fs_type() {
 	exit 0
 }
 
+
+#
+# require_native_fallocate -- verify if filesystem supports fallocate
+#
+function require_native_fallocate() {
+	require_fs_type pmem non-pmem
+
+	set +e
+	$FALLOCATE_DETECT $1
+	status=$?
+	set -e
+
+	if [ $status -eq 1 ]; then
+		msg "$UNITTEST_NAME: SKIP: filesystem does not support fallocate"
+		exit 0
+	elif [ $status -ne 0 ]; then
+		msg "$UNITTEST_NAME: fallocate_detect failed"
+		exit 1
+	fi
+}
+
+#
+# require_usc_persmission -- verify if usc can be read with current persmission
+#
+function require_usc_permission() {
+	set +e
+	$USC_PERMISSION $1 2> $DIR/usc_permission.txt
+	status=$?
+	set -e
+
+	# check if there were any messages printed to stderr, skip test if there were
+	usc_stderr=$(cat $DIR/usc_permission.txt | wc -c)
+
+	rm -f $DIR/usc_permission.txt
+
+	if [ $status -eq 1 ] || [ $usc_stderr -ne 0 ]; then
+		msg "$UNITTEST_NAME: SKIP: missing permissions to read usc"
+		exit 0
+	elif [ $status -ne 0 ]; then
+		msg "$UNITTEST_NAME: usc_permission_check failed"
+		exit 1
+	fi
+}
+
+#
+# require_fs_name -- verify if the $DIR is on the required file system
+#
+# Must be AFTER setup() because $DIR must exist
+#
+function require_fs_name() {
+	fsname=`df $DIR -PT | awk '{if (NR == 2) print $2}'`
+
+	for name in $*
+	do
+		if [ "$name" == "$fsname" ]; then
+			return
+		fi
+	done
+
+	msg "$UNITTEST_NAME: SKIP file system $fsname ($* required)"
+	exit 0
+}
+
 #
 # require_build_type -- only allow script to continue for a certain build type
 #
@@ -1338,9 +1516,91 @@ function require_build_type() {
 # require_command -- only allow script to continue if specified command exists
 #
 function require_command() {
-	if ! command -pv $1 1>/dev/null
-	then
+	if ! which $1 &>/dev/null; then
 		msg "$UNITTEST_NAME: SKIP: '$1' command required"
+		exit 0
+	fi
+}
+
+#
+# require_command_node -- only allow script to continue if specified command exists on a remote node
+#
+# usage: require_command_node <node-number>
+#
+function require_command_node() {
+	if ! run_on_node $1 "which $2 &>/dev/null"; then
+		msg "$UNITTEST_NAME: SKIP: node $1: '$2' command required"
+		exit 0
+	fi
+}
+
+#
+# require_kernel_module -- only allow script to continue if specified kernel module exists
+#
+# usage: require_kernel_module <module_name> [path_to_modinfo]
+#
+function require_kernel_module() {
+	MODULE=$1
+	MODINFO=$2
+
+	if [ "$MODINFO" == "" ]; then
+		set +e
+		[ "$MODINFO" == "" ] && \
+			MODINFO=$(which modinfo 2>/dev/null)
+		set -e
+
+		[ "$MODINFO" == "" ] && \
+			[ -x /usr/sbin/modinfo ] && MODINFO=/usr/sbin/modinfo
+		[ "$MODINFO" == "" ] && \
+			[ -x /sbin/modinfo ] && MODINFO=/sbin/modinfo
+		[ "$MODINFO" == "" ] && \
+			msg "$UNITTEST_NAME: SKIP: modinfo command required" && \
+			exit 0
+	else
+		[ ! -x $MODINFO ] && \
+			msg "$UNITTEST_NAME: SKIP: modinfo command required" && \
+			exit 0
+	fi
+
+	$MODINFO -F name $MODULE &>/dev/null && true
+	if [ $? -ne 0 ]; then
+		msg "$UNITTEST_NAME: SKIP: '$MODULE' kernel module required"
+		exit 0
+	fi
+}
+
+#
+# require_kernel_module_node -- only allow script to continue if specified kernel module exists on a remote node
+#
+# usage: require_kernel_module_node <node> <module_name> [path_to_modinfo]
+#
+function require_kernel_module_node() {
+	NODE_N=$1
+	MODULE=$2
+	MODINFO=$3
+
+	if [ "$MODINFO" == "" ]; then
+		set +e
+		[ "$MODINFO" == "" ] && \
+			MODINFO=$(run_on_node $NODE_N which modinfo 2>/dev/null)
+		set -e
+
+		[ "$MODINFO" == "" ] && \
+			run_on_node $NODE_N "test -x /usr/sbin/modinfo" && MODINFO=/usr/sbin/modinfo
+		[ "$MODINFO" == "" ] && \
+			run_on_node $NODE_N "test -x /sbin/modinfo" && MODINFO=/sbin/modinfo
+		[ "$MODINFO" == "" ] && \
+			msg "$UNITTEST_NAME: SKIP: node $NODE_N: modinfo command required" && \
+			exit 0
+	else
+		run_on_node $NODE_N "test ! -x $MODINFO" && \
+			msg "$UNITTEST_NAME: SKIP: node $NODE_N: modinfo command required" && \
+			exit 0
+	fi
+
+	run_on_node $NODE_N "$MODINFO -F name $MODULE &>/dev/null" && true
+	if [ $? -ne 0 ]; then
+		msg "$UNITTEST_NAME: SKIP: node $NODE_N: '$MODULE' kernel module required"
 		exit 0
 	fi
 }
@@ -1422,7 +1682,7 @@ function configure_valgrind() {
 
 	if [ "$CHECK_TYPE" == "none" ]; then
 		if [ "$1" == "force-disable" ]; then
-			msg "all valgrind tests disabled"
+			msg "$UNITTEST_NAME: all valgrind tests disabled"
 		elif [ "$2" = "force-enable" ]; then
 			CHECK_TYPE="$1"
 			require_valgrind_tool $1 $3
@@ -1531,11 +1791,24 @@ function require_valgrind_tool() {
 		exit 0
 	fi
 
-	if [ "$tool" == "pmemcheck" -o "$tool" == "helgrind" ]; then
+	if [ "$tool" == "helgrind" ]; then
 		valgrind --tool=$tool --help 2>&1 | \
 		grep -qi "$tool is Copyright (c)" && true
 		if [ $? -ne 0 ]; then
-			msg "$UNITTEST_NAME: SKIP valgrind with $tool required"
+			msg "$UNITTEST_NAME: SKIP Valgrind with $tool required"
+			exit 0;
+		fi
+	fi
+	if [ "$tool" == "pmemcheck" ]; then
+		out=`valgrind --tool=$tool --help 2>&1` && true
+		echo "$out" | grep -qi "$tool is Copyright (c)" && true
+		if [ $? -ne 0 ]; then
+			msg "$UNITTEST_NAME: SKIP Valgrind with $tool required"
+			exit 0;
+		fi
+		echo "$out" | grep -qi "expect-fence-after-clflush" && true
+		if [ $? -ne 0 ]; then
+			msg "$UNITTEST_NAME: SKIP pmemcheck does not support --expect-fence-after-clflush option. Please update it to the latest version."
 			exit 0;
 		fi
 	fi
@@ -1676,6 +1949,50 @@ function require_preload() {
 		rm -f $1.core
 		exit 0
 	fi
+}
+
+#
+# require_sds -- continue script execution only if binary is compiled with
+#	shutdown state support
+#
+#	usage: require_sds <binary>
+#
+function require_sds() {
+	local binary=$1
+	local dir=.
+	if [ -z "$binary" ]; then
+		fatal "require_sds: error: no binary found"
+	fi
+	strings ${binary} 2>&1 | \
+		grep -q "compiled with support for shutdown state" && true
+	if [ $? -ne 0 ]; then
+		msg "$UNITTEST_NAME: SKIP not compiled with support for shutdown state"
+		exit 0
+	fi
+	return 0
+}
+
+#
+# require_no_sds -- continue script execution only if binary is NOT compiled with
+#	shutdown state support
+#
+#	usage: require_no_sds <binary>
+#
+function require_no_sds() {
+	local binary=$1
+	local dir=.
+	if [ -z "$binary" ]; then
+		fatal "require_sds: error: no binary found"
+	fi
+	set +e
+	found=$(strings ${binary} 2>&1 | \
+		grep -c "compiled with support for shutdown state")
+	set -e
+	if [ "$found" -ne "0" ]; then
+		msg "$UNITTEST_NAME: SKIP compiled with support for shutdown state"
+		exit 0
+	fi
+	return 0
 }
 
 #
@@ -1852,6 +2169,13 @@ function require_nodes() {
 	local N_NODES=${#NODE[@]}
 	local N=$1
 
+	[ -z "$N" ] \
+		&& fatal "require_nodes: missing reguired parameter: number of nodes"
+
+	# if it has already been called, check if number of required nodes is bigger than previously
+	[ -n "$NODES_MAX" ] \
+		&& [ $(($N - 1)) -le $NODES_MAX ] && return
+
 	[ $N -gt $N_NODES ] \
 		&& msg "$UNITTEST_NAME: SKIP: requires $N node(s), but $N_NODES node(s) provided" \
 		&& exit 0
@@ -1995,7 +2319,7 @@ function copy_log_files() {
 		for file in ${NODE_LOG_FILES[$N]}; do
 			NODE_SCP_LOG_FILES[$N]="${NODE_SCP_LOG_FILES[$N]} ${NODE[$N]}:$DIR/${file}"
 		done
-		[ "${NODE_SCP_LOG_FILES[$N]}" ] && run_command scp $SCP_OPTS ${NODE_SCP_LOG_FILES[$N]} . &> $PREP_LOG_FILE
+		[ "${NODE_SCP_LOG_FILES[$N]}" ] && run_command scp $SCP_OPTS ${NODE_SCP_LOG_FILES[$N]} . &>> $PREP_LOG_FILE
 		for file in ${NODE_LOG_FILES[$N]}; do
 			[ -f $file ] && mv $file node_${N}_${file}
 		done
@@ -2209,6 +2533,16 @@ function create_holey_file_on_node() {
 # setup -- print message that test setup is commencing
 #
 function setup() {
+
+	DIR=$DIR$SUFFIX
+	export VMMALLOC_POOL_DIR="$DIR"
+
+	# writes test working directory to temporary file
+	# that allows read location of data after test failure
+	if [ -f "$TEMP_LOC" ]; then
+		echo "$DIR" > $TEMP_LOC
+	fi
+
 	# test type must be explicitly specified
 	if [ "$req_test_type" != "1" ]; then
 		fatal "error: required test type is not specified"
@@ -2568,10 +2902,13 @@ function get_node_dir() {
 #
 # example:
 #    The following command initialize rpmem environment variables on the node 1
-#    to perform replication to the node 0 and node 2. Additionaly rpmemd pid
-#    will be stored in file.pid.
+#    to perform replication to node 0, node 2 and node 3.
+#    Additionally:
+#    - on node 2 rpmemd pid will be stored in file.pid
+#    - on node 3 no pid file will be created (SKIP) and rpmemd will use
+#      file.conf config file
 #
-#       init_rpmem_on_node 1 0 2:file.pid
+#       init_rpmem_on_node 1 0 2:file.pid 3:SKIP:file.conf
 #
 function init_rpmem_on_node() {
 	local master=$1
@@ -2601,6 +2938,7 @@ function init_rpmem_on_node() {
 	for slave in "$@"
 	do
 		slave=(${slave//:/ })
+		conf=${slave[2]}
 		pid=${slave[1]}
 		slave=${slave[0]}
 
@@ -2614,7 +2952,7 @@ function init_rpmem_on_node() {
 			log_file=${CHECK_TYPE}${UNITTEST_NUM}.log
 			trace=$(get_trace $CHECK_TYPE $log_file $slave)
 		fi
-		if [ -n "$pid" ]; then
+		if [ -n "$pid" -a "$pid" != "SKIP" ]; then
 			trace="$trace ../ctrld $pid exe"
 		fi
 		if [ -n ${UNITTEST_DO_NOT_CHECK_OPEN_FILES+x} ]; then
@@ -2635,6 +2973,10 @@ function init_rpmem_on_node() {
 		CMD="$CMD --log-file=$RPMEMD_LOG_FILE"
 		CMD="$CMD --log-level=$RPMEMD_LOG_LEVEL"
 		CMD="$CMD --poolset-dir=$poolset_dir"
+
+		if [ -n "$conf" ]; then
+			CMD="$CMD --config=$conf"
+		fi
 
 		if [ "$RPMEM_PM" == "APM" ]; then
 			CMD="$CMD --persist-apm"
@@ -2877,4 +3219,348 @@ function count_lines() {
 	disable_exit_on_error
 	$GREP -ce "$1" $2
 	restore_exit_on_error
+}
+
+#
+# get_pmemcheck_version() - return pmemcheck API major or minor version
+#	usage: get_pmemcheck_version <0|1>
+#
+function get_pmemcheck_version()
+{
+	PMEMCHECK_VERSION=$($VALGRINDEXE --tool=pmemcheck true 2>&1 \
+			| head -n 1 | sed "s/.*-\([0-9.]*\),.*/\1/")
+
+	OIFS=$IFS
+	IFS="."
+	PMEMCHECK_MAJ_MIN=($PMEMCHECK_VERSION)
+	IFS=$OIFS
+	PMEMCHECK_VERSION_PART=${PMEMCHECK_MAJ_MIN[$1]}
+
+	echo "$PMEMCHECK_VERSION_PART"
+}
+
+#
+# require_pmemcheck_version_ge - check if pmemcheck API
+# version is greater or equal to required value
+#	usage: require_pmemcheck_version_ge <major> <minor>
+#
+function require_pmemcheck_version_ge()
+{
+	require_valgrind_tool pmemcheck
+
+	REQUIRE_MAJOR=$1
+	REQUIRE_MINOR=$2
+	PMEMCHECK_MAJOR=$(get_pmemcheck_version 0)
+	PMEMCHECK_MINOR=$(get_pmemcheck_version 1)
+
+	# compare MAJOR
+	if [ $PMEMCHECK_MAJOR -gt $REQUIRE_MAJOR ]; then
+		return 0
+	fi
+
+	# compare MINOR
+	if [ $PMEMCHECK_MAJOR -eq $REQUIRE_MAJOR ]; then
+		if [ $PMEMCHECK_MINOR -ge $REQUIRE_MINOR ]; then
+			return 0
+		fi
+	fi
+
+	msg "$UNITTEST_NAME: SKIP pmemcheck API version:" \
+		"$PMEMCHECK_MAJOR.$PMEMCHECK_MINOR" \
+		"is less than required" \
+		"$REQUIRE_MAJOR.$REQUIRE_MINOR"
+
+	exit 0
+}
+
+#
+# require_pmemcheck_version_lt - check if pmemcheck API
+# version is less than required value
+#	usage: require_pmemcheck_version_lt <major> <minor>
+#
+function require_pmemcheck_version_lt()
+{
+	require_valgrind_tool pmemcheck
+
+	REQUIRE_MAJOR=$1
+	REQUIRE_MINOR=$2
+	PMEMCHECK_MAJOR=$(get_pmemcheck_version 0)
+	PMEMCHECK_MINOR=$(get_pmemcheck_version 1)
+
+	# compare MAJOR
+	if [ $PMEMCHECK_MAJOR -lt $REQUIRE_MAJOR ]; then
+		return 0
+	fi
+
+	# compare MINOR
+	if [ $PMEMCHECK_MAJOR -eq $REQUIRE_MAJOR ]; then
+		if [ $PMEMCHECK_MINOR -lt $REQUIRE_MINOR ]; then
+			return 0
+		fi
+	fi
+
+	msg "$UNITTEST_NAME: SKIP pmemcheck API version:" \
+		"$PMEMCHECK_MAJOR.$PMEMCHECK_MINOR" \
+		"is greater or equal than" \
+		"$REQUIRE_MAJOR.$REQUIRE_MINOR"
+
+	exit 0
+}
+
+#
+# require_python_3 -- check if python3 is available
+#
+function require_python3()
+{
+	if hash python3 &>/dev/null;
+	then
+		PYTHON_EXE=python3
+	else
+		PYTHON_EXE=python
+	fi
+
+	case "$($PYTHON_EXE --version 2>&1)" in
+	    *" 3."*)
+		return
+		;;
+	    *)
+		msg "$UNITTEST_NAME: SKIP: required python version 3"
+		exit 0
+		;;
+	esac
+}
+
+#
+# require_pmreorder -- check all necessarily conditions to run pmreorder
+#
+function require_pmreorder()
+{
+	# python3 and valgrind are necessary
+	require_python3
+	# pmemcheck is required to generate store_log
+	configure_valgrind pmemcheck force-enable
+	# pmreorder tool does not support unicode yet
+	require_no_unicode
+}
+
+#
+# pmreorder_run_tool -- run pmreorder with parameters and return exit status
+#
+# 1 - reorder engine type [nochecker|full|noreorder|partial|accumulative]
+# 2 - marker-engine pairs in format: MARKER=ENGINE,MARKER1=ENGINE1 or
+#     config file in json format: { "MARKER":"ENGINE","MARKER1":"ENGINE1" }
+# 3 - the path to the checker binary/library and  remaining parameters which
+#     will be passed to the consistency checker binary.
+#     If you are using a library checker, prepend '-n funcname'
+#
+function pmreorder_run_tool()
+{
+	rm -f pmreorder$UNITTEST_NUM.log
+	disable_exit_on_error
+	LD_LIBRARY_PATH=$TEST_LD_LIBRARY_PATH $PYTHON_EXE $PMREORDER \
+		-l store_log$UNITTEST_NUM.log \
+		-o pmreorder$UNITTEST_NUM.log \
+		-r $1 \
+		-x $2 \
+		-p "$3"
+	ret=$?
+	restore_exit_on_error
+	echo $ret
+}
+
+#
+# pmreorder_expect_success -- run pmreoreder with forwarded parameters,
+#				expect it to exit zero
+#
+function pmreorder_expect_success()
+{
+	ret=$(pmreorder_run_tool "$@")
+
+	if [ "$ret" -ne "0" ]; then
+		msg="failed with exit code $ret"
+		[ -t 2 ] && command -v tput >/dev/null && msg="$(tput setaf 1)$msg$(tput sgr0)"
+
+		# exit code 130 - script terminated by user (Control-C)
+		if [ "$ret" -ne "130" ]; then
+
+			echo -e "$UNITTEST_NAME $msg." >&2
+			dump_last_n_lines $PMREORDER_LOG_FILE
+		fi
+
+		false
+	fi
+}
+
+#
+# pmreorder_expect_failure -- run pmreoreder with forwarded parameters,
+#				expect it to exit non zero
+#
+function pmreorder_expect_failure()
+{
+	ret=$(pmreorder_run_tool "$@")
+
+	if [ "$ret" -eq "0" ]; then
+		msg="succeeded"
+		[ -t 2 ] && command -v tput >/dev/null && msg="$(tput setaf 1)$msg$(tput sgr0)"
+
+		echo -e "$UNITTEST_NAME command $msg unexpectedly." >&2
+
+		false
+	fi
+}
+
+#
+# pmreorder_create_store_log -- perform a reordering test
+#
+# This function expects 5 additional parameters. They are in order:
+# 1 - the pool file to be tested
+# 2 - the application and necessary parameters to run pmemcheck logging
+#
+function pmreorder_create_store_log()
+{
+	#copy original file and perform store logging
+	cp $1 "$1.pmr"
+	rm -f store_log$UNITTEST_NUM.log
+
+	LD_LIBRARY_PATH=$TEST_LD_LIBRARY_PATH $VALGRINDEXE \
+			--tool=pmemcheck -q \
+			--log-stores=yes \
+			--print-summary=no \
+			--log-file=store_log$UNITTEST_NUM.log \
+			--log-stores-stacktraces=yes \
+			--log-stores-stacktraces-depth=2 \
+			--expect-fence-after-clflush=yes \
+			$2
+
+	# uncomment this line for debug purposes
+	# mv $1 "$1.bak"
+	mv "$1.pmr" $1
+}
+
+#
+# require_free_space -- check if there is enough free space to run the test
+# Example, checking if there is 1 GB of free space on disk:
+# require_free_space 1G
+#
+function require_free_space() {
+	req_free_space=$(convert_to_bytes $1)
+
+	# actually require 5% or 8MB (whichever is higher) more, just in case
+	# file system requires some space for its meta data
+	pct=$((5 * $req_free_space / 100))
+	abs=$(convert_to_bytes 8M)
+	if [ $pct -gt $abs ]; then
+		req_free_space=$(($req_free_space + $pct))
+	else
+		req_free_space=$(($req_free_space + $abs))
+	fi
+
+	output=$(df -k $DIR)
+	found=false
+	i=1
+	for elem in $(echo "$output" | head -1); do
+		if [ ${elem:0:5} == "Avail" ]; then
+			found=true
+			break
+		else
+			let "i+=1"
+		fi
+	done
+	if [ $found = true ]; then
+		row=$(echo "$output" | tail -1)
+		free_space=$(( $(echo $row | awk "{print \$$i}")*1024 ))
+	else
+		msg "$UNITTEST_NAME: SKIP: unable to check free space"
+		exit 0
+	fi
+	if [ $free_space -lt $req_free_space ]; then
+		msg "$UNITTEST_NAME: SKIP: not enough free space ($1 required)"
+		exit 0
+	fi
+}
+
+#
+# require_max_devdax_size -- checks that dev dax is smaller than requested
+#
+# usage: require_max_devdax_size <dev-dax-num> <max-size>
+#
+function require_max_devdax_size() {
+	cur_sz=$(get_devdax_size 0)
+	max_size=$2
+	if [ $cur_sz -ge $max_size ]; then
+		msg "$UNITTEST_NAME: SKIP: DevDAX $1 is too big for this test (max $2 required)"
+		exit 0
+	fi
+}
+
+#
+# require_nfit_tests_enabled - check if tests using the nfit_test kernel module are not enabled
+#
+function require_nfit_tests_enabled() {
+	if [ "$ENABLE_NFIT_TESTS" != "y" ]; then
+		msg "$UNITTEST_NAME: SKIP: tests using the nfit_test kernel module are not enabled in testconfig.sh (ENABLE_NFIT_TESTS)"
+		exit 0
+	fi
+}
+
+#
+# create_recovery_file - create bad block recovery file
+#
+# Usage: create_recovery_file <file> [<offset_1> <length_1> ...]
+#
+function create_recovery_file() {
+	[ $# -lt 1 ] && fatal "create_recovery_file(): not enough parameters: $*"
+
+	FILE=$1
+	shift
+	rm -f $FILE
+
+	while [ $# -ge 2 ]; do
+		OFFSET=$1
+		LENGTH=$2
+		shift 2
+		echo "$(($OFFSET * 512)) $(($LENGTH * 512))" >> $FILE
+	done
+
+	# write the finish flag
+	echo "0 0" >> $FILE
+}
+
+#
+# zero_blocks - zero blocks in a file
+#
+# Usage: zero_blocks <file> <offset> <length>
+#
+function zero_blocks() {
+	[ $# -lt 3 ] && fatal "zero_blocks(): not enough parameters: $*"
+
+	FILE=$1
+	shift
+
+	while [ $# -ge 2 ]; do
+		OFFSET=$1
+		LENGTH=$2
+		shift 2
+		dd if=/dev/zero of=$FILE bs=512 seek=$OFFSET count=$LENGTH conv=notrunc status=none
+	done
+}
+
+#
+# turn_on_checking_bad_blocks -- set the compat_feature POOL_FEAT_CHECK_BAD_BLOCKS on
+#
+function turn_on_checking_bad_blocks()
+{
+	FILE=$1
+
+	expect_normal_exit "$PMEMPOOL feature -e CHECK_BAD_BLOCKS $FILE &>> $PREP_LOG_FILE"
+}
+
+#
+# turn_on_checking_bad_blocks_node -- set the compat_feature POOL_FEAT_CHECK_BAD_BLOCKS on
+#
+function turn_on_checking_bad_blocks_node()
+{
+	FILE=$2
+
+	expect_normal_exit run_on_node $1 "../pmempool feature -e CHECK_BAD_BLOCKS $FILE &>> $PREP_LOG_FILE"
 }

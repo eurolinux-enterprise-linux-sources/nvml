@@ -45,7 +45,7 @@ date: pmem Tools version 1.4
 
 # NAME #
 
-**pmempool-create** -- create a persistent memory pool
+**pmempool-create** - create a persistent memory pool
 
 
 # SYNOPSIS #
@@ -97,6 +97,10 @@ If the file already exist the permissions are not changed.
 `-i, --inherit <file>`
 
 Create a new pool of the same size and other properties as *\<file\>*.
+
+`-b, --clearbadblocks`
+
+Clear bad blocks in existing files.
 
 `-f, --force`
 

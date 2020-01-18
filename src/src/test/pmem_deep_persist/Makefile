@@ -34,51 +34,30 @@
 # src/test/pmem_deep_persist/Makefile -- build pmem_deep_persist test
 #
 include ../../common.inc
-ARCH := $(call get_arch)
 
 TOP = ../../..
-vpath %.c $(TOP)/src/common
 vpath %.c $(TOP)/src/libpmem
 vpath %.c $(TOP)/src/libpmem/$(ARCH)
+vpath %.c $(TOP)/src/libpmemobj
 
 TARGET = pmem_deep_persist
 
 OBJS = pmem_deep_persist.o\
-	mmap.o\
-	mmap_posix.o\
-	util.o\
-	util_posix.o\
-	file.o\
-	file_posix.o\
-	os_posix.o\
-	out.o\
-	fs_posix.o\
-	libpmem.o\
 	pmem.o\
 	pmem_posix.o\
-	uuid.o\
-	$(call osdep, uuid,.o)\
-	pool_hdr.o\
-	set.o\
-	os_deep_linux.o\
-	os_auto_flush_linux.o\
-	shutdown_state.o\
-	os_dimm_none.o \
+	memops_generic.o\
+	mocks_posix.o\
 	init.o
-# this test does not require ndctl
-# to enable builds we use os_dimm_none
 
 ifeq ($(ARCH), x86_64)
 OBJS += cpu.o
 endif
 
-LIBPMEMOBJ=y
-LIBPMEM=y
+LIBPMEMOBJ=internal-debug
 
 include ../Makefile.inc
 
 CFLAGS += -DSRCVERSION="" -DDEBUG -DAVX512F_AVAILABLE=0 -DAVX_AVAILABLE=0 -DSSE2_AVAILABLE=0
 CFLAGS += -I$(TOP)/src/libpmem
-CFLAGS += -I$(TOP)/src/common
 CFLAGS += -I$(TOP)/src/libpmemobj/
-LDFLAGS += $(call extract_funcs, pmem_deep_persist.c)
+LDFLAGS += $(call extract_funcs, mocks_posix.c)

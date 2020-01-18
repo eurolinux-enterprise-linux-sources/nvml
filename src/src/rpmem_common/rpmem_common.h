@@ -34,6 +34,9 @@
  * rpmem_common.h -- common definitions for librpmem and rpmemd
  */
 
+#ifndef RPMEM_COMMON_H
+#define RPMEM_COMMON_H 1
+
 /*
  * Values for SO_KEEPALIVE socket option
  */
@@ -52,6 +55,10 @@
 #include <stdint.h>
 #include <sys/socket.h>
 #include <netdb.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*
  * rpmem_err -- error codes
@@ -107,6 +114,7 @@ const char *rpmem_provider_to_str(enum rpmem_provider provider);
 struct rpmem_req_attr {
 	size_t pool_size;
 	unsigned nlanes;
+	size_t buff_size;
 	enum rpmem_provider provider;
 	const char *pool_desc;
 };
@@ -130,6 +138,7 @@ struct rpmem_resp_attr {
 #define RPMEM_MAX_SERVICE	(NI_MAXSERV + 1)  /* + 1 for '\0' */
 #define RPMEM_HDR_SIZE		4096
 #define RPMEM_CLOSE_FLAGS_REMOVE 0x1
+#define RPMEM_DEF_BUFF_SIZE	8192
 
 struct rpmem_target_info {
 	char user[RPMEM_MAX_USER];
@@ -149,3 +158,9 @@ void rpmem_target_free(struct rpmem_target_info *info);
 int rpmem_xwrite(int fd, const void *buf, size_t len, int flags);
 int rpmem_xread(int fd, void *buf, size_t len, int flags);
 char *rpmem_get_ssh_conn_addr(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

@@ -31,11 +31,6 @@
 #
 # pmempool_check/TEST9 -- test for checking pmemobj pool
 #
-[CmdletBinding(PositionalBinding=$false)]
-Param(
-    [alias("d")]
-    $DIR = ""
-    )
 
 . ..\unittest\unittest.ps1
 
@@ -53,11 +48,15 @@ expect_normal_exit $PMEMPOOL create obj $POOL
 
 expect_normal_exit $PMEMPOOL check -vyr $POOL >> $LOG
 
+# pool_hdr.features.incompat on Windows has to have SHUTDOWN_STATE feature enabled
+# otherwise pmempool check will fail because of dirty shutdown state structures
+# which are expected to be zeroed if SHUTDOWN_STATE feature is disabled
+# 0xfe == 0xfb | SHUTDOWN_STATE
 &$PMEMSPOIL -v $POOL `
 	pool_hdr.major=0x0 `
-	pool_hdr.compat_features=0xff `
-	pool_hdr.incompat_features=0xff `
-	pool_hdr.ro_compat_features=0xff `
+	pool_hdr.features.compat=0xfe `
+	pool_hdr.features.incompat=0xfe `
+	pool_hdr.features.ro_compat=0xff `
 	pool_hdr.unused=ERROR `
 	>> $LOG
 

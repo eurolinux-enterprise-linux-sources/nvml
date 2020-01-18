@@ -99,16 +99,11 @@ check_data_alloc(void)
 {
 	LOG(3, NULL);
 
-	struct check_data *data = malloc(sizeof(*data));
+	struct check_data *data = calloc(1, sizeof(*data));
 	if (data == NULL) {
-		ERR("!malloc");
+		ERR("!calloc");
 		return NULL;
 	}
-
-	memset(&data->step_data, 0, sizeof(location));
-	data->check_status_cache = NULL;
-	data->error = NULL;
-	data->step = 0;
 
 	TAILQ_INIT(&data->infos);
 	TAILQ_INIT(&data->questions);
@@ -368,7 +363,7 @@ check_status_create(PMEMpoolcheck *ppc, enum pmempool_check_msg_type type,
 		int ret = snprintf(st->msg + p, MAX_MSG_STR_SIZE - (size_t)p,
 			": %s", buff);
 		if (ret < 0 || ret >= (int)(MAX_MSG_STR_SIZE - (size_t)p)) {
-			ERR("!snprintf");
+			ERR("snprintf: %d", ret);
 			free(st);
 			return -1;
 		}

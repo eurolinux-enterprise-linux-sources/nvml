@@ -135,6 +135,11 @@ extern unsigned _On_valgrind;
 
 #include "valgrind/pmemcheck.h"
 
+void pobj_emit_log(const char *func, int order);
+extern int _Pmreorder_emit;
+
+#define Pmreorder_emit __builtin_expect(_Pmreorder_emit, 0)
+
 #define VALGRIND_REGISTER_PMEM_MAPPING(addr, len) do {\
 	if (On_valgrind)\
 		VALGRIND_PMC_REGISTER_PMEM_MAPPING((addr), (len));\
@@ -171,16 +176,9 @@ extern unsigned _On_valgrind;
 		VALGRIND_PMC_DO_FENCE;\
 } while (0)
 
-#define VALGRIND_DO_COMMIT do {\
-	if (On_valgrind)\
-		VALGRIND_PMC_DO_COMMIT;\
-} while (0)
-
 #define VALGRIND_DO_PERSIST(addr, len) do {\
 	if (On_valgrind) {\
 		VALGRIND_PMC_DO_FLUSH((addr), (len));\
-		VALGRIND_PMC_DO_FENCE;\
-		VALGRIND_PMC_DO_COMMIT;\
 		VALGRIND_PMC_DO_FENCE;\
 	}\
 } while (0)
@@ -215,24 +213,9 @@ extern unsigned _On_valgrind;
 		VALGRIND_PMC_REMOVE_LOG_REGION((addr), (len));\
 } while (0)
 
-#define VALGRIND_FULL_REORDER do {\
+#define VALGRIND_EMIT_LOG(emit_log) do {\
 	if (On_valgrind)\
-		VALGRIND_PMC_FULL_REORDER;\
-} while (0)
-
-#define VALGRIND_PARTIAL_REORDER do {\
-	if (On_valgrind)\
-		VALGRIND_PMC_PARTIAL_REORDER;\
-} while (0)
-
-#define VALGRIND_ONLY_FAULT do {\
-	if (On_valgrind)\
-		VALGRIND_PMC_ONLY_FAULT;\
-} while (0)
-
-#define VALGRIND_STOP_REORDER_FAULT do {\
-	if (On_valgrind)\
-		VALGRIND_PMC_STOP_REORDER_FAULT;\
+		VALGRIND_PMC_EMIT_LOG((emit_log));\
 } while (0)
 
 #define VALGRIND_START_TX do {\
@@ -280,7 +263,20 @@ extern unsigned _On_valgrind;
 		VALGRIND_PMC_ADD_TO_GLOBAL_TX_IGNORE(addr, len);\
 } while (0)
 
+/*
+ * Logs library and function name with proper suffix
+ * to pmemcheck store log file.
+ */
+#define PMEMOBJ_API_START()\
+	if (Pmreorder_emit)\
+		pobj_emit_log(__func__, 0);
+#define PMEMOBJ_API_END()\
+	if (Pmreorder_emit)\
+		pobj_emit_log(__func__, 1);
+
 #else
+
+#define Pmreorder_emit (0)
 
 #define VALGRIND_REGISTER_PMEM_MAPPING(addr, len) do {\
 	(void) (addr);\
@@ -313,8 +309,6 @@ extern unsigned _On_valgrind;
 
 #define VALGRIND_DO_FENCE do {} while (0)
 
-#define VALGRIND_DO_COMMIT do {} while (0)
-
 #define VALGRIND_DO_PERSIST(addr, len) do {\
 	(void) (addr);\
 	(void) (len);\
@@ -341,13 +335,9 @@ extern unsigned _On_valgrind;
 	(void) (len);\
 } while (0)
 
-#define VALGRIND_FULL_REORDER do {} while (0)
-
-#define VALGRIND_PARTIAL_REORDER do {} while (0)
-
-#define VALGRIND_ONLY_FAULT do {} while (0)
-
-#define VALGRIND_STOP_REORDER_FAULT do {} while (0)
+#define VALGRIND_EMIT_LOG(emit_log) do {\
+	(void) (emit_log);\
+} while (0)
 
 #define VALGRIND_START_TX do {} while (0)
 
@@ -385,6 +375,10 @@ extern unsigned _On_valgrind;
 	(void) (addr);\
 	(void) (len);\
 } while (0)
+
+#define PMEMOBJ_API_START() do {} while (0)
+
+#define PMEMOBJ_API_END() do {} while (0)
 
 #endif
 

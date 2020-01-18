@@ -46,9 +46,9 @@
 char *Mmap_mapfile = OS_MAPFILE; /* Should be modified only for testing */
 
 #ifdef __FreeBSD__
-static const char *sscanf_os = "%p %p";
+static const char * const sscanf_os = "%p %p";
 #else
-static const char *sscanf_os = "%p-%p";
+static const char * const sscanf_os = "%p-%p";
 #endif
 
 /*
@@ -120,7 +120,7 @@ util_map_hint_unused(void *minaddr, size_t len, size_t align)
 	 * space, but is not large enough. (very unlikely)
 	 */
 	if ((raddr != NULL) && (UINTPTR_MAX - (uintptr_t)raddr < len)) {
-		LOG(4, "end of address space reached");
+		ERR("end of address space reached");
 		raddr = MAP_FAILED;
 	}
 
@@ -158,8 +158,8 @@ util_map_hint(size_t len, size_t req_align)
 	size_t align = util_map_hint_align(len, req_align);
 
 	if (Mmap_no_random) {
-		LOG(4, "user-defined hint %p", (void *)Mmap_hint);
-		hint_addr = util_map_hint_unused((void *)Mmap_hint, len, align);
+		LOG(4, "user-defined hint %p", Mmap_hint);
+		hint_addr = util_map_hint_unused(Mmap_hint, len, align);
 	} else {
 		/*
 		 * Create dummy mapping to find an unused region of given size.
@@ -170,7 +170,9 @@ util_map_hint(size_t len, size_t req_align)
 		 */
 		char *addr = mmap(NULL, len + align, PROT_READ,
 					MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-		if (addr != MAP_FAILED) {
+		if (addr == MAP_FAILED) {
+			ERR("!mmap MAP_ANONYMOUS");
+		} else {
 			LOG(4, "system choice %p", addr);
 			hint_addr = (char *)roundup((uintptr_t)addr, align);
 			munmap(addr, len + align);

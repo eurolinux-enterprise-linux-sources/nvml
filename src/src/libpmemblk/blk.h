@@ -34,10 +34,18 @@
  * blk.h -- internal definitions for libpmem blk module
  */
 
+#ifndef BLK_H
+#define BLK_H 1
+
 #include <stddef.h>
 
+#include "ctl.h"
 #include "os_thread.h"
 #include "pool_hdr.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define PMEMBLK_LOG_PREFIX "libpmemblk"
 #define PMEMBLK_LOG_LEVEL_VAR "PMEMBLK_LOG_LEVEL"
@@ -47,38 +55,39 @@
 #define BLK_HDR_SIG "PMEMBLK"	/* must be 8 bytes including '\0' */
 #define BLK_FORMAT_MAJOR 1
 
-#define BLK_FORMAT_COMPAT_DEFAULT 0x0000
-#define BLK_FORMAT_INCOMPAT_DEFAULT 0x0000
-#define BLK_FORMAT_RO_COMPAT_DEFAULT 0x0000
+#define BLK_FORMAT_FEAT_DEFAULT \
+	{0x0000, POOL_FEAT_INCOMPAT_DEFAULT, 0x0000}
 
-#define BLK_FORMAT_COMPAT_CHECK 0x0000
-#define BLK_FORMAT_INCOMPAT_CHECK POOL_FEAT_ALL
-#define BLK_FORMAT_RO_COMPAT_CHECK 0x0000
+#define BLK_FORMAT_FEAT_CHECK \
+	{0x0000, POOL_FEAT_INCOMPAT_VALID, 0x0000}
+
+static const features_t blk_format_feat_default = BLK_FORMAT_FEAT_DEFAULT;
 
 struct pmemblk {
 	struct pool_hdr hdr;	/* memory pool header */
 
 	/* root info for on-media format... */
-	uint32_t bsize;			/* block size */
+	uint32_t bsize;		/* block size */
 
 	/* flag indicating if the pool was zero-initialized */
 	int is_zeroed;
 
 	/* some run-time state, allocated out of memory pool... */
-	void *addr;			/* mapped region */
-	size_t size;			/* size of mapped region */
-	int is_pmem;			/* true if pool is PMEM */
-	int rdonly;			/* true if pool is opened read-only */
-	void *data;			/* post-header data area */
-	size_t datasize;		/* size of data area */
-	size_t nlba;			/* number of LBAs in pool */
-	struct btt *bttp;		/* btt handle */
-	unsigned nlane;			/* number of lanes */
-	unsigned next_lane;		/* used to rotate through lanes */
-	os_mutex_t *locks;		/* one per lane */
-	int is_dev_dax;			/* true if mapped on device dax */
+	void *addr;		/* mapped region */
+	size_t size;		/* size of mapped region */
+	int is_pmem;		/* true if pool is PMEM */
+	int rdonly;		/* true if pool is opened read-only */
+	void *data;		/* post-header data area */
+	size_t datasize;	/* size of data area */
+	size_t nlba;		/* number of LBAs in pool */
+	struct btt *bttp;	/* btt handle */
+	unsigned nlane;		/* number of lanes */
+	unsigned next_lane;	/* used to rotate through lanes */
+	os_mutex_t *locks;	/* one per lane */
+	int is_dev_dax;		/* true if mapped on device dax */
+	struct ctl *ctl;	/* top level node of the ctl tree structure */
 
-	struct pool_set *set;		/* pool set info */
+	struct pool_set *set;	/* pool set info */
 
 #ifdef DEBUG
 	/* held during read/write mprotected sections */
@@ -88,3 +97,9 @@ struct pmemblk {
 
 /* data area starts at this alignment after the struct pmemblk above */
 #define BLK_FORMAT_DATA_ALIGN ((uintptr_t)4096)
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

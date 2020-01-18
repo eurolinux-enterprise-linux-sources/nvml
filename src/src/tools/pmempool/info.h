@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,7 +34,7 @@
  * info.h -- pmempool info command header file
  */
 
-#include "alloc_class.h"
+#include "vec.h"
 
 /*
  * Verbose levels used in application:
@@ -58,6 +58,17 @@
 #define VERBOSE_MAX	2
 
 /*
+ * print_bb_e -- printing bad blocks options
+ */
+enum print_bb_e {
+	PRINT_BAD_BLOCKS_NOT_SET,
+	PRINT_BAD_BLOCKS_NO,
+	PRINT_BAD_BLOCKS_YES,
+
+	PRINT_BAD_BLOCKS_MAX
+};
+
+/*
  * pmempool_info_args -- structure for storing command line arguments
  */
 struct pmempool_info_args {
@@ -65,6 +76,7 @@ struct pmempool_info_args {
 	unsigned col_width;	/* column width for printing fields */
 	bool human;		/* sizes in human-readable formats */
 	bool force;		/* force parsing pool */
+	enum print_bb_e badblocks; /* print bad blocks */
 	pmem_pool_type_t type;	/* forced pool type */
 	bool use_range;		/* use range for blocks */
 	struct ranges ranges;	/* range of block/chunks to dump */
@@ -93,7 +105,6 @@ struct pmempool_info_args {
 		int vzonehdr;
 		int vchunkhdr;
 		int vbitmap;
-		uint64_t lane_sections;
 		bool lanes_recovery;
 		bool ignore_empty_obj;
 		uint64_t chunk_types;
@@ -118,6 +129,10 @@ struct pmem_blk_stats {
 struct pmem_obj_class_stats {
 	uint64_t n_units;
 	uint64_t n_used;
+	uint64_t unit_size;
+	uint64_t alignment;
+	uint32_t nallocs;
+	uint16_t flags;
 };
 
 struct pmem_obj_zone_stats {
@@ -125,7 +140,7 @@ struct pmem_obj_zone_stats {
 	uint64_t n_chunks_type[MAX_CHUNK_TYPE];
 	uint64_t size_chunks;
 	uint64_t size_chunks_type[MAX_CHUNK_TYPE];
-	struct pmem_obj_class_stats class_stats[MAX_ALLOCATION_CLASSES];
+	VEC(, struct pmem_obj_class_stats) class_stats;
 };
 
 struct pmem_obj_type_stats {
@@ -167,14 +182,10 @@ struct pmem_info {
 		uint64_t uuid_lo;
 		uint64_t objid;
 	} obj;
-	struct {
-		struct pmemcto *pcp;
-		size_t size;
-	} cto;
 };
 
-int pmempool_info_func(char *appname, int argc, char *argv[]);
-void pmempool_info_help(char *appname);
+int pmempool_info_func(const char *appname, int argc, char *argv[]);
+void pmempool_info_help(const char *appname);
 
 int pmempool_info_read(struct pmem_info *pip, void *buff,
 		size_t nbytes, uint64_t off);
@@ -182,4 +193,3 @@ int pmempool_info_blk(struct pmem_info *pip);
 int pmempool_info_log(struct pmem_info *pip);
 int pmempool_info_obj(struct pmem_info *pip);
 int pmempool_info_btt(struct pmem_info *pip);
-int pmempool_info_cto(struct pmem_info *pip);

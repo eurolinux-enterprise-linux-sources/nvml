@@ -34,18 +34,23 @@
  * pool.h -- internal definitions for pool processing functions
  */
 
+#ifndef POOL_H
+#define POOL_H
+
 #include <stdbool.h>
 #include <sys/types.h>
 
 #include "libpmemobj.h"
-#include "libpmemcto.h"
 
 #include "queue.h"
 #include "set.h"
 #include "log.h"
 #include "blk.h"
 #include "btt_layout.h"
-#include "cto.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 enum pool_type {
 	POOL_TYPE_UNKNOWN	= (1 << 0),
@@ -53,15 +58,15 @@ enum pool_type {
 	POOL_TYPE_BLK		= (1 << 2),
 	POOL_TYPE_OBJ		= (1 << 3),
 	POOL_TYPE_BTT		= (1 << 4),
-	POOL_TYPE_CTO		= (1 << 5),
 
 	POOL_TYPE_ANY		= POOL_TYPE_UNKNOWN | POOL_TYPE_LOG |
-		POOL_TYPE_BLK | POOL_TYPE_OBJ | POOL_TYPE_BTT | POOL_TYPE_CTO,
+		POOL_TYPE_BLK | POOL_TYPE_OBJ | POOL_TYPE_BTT,
 };
 
 struct pool_params {
 	enum pool_type type;
 	char signature[POOL_HDR_SIG_LEN];
+	features_t features;
 	size_t size;
 	mode_t mode;
 	int is_poolset;
@@ -75,9 +80,6 @@ struct pool_params {
 		struct {
 			char layout[PMEMOBJ_MAX_LAYOUT];
 		} obj;
-		struct {
-			char layout[PMEMCTO_MAX_LAYOUT];
-		} cto;
 	};
 };
 
@@ -112,7 +114,6 @@ struct pool_data {
 		struct pool_hdr pool;
 		struct pmemlog log;
 		struct pmemblk blk;
-		struct pmemcto cto;
 	} hdr;
 	enum {
 		UUID_NOP = 0,
@@ -158,3 +159,9 @@ uint64_t pool_next_arena_offset(struct pool_data *pool, uint64_t header_offset);
 uint64_t pool_get_first_valid_btt(struct pool_data *pool,
 	struct btt_info *infop, uint64_t offset, bool *zeroed);
 size_t pool_get_min_size(enum pool_type);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

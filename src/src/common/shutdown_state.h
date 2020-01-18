@@ -39,7 +39,11 @@
 
 #include <stdint.h>
 
-struct pool_set_part;
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+struct pool_replica;
 struct shutdown_state {
 	uint64_t usc;
 	uint64_t uuid; /* UID checksum */
@@ -48,15 +52,19 @@ struct shutdown_state {
 	uint64_t checksum;
 };
 
-int shutdown_state_init(struct shutdown_state *sds, struct pool_set_part *part);
+int shutdown_state_init(struct shutdown_state *sds, struct pool_replica *rep);
 int shutdown_state_add_part(struct shutdown_state *sds, const char *path,
-	struct pool_set_part *part);
-void shutdown_state_set_flag(struct shutdown_state *sds,
-	struct pool_set_part *part);
-void shutdown_state_clear_flag(struct shutdown_state *sds,
-	struct pool_set_part *part);
+	struct pool_replica *rep);
+void shutdown_state_set_dirty(struct shutdown_state *sds,
+	struct pool_replica *rep);
+void shutdown_state_clear_dirty(struct shutdown_state *sds,
+	struct pool_replica *rep);
 
 int shutdown_state_check(struct shutdown_state *curr_sds,
-	struct shutdown_state *pool_sds, struct pool_set_part *part);
+	struct shutdown_state *pool_sds, struct pool_replica *rep);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* shutdown_state.h */

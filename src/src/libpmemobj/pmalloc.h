@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,21 +44,11 @@
 #include "memops.h"
 #include "palloc.h"
 
-/*
- * The maximum number of entries in redo log used by the allocator. The common
- * case is to use two, one for modification of the object destination memory
- * location and the second for applying the chunk metadata modifications.
- */
-#define ALLOC_REDO_LOG_SIZE MAX_MEMOPS_ENTRIES
-struct lane_alloc_layout {
-	struct redo_log redo[ALLOC_REDO_LOG_SIZE];
-};
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-int pmalloc_operation(struct palloc_heap *heap,
-	uint64_t off, uint64_t *dest_off, size_t size,
-	palloc_constr constructor, void *arg,
-	uint64_t extra_field, uint16_t object_flags, uint16_t class_id,
-	struct operation_context *ctx);
+/* single operations done in the internal context of the lane */
 
 int pmalloc(PMEMobjpool *pop, uint64_t *off, size_t size,
 	uint64_t extra_field, uint16_t object_flags);
@@ -71,9 +61,19 @@ int prealloc(PMEMobjpool *pop, uint64_t *off, size_t size,
 
 void pfree(PMEMobjpool *pop, uint64_t *off);
 
-struct redo_log *pmalloc_redo_hold(PMEMobjpool *pop);
-void pmalloc_redo_release(PMEMobjpool *pop);
+/* external operation to be used together with context-aware palloc funcs */
+
+struct operation_context *pmalloc_operation_hold(PMEMobjpool *pop);
+struct operation_context *pmalloc_operation_hold_no_start(PMEMobjpool *pop);
+void pmalloc_operation_release(PMEMobjpool *pop);
 
 void pmalloc_ctl_register(PMEMobjpool *pop);
+
+int pmalloc_cleanup(PMEMobjpool *pop);
+int pmalloc_boot(PMEMobjpool *pop);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

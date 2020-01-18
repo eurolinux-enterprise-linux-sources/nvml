@@ -84,6 +84,38 @@ os_open(const char *pathname, int flags, ...)
 }
 
 /*
+ * os_fsync -- fsync abstraction layer
+ */
+int
+os_fsync(int fd)
+{
+	HANDLE handle = (HANDLE) _get_osfhandle(fd);
+
+	if (handle == INVALID_HANDLE_VALUE) {
+		errno = EBADF;
+		return -1;
+	}
+
+	if (!FlushFileBuffers(handle)) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	return 0;
+}
+
+/*
+ * os_fsync_dir -- fsync the directory
+ */
+int
+os_fsync_dir(const char *dir_name)
+{
+	/* XXX not used and not implemented */
+	ASSERT(0);
+	return -1;
+}
+
+/*
  * os_stat -- stat abstraction layer
  */
 int
@@ -524,7 +556,7 @@ os_getenv(const char *name)
  *	as thread-safety is more important, a seed parameter is ignored in this
  *	implementation.
  */
-int
+unsigned
 os_rand_r(unsigned *seedp)
 {
 	UNREFERENCED_PARAMETER(seedp);
@@ -601,4 +633,47 @@ os_strsignal(int sig)
 		return STR_REALTIME_SIGNAL;
 	else
 		return STR_UNKNOWN_SIGNAL;
+}
+
+int
+os_execv(const char *path, char *const argv[])
+{
+	wchar_t *wpath = util_toUTF16(path);
+	if (wpath == NULL)
+		return -1;
+
+	int argc = 0;
+	while (argv[argc])
+		argc++;
+
+	int ret;
+	wchar_t **wargv = Zalloc((argc + 1) * sizeof(wargv[0]));
+	if (!wargv) {
+		ret = -1;
+		goto wargv_alloc_failed;
+	}
+
+	for (int i = 0; i < argc; ++i) {
+		wargv[i] = util_toUTF16(argv[i]);
+		if (!wargv[i]) {
+			ret = -1;
+			goto end;
+		}
+	}
+
+	intptr_t iret = _wexecv(wpath, wargv);
+	if (iret == 0)
+		ret = 0;
+	else
+		ret = -1;
+
+end:
+	for (int i = 0; i < argc; ++i)
+		util_free_UTF16(wargv[i]);
+	Free(wargv);
+
+wargv_alloc_failed:
+	util_free_UTF16(wpath);
+
+	return ret;
 }

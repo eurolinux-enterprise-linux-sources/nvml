@@ -43,14 +43,11 @@
 #include "log.h"
 #include "blk.h"
 #include "libpmemobj.h"
-#include "libpmemcto.h"
-#include "cto.h"
 #include "lane.h"
-#include "redo.h"
+#include "ulog.h"
 #include "memops.h"
 #include "pmalloc.h"
 #include "list.h"
-#include "pvector.h"
 #include "obj.h"
 #include "memblock.h"
 #include "heap_layout.h"
@@ -71,8 +68,7 @@
 #define OPT_BLK (1 << (PMEM_POOL_TYPE_BLK + OPT_SHIFT))
 #define OPT_OBJ (1 << (PMEM_POOL_TYPE_OBJ + OPT_SHIFT))
 #define OPT_BTT (1 << (PMEM_POOL_TYPE_BTT + OPT_SHIFT))
-#define OPT_CTO (1 << (PMEM_POOL_TYPE_CTO + OPT_SHIFT))
-#define OPT_ALL (OPT_LOG | OPT_BLK | OPT_OBJ | OPT_BTT | OPT_CTO)
+#define OPT_ALL (OPT_LOG | OPT_BLK | OPT_OBJ | OPT_BTT)
 
 #define OPT_REQ_SHIFT	8
 #define OPT_REQ_MASK	((1 << OPT_REQ_SHIFT) - 1)
@@ -100,7 +96,7 @@
 ((void *)((uintptr_t)(entry) - sizeof(struct allocation_header)))
 
 #define OBJH_FROM_PTR(ptr)\
-((void *)((uintptr_t)ptr - sizeof(struct legacy_object_header)))
+((void *)((uintptr_t)(ptr) - sizeof(struct legacy_object_header)))
 
 #define DEFAULT_HDR_SIZE	4096UL /* 4 KB */
 #define DEFAULT_DESC_SIZE	4096UL /* 4 KB */
@@ -111,7 +107,7 @@
 	sizeof(struct legacy_object_header)))
 
 #define OBJH_TO_PTR(objh)\
-((void *)((uintptr_t)objh + sizeof(struct legacy_object_header)))
+((void *)((uintptr_t)(objh) + sizeof(struct legacy_object_header)))
 
 /* invalid answer for ask_* functions */
 #define INV_ANS	'\0'
@@ -126,8 +122,7 @@ typedef enum {
 	PMEM_POOL_TYPE_BLK	= 0x02,
 	PMEM_POOL_TYPE_OBJ	= 0x04,
 	PMEM_POOL_TYPE_BTT	= 0x08,
-	PMEM_POOL_TYPE_CTO	= 0x10,
-	PMEM_POOL_TYPE_ALL	= 0x1f,
+	PMEM_POOL_TYPE_ALL	= 0x0f,
 	PMEM_POOL_TYPE_UNKNOWN	= 0x80,
 } pmem_pool_type_t;
 
@@ -159,9 +154,6 @@ struct pmem_pool_params {
 		struct {
 			char layout[PMEMOBJ_MAX_LAYOUT];
 		} obj;
-		struct {
-			char layout[PMEMCTO_MAX_LAYOUT];
-		} cto;
 	};
 };
 
@@ -232,8 +224,8 @@ char ask_yn(char op, char def_ans, const char *fmt, va_list ap);
 char ask_Yn(char op, const char *fmt, ...) FORMAT_PRINTF(2, 3);
 char ask_yN(char op, const char *fmt, ...) FORMAT_PRINTF(2, 3);
 unsigned util_heap_max_zone(size_t size);
-int util_heap_get_bitmap_params(uint64_t block_size, uint64_t *nallocsp,
-		uint64_t *nvalsp, uint64_t *last_valp);
+
+int util_pool_clear_badblocks(const char *path, int create);
 
 static const struct range ENTIRE_UINT64 = {
 	{ NULL, NULL },	/* range */

@@ -39,13 +39,13 @@
 . ../unittest/unittest.sh
 
 require_test_type medium
+require_fs_type any
 
-. ./common.sh
-
+require_nodes 2
 require_node_dax_device 0 1
 require_node_dax_device 1 1
 
-setup
+. ./common.sh
 
 node_dax_device_zero 0
 node_dax_device_zero 1

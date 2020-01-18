@@ -54,7 +54,6 @@
 #include "libpmem.h"
 #include "libpmemlog.h"
 #include "libpmemblk.h"
-#include "libpmemcto.h"
 #include "libpmempool.h"
 
 #include "out.h"
@@ -63,7 +62,6 @@
 #include "lane.h"
 #include "obj.h"
 #include "btt.h"
-#include "cto.h"
 #include "file.h"
 #include "os.h"
 #include "set.h"
@@ -145,7 +143,7 @@ pool_set_read_header(const char *fname, struct pool_hdr *hdr)
 		return -1;
 	}
 	/* open the first part set file to read the pool header values */
-	const struct pool_set_part *part = &PART(REP(set, 0), 0);
+	const struct pool_set_part *part = PART(REP(set, 0), 0);
 	int fdp = util_file_open(part->path, NULL, 0, O_RDONLY);
 	if (fdp < 0) {
 		ERR("cannot open poolset part file");
@@ -172,7 +170,7 @@ err_pool_set:
  * pool_set_map -- (internal) map poolset
  */
 static int
-pool_set_map(const char *fname, struct pool_set **poolset, int rdonly)
+pool_set_map(const char *fname, struct pool_set **poolset, unsigned flags)
 {
 	ASSERTeq(util_is_poolset_file(fname), 1);
 
@@ -196,8 +194,9 @@ pool_set_map(const char *fname, struct pool_set **poolset, int rdonly)
 	 */
 	struct pool_attr attr;
 	util_pool_hdr2attr(&attr, &hdr);
-	if (util_pool_open(poolset, fname, rdonly, 0 /* minpartsize */,
-			&attr, NULL, true, NULL)) {
+	if (util_pool_open(poolset, fname, 0 /* minpartsize */, &attr,
+				NULL, NULL, flags | POOL_OPEN_IGNORE_SDS |
+						POOL_OPEN_IGNORE_BAD_BLOCKS)) {
 		ERR("opening poolset failed");
 		return -1;
 	}
@@ -212,6 +211,7 @@ void
 pool_params_from_header(struct pool_params *params, const struct pool_hdr *hdr)
 {
 	memcpy(params->signature, hdr->signature, sizeof(params->signature));
+	memcpy(&params->features, &hdr->features, sizeof(params->features));
 
 	/*
 	 * Check if file is a part of pool set by comparing the UUID with the
@@ -239,8 +239,6 @@ pool_check_type_to_pool_type(enum pmempool_pool_type check_pool_type)
 		return POOL_TYPE_BLK;
 	case PMEMPOOL_POOL_TYPE_OBJ:
 		return POOL_TYPE_OBJ;
-	case PMEMPOOL_POOL_TYPE_CTO:
-		return POOL_TYPE_CTO;
 	default:
 		ERR("can not convert pmempool_pool_type %u to pool_type",
 			check_pool_type);
@@ -302,7 +300,8 @@ pool_params_parse(const PMEMpoolcheck *ppc, struct pool_params *params,
 					"supported");
 				return -1;
 			}
-			if (util_pool_open_nocheck(set, 0))
+			if (util_pool_open_nocheck(set,
+						POOL_OPEN_IGNORE_BAD_BLOCKS))
 				return -1;
 		}
 
@@ -333,6 +332,12 @@ pool_params_parse(const PMEMpoolcheck *ppc, struct pool_params *params,
 #endif
 		addr = NULL;
 	} else {
+		enum file_type type = util_file_get_type(ppc->path);
+		if (type < 0) {
+			ret = -1;
+			goto out_close;
+		}
+
 		ssize_t s = util_file_get_size(ppc->path);
 		if (s < 0) {
 			ret = -1;
@@ -345,7 +350,7 @@ pool_params_parse(const PMEMpoolcheck *ppc, struct pool_params *params,
 			ret = -1;
 			goto out_close;
 		}
-		params->is_dev_dax = util_file_is_device_dax(ppc->path);
+		params->is_dev_dax = type == TYPE_DEVDAX;
 		params->is_pmem = params->is_dev_dax || map_sync ||
 			pmem_is_pmem(addr, params->size);
 	}
@@ -381,10 +386,6 @@ pool_params_parse(const PMEMpoolcheck *ppc, struct pool_params *params,
 		struct pmemobjpool *pop = addr;
 		memcpy(params->obj.layout, pop->layout,
 			PMEMOBJ_MAX_LAYOUT);
-	} else if (params->type == POOL_TYPE_CTO) {
-		struct pmemcto *pcp = addr;
-		memcpy(params->cto.layout, pcp->layout,
-			PMEMCTO_MAX_LAYOUT);
 	}
 
 out_unmap:
@@ -428,7 +429,9 @@ pool_set_file_open(const char *fname, struct pool_params *params, int rdonly)
 			LOG(2, "cannot open pool set -- '%s'", path);
 			goto err_free_fname;
 		}
-		if (util_pool_open_nocheck(file->poolset, rdonly))
+		unsigned flags = (rdonly ? POOL_OPEN_COW : 0) |
+					POOL_OPEN_IGNORE_BAD_BLOCKS;
+		if (util_pool_open_nocheck(file->poolset, flags))
 			goto err_free_fname;
 
 		file->size = file->poolset->poolsize;
@@ -496,18 +499,14 @@ pool_data_alloc(PMEMpoolcheck *ppc)
 {
 	LOG(3, NULL);
 
-	struct pool_data *pool = malloc(sizeof(*pool));
+	struct pool_data *pool = calloc(1, sizeof(*pool));
 	if (!pool) {
-		ERR("!malloc");
+		ERR("!calloc");
 		return NULL;
 	}
 
 	TAILQ_INIT(&pool->arenas);
-	pool->narenas = 0;
-	pool->blk_no_layout = 0;
 	pool->uuid_op = UUID_NOP;
-	pool->set_file = NULL;
-	pool->bttc.valid = false;
 
 	if (pool_params_parse(ppc, &pool->params, 0))
 		goto error;
@@ -667,19 +666,19 @@ pool_copy(struct pool_data *pool, const char *dst_path, int overwrite)
 {
 	struct pool_set_file *file = pool->set_file;
 	int dfd;
-	if (!os_access(dst_path, F_OK)) {
+	int exists = util_file_exists(dst_path);
+	if (exists < 0)
+		return -1;
+
+	if (exists) {
 		if (!overwrite) {
 			errno = EEXIST;
 			return -1;
 		}
 		dfd = util_file_open(dst_path, NULL, 0, O_RDWR);
 	} else {
-		if (errno == ENOENT) {
-			errno = 0;
-			dfd = util_file_create(dst_path, file->size, 0);
-		} else {
-			return -1;
-		}
+		errno = 0;
+		dfd = util_file_create(dst_path, file->size, 0);
 	}
 	if (dfd < 0)
 		return -1;
@@ -765,7 +764,13 @@ pool_set_part_copy(struct pool_set_part *dpart, struct pool_set_part *spart,
 	int is_pmem;
 	void *daddr;
 
-	if (!os_access(dpart->path, F_OK)) {
+	int exists = util_file_exists(dpart->path);
+	if (exists < 0) {
+		result = -1;
+		goto out_sunmap;
+	}
+
+	if (exists) {
 		if (!overwrite) {
 			errno = EEXIST;
 			result = -1;
@@ -775,22 +780,24 @@ pool_set_part_copy(struct pool_set_part *dpart, struct pool_set_part *spart,
 		daddr = pmem_map_file(dpart->path, 0, 0, S_IWRITE, &dmapped,
 			&is_pmem);
 	} else {
-		if (errno == ENOENT) {
-			errno = 0;
-			daddr = pmem_map_file(dpart->path, dpart->filesize,
+		errno = 0;
+		daddr = pmem_map_file(dpart->path, dpart->filesize,
 				PMEM_FILE_CREATE | PMEM_FILE_EXCL,
 				stat_buf.st_mode, &dmapped, &is_pmem);
-		} else {
-			result = -1;
-			goto out_sunmap;
-		}
 	}
 	if (!daddr) {
 		result = -1;
 		goto out_sunmap;
 	}
 
-	ASSERT(dmapped >= smapped);
+#ifdef DEBUG
+	/* provide extra logging in case of wrong dmapped/smapped value */
+	if (dmapped < smapped) {
+		LOG(1, "dmapped < smapped: dmapped = %lu, smapped = %lu",
+			dmapped, smapped);
+		ASSERT(0);
+	}
+#endif
 
 	if (is_pmem) {
 		pmem_memcpy_persist(daddr, saddr, smapped);
@@ -916,8 +923,6 @@ pool_get_signature(enum pool_type type)
 		return BLK_HDR_SIG;
 	case POOL_TYPE_OBJ:
 		return OBJ_HDR_SIG;
-	case POOL_TYPE_CTO:
-		return CTO_HDR_SIG;
 	default:
 		return NULL;
 	}
@@ -938,27 +943,15 @@ pool_hdr_default(enum pool_type type, struct pool_hdr *hdrp)
 	switch (type) {
 	case POOL_TYPE_LOG:
 		hdrp->major = LOG_FORMAT_MAJOR;
-		hdrp->compat_features = LOG_FORMAT_COMPAT_DEFAULT;
-		hdrp->incompat_features = LOG_FORMAT_INCOMPAT_DEFAULT;
-		hdrp->ro_compat_features = LOG_FORMAT_RO_COMPAT_DEFAULT;
+		hdrp->features = log_format_feat_default;
 		break;
 	case POOL_TYPE_BLK:
 		hdrp->major = BLK_FORMAT_MAJOR;
-		hdrp->compat_features = BLK_FORMAT_COMPAT_DEFAULT;
-		hdrp->incompat_features = BLK_FORMAT_INCOMPAT_DEFAULT;
-		hdrp->ro_compat_features = BLK_FORMAT_RO_COMPAT_DEFAULT;
+		hdrp->features = blk_format_feat_default;
 		break;
 	case POOL_TYPE_OBJ:
 		hdrp->major = OBJ_FORMAT_MAJOR;
-		hdrp->compat_features = OBJ_FORMAT_COMPAT_DEFAULT;
-		hdrp->incompat_features = OBJ_FORMAT_INCOMPAT_DEFAULT;
-		hdrp->ro_compat_features = OBJ_FORMAT_RO_COMPAT_DEFAULT;
-		break;
-	case POOL_TYPE_CTO:
-		hdrp->major = CTO_FORMAT_MAJOR;
-		hdrp->compat_features = CTO_FORMAT_COMPAT_DEFAULT;
-		hdrp->incompat_features = CTO_FORMAT_INCOMPAT_DEFAULT;
-		hdrp->ro_compat_features = CTO_FORMAT_RO_COMPAT_DEFAULT;
+		hdrp->features = obj_format_feat_default;
 		break;
 	default:
 		break;
@@ -977,8 +970,6 @@ pool_hdr_get_type(const struct pool_hdr *hdrp)
 		return POOL_TYPE_BLK;
 	else if (memcmp(hdrp->signature, OBJ_HDR_SIG, POOL_HDR_SIG_LEN) == 0)
 		return POOL_TYPE_OBJ;
-	else if (memcmp(hdrp->signature, CTO_HDR_SIG, POOL_HDR_SIG_LEN) == 0)
-		return POOL_TYPE_CTO;
 	else
 		return POOL_TYPE_UNKNOWN;
 }
@@ -998,8 +989,6 @@ pool_get_pool_type_str(enum pool_type type)
 		return "pmemblk";
 	case POOL_TYPE_OBJ:
 		return "pmemobj";
-	case POOL_TYPE_CTO:
-		return "pmemcto";
 	default:
 		return "unknown";
 	}
@@ -1014,7 +1003,7 @@ pool_set_type(struct pool_set *set)
 	struct pool_hdr hdr;
 
 	/* open the first part file to read the pool header values */
-	const struct pool_set_part *part = &PART(REP(set, 0), 0);
+	const struct pool_set_part *part = PART(REP(set, 0), 0);
 
 	if (util_file_pread(part->path, &hdr, sizeof(hdr), 0) !=
 			sizeof(hdr)) {
@@ -1140,8 +1129,6 @@ pool_get_min_size(enum pool_type type)
 		return PMEMBLK_MIN_POOL;
 	case POOL_TYPE_OBJ:
 		return PMEMOBJ_MIN_POOL;
-	case POOL_TYPE_CTO:
-		return PMEMCTO_MIN_POOL;
 	default:
 		ERR("unknown type of a pool");
 		return SIZE_MAX;

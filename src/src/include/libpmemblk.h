@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018, Intel Corporation
+ * Copyright 2014-2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,6 +43,8 @@
 #ifndef LIBPMEMBLK_H
 #define LIBPMEMBLK_H 1
 
+#include <sys/types.h>
+
 #ifdef _WIN32
 #include <pmemcompat.h>
 
@@ -52,12 +54,18 @@
 #define pmemblk_check pmemblk_checkW
 #define pmemblk_check_version pmemblk_check_versionW
 #define pmemblk_errormsg pmemblk_errormsgW
+#define pmemblk_ctl_get pmemblk_ctl_getW
+#define pmemblk_ctl_set pmemblk_ctl_setW
+#define pmemblk_ctl_exec pmemblk_ctl_execW
 #else
 #define pmemblk_open pmemblk_openU
 #define pmemblk_create pmemblk_createU
 #define pmemblk_check pmemblk_checkU
 #define pmemblk_check_version pmemblk_check_versionU
 #define pmemblk_errormsg pmemblk_errormsgU
+#define pmemblk_ctl_get pmemblk_ctl_getU
+#define pmemblk_ctl_set pmemblk_ctl_setU
+#define pmemblk_ctl_exec pmemblk_ctl_execU
 #endif
 
 #endif
@@ -65,8 +73,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <sys/types.h>
 
 /*
  * opaque type, internal to libpmemblk
@@ -158,6 +164,20 @@ const char *pmemblk_errormsg(void);
 #else
 const char *pmemblk_errormsgU(void);
 const wchar_t *pmemblk_errormsgW(void);
+#endif
+
+#ifndef _WIN32
+/* EXPERIMENTAL */
+int pmemblk_ctl_get(PMEMblkpool *pbp, const char *name, void *arg);
+int pmemblk_ctl_set(PMEMblkpool *pbp, const char *name, void *arg);
+int pmemblk_ctl_exec(PMEMblkpool *pbp, const char *name, void *arg);
+#else
+int pmemblk_ctl_getU(PMEMblkpool *pbp, const char *name, void *arg);
+int pmemblk_ctl_getW(PMEMblkpool *pbp, const wchar_t *name, void *arg);
+int pmemblk_ctl_setU(PMEMblkpool *pbp, const char *name, void *arg);
+int pmemblk_ctl_setW(PMEMblkpool *pbp, const wchar_t *name, void *arg);
+int pmemblk_ctl_execU(PMEMblkpool *pbp, const char *name, void *arg);
+int pmemblk_ctl_execW(PMEMblkpool *pbp, const wchar_t *name, void *arg);
 #endif
 
 #ifdef __cplusplus

@@ -43,11 +43,14 @@
 #include "lane.h"
 #include "pool_hdr.h"
 #include "pmalloc.h"
-#include "redo.h"
 #include "ctl.h"
-#include "ringbuf.h"
 #include "sync.h"
 #include "stats.h"
+#include "ctl_debug.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define PMEMOBJ_LOG_PREFIX "libpmemobj"
 #define PMEMOBJ_LOG_LEVEL_VAR "PMEMOBJ_LOG_LEVEL"
@@ -55,15 +58,15 @@
 
 /* attributes of the obj memory pool format for the pool header */
 #define OBJ_HDR_SIG "PMEMOBJ"	/* must be 8 bytes including '\0' */
-#define OBJ_FORMAT_MAJOR 4
+#define OBJ_FORMAT_MAJOR 5
 
-#define OBJ_FORMAT_COMPAT_DEFAULT 0x0000
-#define OBJ_FORMAT_INCOMPAT_DEFAULT 0x000
-#define OBJ_FORMAT_RO_COMPAT_DEFAULT 0x0000
+#define OBJ_FORMAT_FEAT_DEFAULT \
+	{0x0000, POOL_FEAT_INCOMPAT_DEFAULT, 0x0000}
 
-#define OBJ_FORMAT_COMPAT_CHECK 0x0000
-#define OBJ_FORMAT_INCOMPAT_CHECK POOL_FEAT_ALL
-#define OBJ_FORMAT_RO_COMPAT_CHECK 0x0000
+#define OBJ_FORMAT_FEAT_CHECK \
+	{0x0000, POOL_FEAT_INCOMPAT_VALID, 0x0000}
+
+static const features_t obj_format_feat_default = OBJ_FORMAT_FEAT_CHECK;
 
 /* size of the persistent part of PMEMOBJ pool descriptor (2kB) */
 #define OBJ_DSC_P_SIZE		2048
@@ -102,11 +105,15 @@
 typedef void (*persist_local_fn)(const void *, size_t);
 typedef void (*flush_local_fn)(const void *, size_t);
 typedef void (*drain_local_fn)(void);
-typedef void *(*memcpy_local_fn)(void *dest, const void *src, size_t len);
-typedef void *(*memset_local_fn)(void *dest, int c, size_t len);
 
-typedef void *(*persist_remote_fn)(PMEMobjpool *pop, const void *addr,
-					size_t len, unsigned lane);
+typedef void *(*memcpy_local_fn)(void *dest, const void *src, size_t len,
+		unsigned flags);
+typedef void *(*memmove_local_fn)(void *dest, const void *src, size_t len,
+		unsigned flags);
+typedef void *(*memset_local_fn)(void *dest, int c, size_t len, unsigned flags);
+
+typedef int (*persist_remote_fn)(PMEMobjpool *pop, const void *addr,
+				size_t len, unsigned lane, unsigned flags);
 
 typedef uint64_t type_num_t;
 
@@ -152,20 +159,19 @@ struct pmemobjpool {
 	uint64_t uuid_lo;
 	int is_dev_dax;		/* true if mapped on device dax */
 
-	struct ctl *ctl;
+	struct ctl *ctl;	/* top level node of the ctl tree structure */
 	struct stats *stats;
-	struct ringbuf *tx_postcommit_tasks;
 
 	struct pool_set *set;		/* pool set info */
 	struct pmemobjpool *replica;	/* next replica */
-	struct redo_ctx *redo;
 
 	/* per-replica functions: pmem or non-pmem */
 	persist_local_fn persist_local;	/* persist function */
 	flush_local_fn flush_local;	/* flush function */
 	drain_local_fn drain_local;	/* drain function */
-	memcpy_local_fn memcpy_persist_local; /* persistent memcpy function */
-	memset_local_fn memset_persist_local; /* persistent memset function */
+	memcpy_local_fn memcpy_local; /* persistent memcpy function */
+	memmove_local_fn memmove_local; /* persistent memmove function */
+	memset_local_fn memset_local; /* persistent memset function */
 
 	/* for 'master' replica: with or without data replication */
 	struct pmem_ops p_ops;
@@ -197,7 +203,7 @@ struct pmemobjpool {
 
 	/* padding to align size of this structure to page boundary */
 	/* sizeof(unused2) == 8192 - offsetof(struct pmemobjpool, unused2) */
-	char unused2[1004];
+	char unused2[992];
 };
 
 /*
@@ -240,6 +246,13 @@ OBJ_OID_IS_VALID(PMEMobjpool *pop, PMEMoid oid)
 		    oid.off < pop->heap_offset + pop->heap_size);
 }
 
+static inline int
+OBJ_OFF_IS_VALID_FROM_CTX(void *ctx, uint64_t offset)
+{
+	PMEMobjpool *pop = (PMEMobjpool *)ctx;
+	return OBJ_OFF_IS_VALID(pop, offset);
+}
+
 void obj_init(void);
 void obj_fini(void);
 int obj_read_remote(void *ctx, uintptr_t base, void *dest, void *addr,
@@ -253,6 +266,10 @@ int obj_read_remote(void *ctx, uintptr_t base, void *dest, void *addr,
 	_pobj_debug_notice(__func__, NULL, 0)
 #else
 #define _POBJ_DEBUG_NOTICE_IN_TX() do {} while (0)
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017, Intel Corporation
+ * Copyright 2016-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,10 +34,17 @@
  * rpmem_fip.h -- rpmem libfabric provider module header file
  */
 
+#ifndef RPMEM_FIP_H
+#define RPMEM_FIP_H
+
 #include <stdint.h>
 #include <netinet/in.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 struct rpmem_fip;
 
@@ -46,6 +53,7 @@ struct rpmem_fip_attr {
 	enum rpmem_persist_method persist_method;
 	void *laddr;
 	size_t size;
+	size_t buff_size;
 	unsigned nlanes;
 	void *raddr;
 	uint64_t rkey;
@@ -66,3 +74,9 @@ int rpmem_fip_persist(struct rpmem_fip *fip, size_t offset, size_t len,
 int rpmem_fip_read(struct rpmem_fip *fip, void *buff,
 		size_t len, size_t off, unsigned lane);
 void rpmem_fip_probe_fork_safety(int *fork_unsafe);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

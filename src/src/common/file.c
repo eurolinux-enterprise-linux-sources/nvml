@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018, Intel Corporation
+ * Copyright 2014-2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -53,7 +53,6 @@
 #include "out.h"
 #include "mmap.h"
 
-#define DEVICE_DAX_PREFIX "/sys/class/dax"
 #define MAX_SIZE_LENGTH 64
 
 #define DEVICE_DAX_ZERO_LEN (2 * MEGABYTE)
@@ -124,39 +123,52 @@ out:
 #endif
 
 /*
- * util_fd_is_device_dax -- check whether the file descriptor is associated
- *                          with a device dax
+ * util_file_exists -- checks whether file exists
  */
 int
-util_fd_is_device_dax(int fd)
+util_file_exists(const char *path)
 {
-	LOG(3, "fd %d", fd);
+	LOG(3, "path \"%s\"", path);
 
-#ifdef _WIN32
+	if (os_access(path, F_OK) == 0)
+		return 1;
+
+	if (errno != ENOENT) {
+		ERR("!os_access \"%s\"", path);
+		return -1;
+	}
+
+	/*
+	 * ENOENT means that some component of a pathname does not exists.
+	 *
+	 * XXX - we should also call os_access on parent directory and
+	 * if this also results in ENOENT -1 should be returned.
+	 *
+	 * The problem is that we would need to use realpath, which fails
+	 * if file does not exist.
+	 */
+
 	return 0;
+}
+
+/*
+ * get_file_type_internal -- (internal) checks whether stat structure describes
+ *			 device dax or a normal file
+ */
+static enum file_type
+get_file_type_internal(os_stat_t *st)
+{
+#ifdef _WIN32
+	return TYPE_NORMAL;
 #else
-	os_stat_t st;
-	int olderrno = errno;
-	int ret = 0;
-
-	if (fd < 0) {
-		ERR("invalid file descriptor %d", fd);
-		goto out;
-	}
-
-	if (os_fstat(fd, &st) < 0) {
-		ERR("!fstat");
-		goto out;
-	}
-
-	if (!S_ISCHR(st.st_mode)) {
+	if (!S_ISCHR(st->st_mode)) {
 		LOG(4, "not a character device");
-		goto out;
+		return TYPE_NORMAL;
 	}
 
 	char spath[PATH_MAX];
 	snprintf(spath, PATH_MAX, "/sys/dev/char/%u:%u/subsystem",
-		os_major(st.st_rdev), os_minor(st.st_rdev));
+		os_major(st->st_rdev), os_minor(st->st_rdev));
 
 	LOG(4, "device subsystem path \"%s\"", spath);
 
@@ -164,52 +176,76 @@ util_fd_is_device_dax(int fd)
 	char *rpath = realpath(spath, npath);
 	if (rpath == NULL) {
 		ERR("!realpath \"%s\"", spath);
-		goto out;
+		return OTHER_ERROR;
 	}
 
-	ret = strcmp(DEVICE_DAX_PREFIX, rpath) == 0;
+	char *basename = strrchr(rpath, '/');
+	if (!basename || strcmp("dax", basename + 1) != 0) {
+		LOG(3, "%s path does not match device dax prefix path", rpath);
+		errno = EINVAL;
+		return OTHER_ERROR;
+	}
 
-out:
-	errno = olderrno;
-	LOG(4, "returning %d", ret);
-	return ret;
+	return TYPE_DEVDAX;
 #endif
-
 }
 
 /*
- * util_file_is_device_dax -- checks whether the path points to a device dax
+ * util_fd_get_type -- checks whether a file descriptor is associated
+ *		       with a device dax or a normal file
  */
-int
-util_file_is_device_dax(const char *path)
+enum file_type
+util_fd_get_type(int fd)
+{
+	LOG(3, "fd %d", fd);
+
+#ifdef _WIN32
+	return TYPE_NORMAL;
+#else
+	os_stat_t st;
+
+	if (os_fstat(fd, &st) < 0) {
+		ERR("!fstat");
+		return OTHER_ERROR;
+	}
+
+	return get_file_type_internal(&st);
+#endif
+}
+
+/*
+ * util_file_get_type -- checks whether the path points to a device dax,
+ *			 normal file or non-existent file
+ */
+enum file_type
+util_file_get_type(const char *path)
 {
 	LOG(3, "path \"%s\"", path);
 
-#ifdef _WIN32
-	return 0;
-#else
-	int olderrno = errno;
-	int ret = 0;
-
 	if (path == NULL) {
 		ERR("invalid (NULL) path");
-		goto out;
+		errno = EINVAL;
+		return OTHER_ERROR;
 	}
 
-	int fd = os_open(path, O_RDONLY);
-	if (fd < 0) {
-		/* not a problem - 'path' may point to non existent file */
-		/* LOG(4, "!open \"%s\"", path); */
-		goto out;
+	int exists = util_file_exists(path);
+	if (exists < 0)
+		return OTHER_ERROR;
+
+	if (!exists)
+		return NOT_EXISTS;
+
+#ifdef _WIN32
+	return TYPE_NORMAL;
+#else
+	os_stat_t st;
+
+	if (os_stat(path, &st) < 0) {
+		ERR("!stat");
+		return OTHER_ERROR;
 	}
 
-	ret = util_fd_is_device_dax(fd);
-	(void) os_close(fd);
-
-out:
-	errno = olderrno;
-	LOG(4, "returning %d", ret);
-	return ret;
+	return get_file_type_internal(&st);
 #endif
 }
 
@@ -221,8 +257,12 @@ util_file_get_size(const char *path)
 {
 	LOG(3, "path \"%s\"", path);
 
+	int file_type = util_file_get_type(path);
+	if (file_type < 0)
+		return -1;
+
 #ifndef _WIN32
-	if (util_file_is_device_dax(path)) {
+	if (file_type == TYPE_DEVDAX) {
 		return device_dax_size(path);
 	}
 #endif
@@ -341,7 +381,11 @@ util_file_pwrite(const char *path, const void *buffer, size_t size,
 	LOG(3, "path \"%s\" buffer %p size %zu offset %ju",
 			path, buffer, size, offset);
 
-	if (!util_file_is_device_dax(path)) {
+	enum file_type type = util_file_get_type(path);
+	if (type < 0)
+		return -1;
+
+	if (type == TYPE_NORMAL) {
 		int fd = util_file_open(path, NULL, 0, O_RDWR);
 		if (fd < 0) {
 			LOG(2, "failed to open file \"%s\"", path);
@@ -390,7 +434,11 @@ util_file_pread(const char *path, void *buffer, size_t size,
 	LOG(3, "path \"%s\" buffer %p size %zu offset %ju",
 			path, buffer, size, offset);
 
-	if (!util_file_is_device_dax(path)) {
+	enum file_type type = util_file_get_type(path);
+	if (type < 0)
+		return -1;
+
+	if (type == TYPE_NORMAL) {
 		int fd = util_file_open(path, NULL, 0, O_RDONLY);
 		if (fd < 0) {
 			LOG(2, "failed to open file \"%s\"", path);
@@ -562,7 +610,11 @@ util_unlink(const char *path)
 {
 	LOG(3, "path \"%s\"", path);
 
-	if (util_file_is_device_dax(path)) {
+	enum file_type type = util_file_get_type(path);
+	if (type < 0)
+		return -1;
+
+	if (type == TYPE_DEVDAX) {
 		return util_file_zero(path, 0, DEVICE_DAX_ZERO_LEN);
 	} else {
 #ifdef _WIN32
@@ -608,4 +660,28 @@ util_unlink_flock(const char *path)
 
 	return ret;
 #endif
+}
+
+/*
+ * util_write_all -- a wrapper for util_write
+ *
+ * writes exactly count bytes from buf to file referred to by fd
+ * returns -1 on error, 0 otherwise
+ */
+int
+util_write_all(int fd, const char *buf, size_t count)
+{
+	ssize_t n_wrote = 0;
+	size_t total = 0;
+
+	while (count > total) {
+		n_wrote = util_write(fd, buf, count - total);
+		if (n_wrote <= 0)
+			return -1;
+
+		buf += (size_t)n_wrote;
+		total += (size_t)n_wrote;
+	}
+
+	return 0;
 }

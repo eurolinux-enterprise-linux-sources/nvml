@@ -34,13 +34,21 @@
  * log.h -- internal definitions for libpmem log module
  */
 
+#ifndef LOG_H
+#define LOG_H 1
+
 #include <stdint.h>
 #include <stddef.h>
 #include <endian.h>
 
+#include "ctl.h"
 #include "util.h"
 #include "os_thread.h"
 #include "pool_hdr.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define PMEMLOG_LOG_PREFIX "libpmemlog"
 #define PMEMLOG_LOG_LEVEL_VAR "PMEMLOG_LOG_LEVEL"
@@ -50,13 +58,13 @@
 #define LOG_HDR_SIG "PMEMLOG"	/* must be 8 bytes including '\0' */
 #define LOG_FORMAT_MAJOR 1
 
-#define LOG_FORMAT_COMPAT_DEFAULT 0x0000
-#define LOG_FORMAT_INCOMPAT_DEFAULT 0x0000
-#define LOG_FORMAT_RO_COMPAT_DEFAULT 0x0000
+#define LOG_FORMAT_FEAT_DEFAULT \
+	{0x0000, POOL_FEAT_INCOMPAT_DEFAULT, 0x0000}
 
-#define LOG_FORMAT_COMPAT_CHECK 0x0000
-#define LOG_FORMAT_INCOMPAT_CHECK POOL_FEAT_ALL
-#define LOG_FORMAT_RO_COMPAT_CHECK 0x0000
+#define LOG_FORMAT_FEAT_CHECK \
+	{0x0000, POOL_FEAT_INCOMPAT_VALID, 0x0000}
+
+static const features_t log_format_feat_default = LOG_FORMAT_FEAT_DEFAULT;
 
 struct pmemlog {
 	struct pool_hdr hdr;	/* memory pool header */
@@ -67,14 +75,15 @@ struct pmemlog {
 	uint64_t write_offset;	/* current write point for the log */
 
 	/* some run-time state, allocated out of memory pool... */
-	void *addr;			/* mapped region */
-	size_t size;			/* size of mapped region */
-	int is_pmem;			/* true if pool is PMEM */
-	int rdonly;			/* true if pool is opened read-only */
+	void *addr;		/* mapped region */
+	size_t size;		/* size of mapped region */
+	int is_pmem;		/* true if pool is PMEM */
+	int rdonly;		/* true if pool is opened read-only */
 	os_rwlock_t *rwlockp;	/* pointer to RW lock */
-	int is_dev_dax;			/* true if mapped on device dax */
+	int is_dev_dax;		/* true if mapped on device dax */
+	struct ctl *ctl;	/* top level node of the ctl tree structure */
 
-	struct pool_set *set;		/* pool set info */
+	struct pool_set *set;	/* pool set info */
 };
 
 /* data area starts at this alignment after the struct pmemlog above */
@@ -101,3 +110,9 @@ log_convert2le(struct pmemlog *plp)
 	plp->end_offset = htole64(plp->end_offset);
 	plp->write_offset = htole64(plp->write_offset);
 }
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

@@ -32,17 +32,7 @@
 
 #
 # src/test/pmem_memset/TEST0 -- unit test for pmem_memset
-
 #
-#
-# parameter handling
-#
-[CmdletBinding(PositionalBinding=$false)]
-Param(
-    [alias("d")]
-    $DIR = ""
-    )
-
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
@@ -75,6 +65,10 @@ $Env:PMEM_AVX = 1
 test_all
 
 $Env:PMEM_NO_MOVNT = 1
+
+test_all
+
+$Env:PMEM_NO_GENERIC_MEMCPY = 1
 
 test_all
 

@@ -93,7 +93,7 @@ pool_hdr_valid(struct pool_hdr *hdrp)
 {
 	return !util_is_zeroed((void *)hdrp, sizeof(*hdrp)) &&
 		util_checksum(hdrp, sizeof(*hdrp), &hdrp->checksum, 0,
-			POOL_HDR_CSUM_END_OFF);
+			POOL_HDR_CSUM_END_OFF(hdrp));
 }
 
 /*
@@ -106,8 +106,6 @@ pool_supported(enum pool_type type)
 	case POOL_TYPE_LOG:
 		return 1;
 	case POOL_TYPE_BLK:
-		return 1;
-	case POOL_TYPE_CTO:
 		return 1;
 	case POOL_TYPE_OBJ:
 	default:
@@ -202,25 +200,27 @@ pool_hdr_default_check(PMEMpoolcheck *ppc, location *loc)
 			"to default value 0x%x?", loc->prefix, def_hdr.major);
 	}
 
-	if (loc->hdr.compat_features != def_hdr.compat_features) {
+	features_t unknown = util_get_unknown_features(
+			loc->hdr.features, def_hdr.features);
+	if (unknown.compat) {
 		CHECK_ASK(ppc, Q_DEFAULT_COMPAT_FEATURES,
-			"%spool_hdr.compat_features is not valid.|Do you want "
+			"%spool_hdr.features.compat is not valid.|Do you want "
 			"to set it to default value 0x%x?", loc->prefix,
-			def_hdr.compat_features);
+			def_hdr.features.compat);
 	}
 
-	if (loc->hdr.incompat_features != def_hdr.incompat_features) {
+	if (unknown.incompat) {
 		CHECK_ASK(ppc, Q_DEFAULT_INCOMPAT_FEATURES,
-			"%spool_hdr.incompat_features is not valid.|Do you "
+			"%spool_hdr.features.incompat is not valid.|Do you "
 			"want to set it to default value 0x%x?", loc->prefix,
-			def_hdr.incompat_features);
+			def_hdr.features.incompat);
 	}
 
-	if (loc->hdr.ro_compat_features != def_hdr.ro_compat_features) {
+	if (unknown.ro_compat) {
 		CHECK_ASK(ppc, Q_DEFAULT_RO_COMPAT_FEATURES,
-			"%spool_hdr.ro_compat_features is not valid.|Do you "
+			"%spool_hdr.features.ro_compat is not valid.|Do you "
 			"want to set it to default value 0x%x?", loc->prefix,
-			def_hdr.ro_compat_features);
+			def_hdr.features.ro_compat);
 	}
 
 	if (!util_is_zeroed(loc->hdr.unused, sizeof(loc->hdr.unused))) {
@@ -258,19 +258,19 @@ pool_hdr_default_fix(PMEMpoolcheck *ppc, location *loc, uint32_t question,
 		loc->hdr.major = def_hdr.major;
 		break;
 	case Q_DEFAULT_COMPAT_FEATURES:
-		CHECK_INFO(ppc, "%ssetting pool_hdr.compat_features to 0x%x",
-			loc->prefix, def_hdr.compat_features);
-		loc->hdr.compat_features = def_hdr.compat_features;
+		CHECK_INFO(ppc, "%ssetting pool_hdr.features.compat to 0x%x",
+			loc->prefix, def_hdr.features.compat);
+		loc->hdr.features.compat = def_hdr.features.compat;
 		break;
 	case Q_DEFAULT_INCOMPAT_FEATURES:
-		CHECK_INFO(ppc, "%ssetting pool_hdr.incompat_features to 0x%x",
-			loc->prefix, def_hdr.incompat_features);
-		loc->hdr.incompat_features = def_hdr.incompat_features;
+		CHECK_INFO(ppc, "%ssetting pool_hdr.features.incompat to 0x%x",
+			loc->prefix, def_hdr.features.incompat);
+		loc->hdr.features.incompat = def_hdr.features.incompat;
 		break;
 	case Q_DEFAULT_RO_COMPAT_FEATURES:
-		CHECK_INFO(ppc, "%ssetting pool_hdr.ro_compat_features to 0x%x",
-			loc->prefix, def_hdr.ro_compat_features);
-		loc->hdr.ro_compat_features = def_hdr.ro_compat_features;
+		CHECK_INFO(ppc, "%ssetting pool_hdr.features.ro_compat to 0x%x",
+			loc->prefix, def_hdr.features.ro_compat);
+		loc->hdr.features.ro_compat = def_hdr.features.ro_compat;
 		break;
 	case Q_ZERO_UNUSED_AREA:
 		CHECK_INFO(ppc, "%ssetting pool_hdr.unused to zeros",
@@ -306,7 +306,7 @@ pool_hdr_nondefault(PMEMpoolcheck *ppc, location *loc)
 	LOG(3, NULL);
 
 	if (loc->hdr.crtime > (uint64_t)ppc->pool->set_file->mtime) {
-		const char *error = "%spool_hdr.crtime is not valid";
+		const char * const error = "%spool_hdr.crtime is not valid";
 		if (CHECK_IS_NOT(ppc, REPAIR)) {
 			ppc->result = CHECK_RESULT_NOT_CONSISTENT;
 			return CHECK_ERR(ppc, error, loc->prefix);
@@ -326,7 +326,7 @@ pool_hdr_nondefault(PMEMpoolcheck *ppc, location *loc)
 			memcmp(&loc->valid_part_hdrp->arch_flags,
 				&loc->hdr.arch_flags,
 				sizeof(struct arch_flags)) != 0) {
-		const char *error = "%spool_hdr.arch_flags is not valid";
+		const char * const error = "%spool_hdr.arch_flags is not valid";
 		if (CHECK_IS_NOT(ppc, REPAIR)) {
 			ppc->result = CHECK_RESULT_NOT_CONSISTENT;
 			return CHECK_ERR(ppc, error, loc->prefix);
@@ -798,7 +798,7 @@ pool_hdr_checksum_fix(PMEMpoolcheck *ppc, location *loc, uint32_t question,
 	switch (question) {
 	case Q_CHECKSUM:
 		util_checksum(&loc->hdr, sizeof(loc->hdr), &loc->hdr.checksum,
-			1, POOL_HDR_CSUM_END_OFF);
+			1, POOL_HDR_CSUM_END_OFF(&loc->hdr));
 		CHECK_INFO(ppc, "%ssetting pool_hdr.checksum to 0x%jx",
 			loc->prefix, le64toh(loc->hdr.checksum));
 		break;
@@ -916,7 +916,7 @@ init_location_data(PMEMpoolcheck *ppc, location *loc)
 				"replica %u part %u: ",
 				loc->replica, loc->part);
 			if (ret < 0 || ret >= PREFIX_MAX_SIZE)
-				FATAL("!snprintf");
+				FATAL("snprintf: %d", ret);
 		} else
 			loc->prefix[0] = '\0';
 		loc->step = 0;

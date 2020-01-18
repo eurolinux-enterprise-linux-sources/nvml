@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Copyright 2015-2018, Intel Corporation
+# Copyright 2015-2019, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -52,10 +52,13 @@ configure_valgrind drd force-disable
 
 setup
 
+# VMMALLOC_POOL_SIZE * 2^argv[2]
+require_free_space 1G
+
 export VMMALLOC_POOL_SIZE=$((64 * 1024 * 1024))
 export VMMALLOC_LOG_LEVEL=3
 export VMMALLOC_FORK=1
-export TEST_LD_PRELOAD=libvmmalloc.so
+export TEST_LD_PRELOAD=$VMMALLOC
 
 # this test is leaky by design
 export MEMCHECK_DONT_CHECK_LEAKS=1

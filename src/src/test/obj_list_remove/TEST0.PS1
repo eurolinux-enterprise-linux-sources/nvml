@@ -36,16 +36,12 @@
 # Add 4 elements to single list and remove all elements by removing
 # the first one always.
 #
-[CmdletBinding(PositionalBinding=$false)]
-Param(
-    [alias("d")]
-    $DIR = ""
-    )
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
 
 require_test_type medium
+require_build_type debug
 
 setup
 

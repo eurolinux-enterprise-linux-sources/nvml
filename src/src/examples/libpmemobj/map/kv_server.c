@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -50,11 +50,13 @@
 #include "map_rbtree.h"
 #include "map_hashmap_atomic.h"
 #include "map_hashmap_tx.h"
+#include "map_hashmap_rp.h"
 #include "map_skiplist.h"
 
 #include "kv_protocol.h"
 
 #define COUNT_OF(x) (sizeof(x) / sizeof(0[x]))
+#define COMPILE_ERROR_ON(cond) ((void)sizeof(char[(cond) ? -1 : 1]))
 
 POBJ_LAYOUT_BEGIN(kv_server);
 POBJ_LAYOUT_ROOT(kv_server, struct root);
@@ -195,7 +197,10 @@ static int
 cmsg_remove_handler(uv_stream_t *client, const char *msg, size_t len)
 {
 	char key[MAX_KEY_LEN] = {0};
-	int ret = sscanf(msg, "REMOVE %s\n", key);
+
+	/* check if the constant used in sscanf() below has the correct value */
+	COMPILE_ERROR_ON(MAX_KEY_LEN - 1 != 254);
+	int ret = sscanf(msg, "REMOVE %254s\n", key);
 	assert(ret == 1);
 
 	int result = map_remove_free(mapc, map, djb2_hash(key));
@@ -212,7 +217,10 @@ static int
 cmsg_get_handler(uv_stream_t *client, const char *msg, size_t len)
 {
 	char key[MAX_KEY_LEN];
-	int ret = sscanf(msg, "GET %s\n", key);
+
+	/* check if the constant used in sscanf() below has the correct value */
+	COMPILE_ERROR_ON(MAX_KEY_LEN - 1 != 254);
+	int ret = sscanf(msg, "GET %254s\n", key);
 	assert(ret == 1);
 
 	TOID(struct map_value) value;
@@ -396,6 +404,7 @@ static const struct {
 } maps[] = {
 	{MAP_HASHMAP_TX, "hashmap_tx"},
 	{MAP_HASHMAP_ATOMIC, "hashmap_atomic"},
+	{MAP_HASHMAP_RP, "hashmap_rp"},
 	{MAP_CTREE, "ctree"},
 	{MAP_BTREE, "btree"},
 	{MAP_RTREE, "rtree"},
@@ -424,8 +433,9 @@ int
 main(int argc, char *argv[])
 {
 	if (argc < 4) {
-		printf("usage: %s hashmap_tx|hashmap_atomic|ctree|btree|rtree|"
-				"rbtree|skiplist file-name port\n", argv[0]);
+		printf("usage: %s hashmap_tx|hashmap_atomic|hashmap_rp|"
+				"ctree|btree|rtree|rbtree|skiplist file-name port\n",
+				argv[0]);
 		return 1;
 	}
 

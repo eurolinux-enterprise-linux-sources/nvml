@@ -39,6 +39,10 @@
 
 #include <unistd.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct fs;
 
 enum fs_entry_type {
@@ -59,7 +63,8 @@ struct fs_entry {
 	const char *path;
 	size_t pathlen;
 	/* the depth of the traversal */
-	short level;
+	/* XXX long on FreeBSD. Linux uses short. No harm in it being bigger */
+	long level;
 };
 
 struct fs *fs_new(const char *path);
@@ -67,5 +72,9 @@ void fs_delete(struct fs *f);
 
 /* this call invalidates the previous entry */
 struct fs_entry *fs_read(struct fs *f);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* PMDK_FS_H */

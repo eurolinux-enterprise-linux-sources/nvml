@@ -62,7 +62,7 @@ extern "C" {
  * bucket, the thread reaches out to the global, shared, heap which manages
  * memory in 256 kilobyte chunks and gives it out in a best-fit fashion. This
  * operation must be performed under an exclusive lock.
- * Once the thread is in the possesion of a chunk, the lock is dropped, and the
+ * Once the thread is in the possession of a chunk, the lock is dropped, and the
  * memory is split into units that repopulate the bucket.
  *
  * These are the CTL entry points that control allocation classes:
@@ -132,11 +132,13 @@ struct pobj_alloc_class_desc {
 	size_t unit_size;
 
 	/*
-	 * Currently unsupported. All allocation classes have default alignment
+	 * Desired alignment of objects from the allocation class.
+	 * If non zero, must be a power of two and an even divisor of unit size.
+	 *
+	 * All allocation classes have default alignment
 	 * of 64. User data alignment is affected by the size of a header. For
 	 * compact one this means that the alignment is 48 bytes.
 	 *
-	 * Must be 0.
 	 */
 	size_t alignment;
 
@@ -167,20 +169,13 @@ struct pobj_alloc_class_desc {
 #ifndef _WIN32
 /* EXPERIMENTAL */
 int pmemobj_ctl_get(PMEMobjpool *pop, const char *name, void *arg);
-/* EXPERIMENTAL */
 int pmemobj_ctl_set(PMEMobjpool *pop, const char *name, void *arg);
-/* EXPERIMENTAL */
 int pmemobj_ctl_exec(PMEMobjpool *pop, const char *name, void *arg);
 #else
-/* EXPERIMENTAL */
 int pmemobj_ctl_getU(PMEMobjpool *pop, const char *name, void *arg);
 int pmemobj_ctl_getW(PMEMobjpool *pop, const wchar_t *name, void *arg);
-
-/* EXPERIMENTAL */
 int pmemobj_ctl_setU(PMEMobjpool *pop, const char *name, void *arg);
 int pmemobj_ctl_setW(PMEMobjpool *pop, const wchar_t *name, void *arg);
-
-/* EXPERIMENTAL */
 int pmemobj_ctl_execU(PMEMobjpool *pop, const char *name, void *arg);
 int pmemobj_ctl_execW(PMEMobjpool *pop, const wchar_t *name, void *arg);
 

@@ -55,7 +55,7 @@
 
 struct mock_pop {
 	PMEMobjpool p;
-	char lanes[LANE_SECTION_LEN * MAX_LANE_SECTION];
+	char lanes[LANE_TOTAL_SIZE];
 	char padding[1024]; /* to page boundary */
 	uint64_t ptr;
 };
@@ -75,21 +75,25 @@ drain_empty(void)
 /*
  * obj_persist -- pmemobj version of pmem_persist w/o replication
  */
-static void
-obj_persist(void *ctx, const void *addr, size_t len)
+static int
+obj_persist(void *ctx, const void *addr, size_t len, unsigned flags)
 {
 	PMEMobjpool *pop = ctx;
 	pop->persist_local(addr, len);
+
+	return 0;
 }
 
 /*
  * obj_flush -- pmemobj version of pmem_flush w/o replication
  */
-static void
-obj_flush(void *ctx, const void *addr, size_t len)
+static int
+obj_flush(void *ctx, const void *addr, size_t len, unsigned flags)
 {
 	PMEMobjpool *pop = ctx;
 	pop->flush_local(addr, len);
+
+	return 0;
 }
 
 /*
@@ -102,21 +106,27 @@ obj_drain(void *ctx)
 	pop->drain_local();
 }
 
+static void
+obj_msync_nofail(const void *addr, size_t size)
+{
+	if (pmem_msync(addr, size))
+		UT_FATAL("!pmem_msync");
+}
+
 /*
  * obj_memcpy -- pmemobj version of memcpy w/o replication
  */
 static void *
-obj_memcpy(void *ctx, void *dest, const void *src, size_t len)
+obj_memcpy(void *ctx, void *dest, const void *src, size_t len, unsigned flags)
 {
-	memcpy(dest, src, len);
+	pmem_memcpy(dest, src, len, flags);
 	return dest;
 }
 
 static void *
-obj_memset(void *ctx, void *ptr, int c, size_t sz)
+obj_memset(void *ctx, void *ptr, int c, size_t sz, unsigned flags)
 {
-	memset(ptr, c, sz);
-	UT_ASSERTeq(pmem_msync(ptr, sz), 0);
+	pmem_memset(ptr, c, sz, flags);
 	return ptr;
 }
 
@@ -131,7 +141,6 @@ test_oom_allocs(size_t size)
 		if (pmalloc(mock_pop, &addr->ptr, size, 0, 0)) {
 			break;
 		}
-		UT_ASSERT(palloc_is_allocated(&mock_pop->heap, addr->ptr));
 		UT_ASSERT(addr->ptr != 0);
 		allocs[count++] = addr->ptr;
 	}
@@ -139,13 +148,9 @@ test_oom_allocs(size_t size)
 	for (int i = 0; i < count; ++i) {
 		addr->ptr = allocs[i];
 		pfree(mock_pop, &addr->ptr);
-		UT_ASSERT(!palloc_is_allocated(&mock_pop->heap, allocs[i]));
 		UT_ASSERT(addr->ptr == 0);
 	}
 
-	for (int i = 0; i < count; ++i) {
-		UT_ASSERT(!palloc_is_allocated(&mock_pop->heap, allocs[i]));
-	}
 	UT_ASSERT(count != 0);
 	FREE(allocs);
 
@@ -167,29 +172,25 @@ test_oom_resrv(size_t size)
 			break;
 
 		allocs[count] = resvs[count].heap.offset;
-		UT_ASSERT(!palloc_is_allocated(&mock_pop->heap, allocs[count]));
 		UT_ASSERT(allocs[count] != 0);
 		count++;
 	}
 
 	for (size_t i = 0; i < count; ) {
 		size_t nresv = MIN(count - i, 10);
-		struct redo_log *redo = pmalloc_redo_hold(mock_pop);
-		struct operation_context ctx;
-		operation_init(&ctx, mock_pop, mock_pop->redo, redo);
-		palloc_publish(&mock_pop->heap, &resvs[i], (int)nresv, &ctx);
+		struct operation_context *ctx =
+			pmalloc_operation_hold(mock_pop);
+		palloc_publish(&mock_pop->heap, &resvs[i], nresv, ctx);
 
-		pmalloc_redo_release(mock_pop);
+		pmalloc_operation_release(mock_pop);
 
 		i += nresv;
 	}
 
 	for (int i = 0; i < count; ++i) {
-		UT_ASSERT(palloc_is_allocated(&mock_pop->heap, allocs[i]));
 		addr->ptr = allocs[i];
 		pfree(mock_pop, &addr->ptr);
 		UT_ASSERT(addr->ptr == 0);
-		UT_ASSERT(!palloc_is_allocated(&mock_pop->heap, allocs[i]));
 	}
 
 	UT_ASSERT(count != 0);
@@ -224,13 +225,6 @@ test_realloc(size_t org, size_t dest)
 	pfree(mock_pop, &addr->ptr);
 }
 
-static int
-redo_log_check_offset(void *ctx, uint64_t offset)
-{
-	PMEMobjpool *pop = ctx;
-	return OBJ_OFF_IS_VALID(pop, offset);
-}
-
 #define PMALLOC_EXTRA 20
 #define PALLOC_FLAG (1 << 15)
 
@@ -257,7 +251,7 @@ static void
 test_pmalloc_first_next(PMEMobjpool *pop)
 {
 	uint64_t vals[PMALLOC_ELEMENTS];
-	for (int i = 0; i < PMALLOC_ELEMENTS; ++i) {
+	for (unsigned i = 0; i < PMALLOC_ELEMENTS; ++i) {
 		int ret = pmalloc(pop, &vals[i], FIRST_SIZE, i, i);
 		UT_ASSERTeq(ret, 0);
 	}
@@ -293,22 +287,19 @@ test_mock_pool_allocs(void)
 	mock_pop->lanes_offset = sizeof(PMEMobjpool);
 	mock_pop->is_master_replica = 1;
 
-	mock_pop->persist_local = (persist_local_fn)pmem_msync;
-	mock_pop->flush_local = (flush_local_fn)pmem_msync;
+	mock_pop->persist_local = obj_msync_nofail;
+	mock_pop->flush_local = obj_msync_nofail;
 	mock_pop->drain_local = drain_empty;
 
 	mock_pop->p_ops.persist = obj_persist;
 	mock_pop->p_ops.flush = obj_flush;
 	mock_pop->p_ops.drain = obj_drain;
-	mock_pop->p_ops.memcpy_persist = obj_memcpy;
-	mock_pop->p_ops.memset_persist = obj_memset;
+	mock_pop->p_ops.memcpy = obj_memcpy;
+	mock_pop->p_ops.memset = obj_memset;
 	mock_pop->p_ops.base = mock_pop;
 	mock_pop->set = MALLOC(sizeof(*(mock_pop->set)));
 	mock_pop->set->options = 0;
 	mock_pop->set->directory_based = 0;
-
-	mock_pop->redo = redo_log_config_new(addr, &mock_pop->p_ops,
-			redo_log_check_offset, mock_pop, REDO_NUM_ENTRIES);
 
 	void *heap_start = (char *)mock_pop + mock_pop->heap_offset;
 	uint64_t heap_size = MOCK_POOL_SIZE - mock_pop->heap_offset;
@@ -369,7 +360,6 @@ test_mock_pool_allocs(void)
 
 	stats_delete(mock_pop, s);
 	lane_cleanup(mock_pop);
-	redo_log_config_delete(mock_pop->redo);
 	heap_cleanup(&mock_pop->heap);
 
 	FREE(mock_pop->set);
@@ -383,8 +373,6 @@ test_spec_compliance(void)
 		sizeof(struct allocation_header_legacy);
 
 	UT_ASSERTeq(max_alloc, PMEMOBJ_MAX_ALLOC_SIZE);
-	UT_COMPILE_ERROR_ON(offsetof(struct chunk_run, data) <
-		MAX_CACHELINE_ALIGNMENT);
 }
 
 int

@@ -64,7 +64,6 @@ const char *out_get_checksum(void *addr, size_t len, uint64_t *csump,
 const char *out_get_btt_map_entry(uint32_t map);
 const char *out_get_pool_type_str(pmem_pool_type_t type);
 const char *out_get_pool_signature(pmem_pool_type_t type);
-const char *out_get_lane_section_str(enum lane_section_type type);
 const char *out_get_tx_state_str(uint64_t state);
 const char *out_get_chunk_type_str(enum chunk_type type);
 const char *out_get_chunk_flags(uint16_t flags);
@@ -73,5 +72,6 @@ const char *out_get_pmemoid_str(PMEMoid oid, uint64_t uuid_lo);
 const char *out_get_arch_machine_class_str(uint8_t machine_class);
 const char *out_get_arch_data_str(uint8_t data);
 const char *out_get_arch_machine_str(uint16_t machine);
+const char *out_get_last_shutdown_str(uint8_t dirty);
 const char *out_get_alignment_desc_str(uint64_t ad, uint64_t cur_ad);
 const char *out_get_incompat_features_str(uint32_t incompat);

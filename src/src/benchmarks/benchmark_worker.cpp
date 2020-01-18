@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -72,8 +72,8 @@ worker_state_transition(struct benchmark_worker *worker,
 static void *
 thread_func(void *arg)
 {
-	assert(arg != NULL);
-	struct benchmark_worker *worker = (struct benchmark_worker *)arg;
+	assert(arg != nullptr);
+	auto *worker = (struct benchmark_worker *)arg;
 
 	os_mutex_lock(&worker->lock);
 
@@ -86,6 +86,11 @@ thread_func(void *arg)
 
 	worker_state_transition(worker, WORKER_STATE_INIT,
 				WORKER_STATE_INITIALIZED);
+
+	if (worker->ret_init) {
+		os_mutex_unlock(&worker->lock);
+		return nullptr;
+	}
 
 	worker_state_wait_for_transition(worker, WORKER_STATE_INITIALIZED,
 					 WORKER_STATE_RUN);
@@ -103,7 +108,7 @@ thread_func(void *arg)
 	worker_state_transition(worker, WORKER_STATE_EXIT, WORKER_STATE_DONE);
 
 	os_mutex_unlock(&worker->lock);
-	return NULL;
+	return nullptr;
 }
 
 /*
@@ -116,7 +121,7 @@ benchmark_worker_alloc(void)
 		(struct benchmark_worker *)calloc(1, sizeof(*w));
 
 	if (!w)
-		return NULL;
+		return nullptr;
 
 	if (os_mutex_init(&w->lock))
 		goto err_free_worker;
@@ -124,7 +129,7 @@ benchmark_worker_alloc(void)
 	if (os_cond_init(&w->cond))
 		goto err_destroy_mutex;
 
-	if (os_thread_create(&w->thread, NULL, thread_func, w))
+	if (os_thread_create(&w->thread, nullptr, thread_func, w))
 		goto err_destroy_cond;
 
 	return w;
@@ -135,7 +140,7 @@ err_destroy_mutex:
 	os_mutex_destroy(&w->lock);
 err_free_worker:
 	free(w);
-	return NULL;
+	return nullptr;
 }
 
 /*
@@ -144,7 +149,7 @@ err_free_worker:
 void
 benchmark_worker_free(struct benchmark_worker *w)
 {
-	os_thread_join(&w->thread, NULL);
+	os_thread_join(&w->thread, nullptr);
 	os_cond_destroy(&w->cond);
 	os_mutex_destroy(&w->lock);
 	free(w);

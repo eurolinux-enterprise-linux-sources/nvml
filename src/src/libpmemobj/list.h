@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,18 +44,11 @@
 #include "libpmemobj.h"
 #include "lane.h"
 #include "pmalloc.h"
-#include "redo.h"
+#include "ulog.h"
 
-/*
- * lane_list_layout -- structure of list section in lane
- *
- * obj_offset - offset to object which should be freed
- * redo       - redo log
- */
-struct lane_list_layout {
-	uint64_t obj_offset;
-	struct redo_log redo[REDO_NUM_ENTRIES];
-};
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 struct list_entry {
 	PMEMoid pe_next;
@@ -69,7 +62,8 @@ struct list_head {
 
 int list_insert_new_user(PMEMobjpool *pop,
 	size_t pe_offset, struct list_head *user_head, PMEMoid dest, int before,
-	size_t size, palloc_constr constructor, void *arg, PMEMoid *oidp);
+	size_t size, uint64_t type_num, palloc_constr constructor, void *arg,
+	PMEMoid *oidp);
 
 int list_insert(PMEMobjpool *pop,
 	ssize_t pe_offset, struct list_head *head, PMEMoid dest, int before,
@@ -91,5 +85,9 @@ int list_move(PMEMobjpool *pop,
 void list_move_oob(PMEMobjpool *pop,
 	struct list_head *head_old, struct list_head *head_new,
 	PMEMoid oid);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -76,18 +76,74 @@ Zalloc(size_t sz)
 unsigned _On_valgrind;
 #endif
 
+#if VG_PMEMCHECK_ENABLED
+#define LIB_LOG_LEN 20
+#define FUNC_LOG_LEN 50
+#define SUFFIX_LEN 7
+
+/* true if pmreorder instrumentization has to be enabled */
+int _Pmreorder_emit;
+
+/*
+ * util_emit_log -- emits lib and func name with appropriate suffix
+ * to pmemcheck store log file
+ */
+void
+util_emit_log(const char *lib, const char *func, int order)
+{
+	char lib_name[LIB_LOG_LEN];
+	char func_name[FUNC_LOG_LEN];
+	char suffix[SUFFIX_LEN];
+	size_t lib_len = strlen(lib);
+	size_t func_len = strlen(func);
+
+	if (order == 0)
+		strcpy(suffix, ".BEGIN");
+	else
+		strcpy(suffix, ".END");
+
+	size_t suffix_len = strlen(suffix);
+
+	if (lib_len + suffix_len + 1 > LIB_LOG_LEN) {
+		VALGRIND_EMIT_LOG("Library name is too long");
+		return;
+	}
+
+	if (func_len + suffix_len + 1 > FUNC_LOG_LEN) {
+		VALGRIND_EMIT_LOG("Function name is too long");
+		return;
+	}
+
+	strcpy(lib_name, lib);
+	strcat(lib_name, suffix);
+	strcpy(func_name, func);
+	strcat(func_name, suffix);
+
+	if (order == 0) {
+		VALGRIND_EMIT_LOG(func_name);
+		VALGRIND_EMIT_LOG(lib_name);
+	} else {
+		VALGRIND_EMIT_LOG(lib_name);
+		VALGRIND_EMIT_LOG(func_name);
+	}
+}
+#endif
+
 /*
  * util_is_zeroed -- check if given memory range is all zero
  */
 int
 util_is_zeroed(const void *addr, size_t len)
 {
-	/* XXX optimize */
 	const char *a = addr;
-	while (len-- > 0)
-		if (*a++)
-			return 0;
-	return 1;
+
+	if (len == 0)
+		return 1;
+
+	if (a[0] == 0 && memcmp(a, a + 1, len - 1) == 0)
+		return 1;
+
+	return 0;
 }
 
 /*
@@ -142,6 +198,29 @@ util_checksum(void *addr, size_t len, uint64_t *csump,
 	}
 
 	return *csump == htole64(csum);
+}
+
+
+/*
+ * util_checksum_seq -- compute sequential Fletcher64 checksum
+ *
+ * Merges checksum from the old buffer with checksum for current buffer.
+ */
+uint64_t
+util_checksum_seq(const void *addr, size_t len, uint64_t csum)
+{
+	if (len % 4 != 0)
+		abort();
+	const uint32_t *p32 = addr;
+	const uint32_t *p32end = (const uint32_t *)((const char *)addr + len);
+	uint32_t lo32 = (uint32_t)csum;
+	uint32_t hi32 = (uint32_t)(csum >> 32);
+	while (p32 < p32end) {
+		lo32 += le32toh(*p32);
+		++p32;
+		hi32 += lo32;
+	}
+	return (uint64_t)hi32 << 32 | lo32;
 }
 
 /*
@@ -260,6 +339,16 @@ util_init(void)
 #if ANY_VG_TOOL_ENABLED
 	_On_valgrind = RUNNING_ON_VALGRIND;
 #endif
+
+#if VG_PMEMCHECK_ENABLED
+	if (On_valgrind) {
+		char *pmreorder_env = getenv("PMREORDER_EMIT_LOG");
+		if (pmreorder_env)
+			_Pmreorder_emit = atoi(pmreorder_env);
+	} else {
+			_Pmreorder_emit = 0;
+	}
+#endif
 }
 
 /*
@@ -295,3 +384,31 @@ util_localtime(const time_t *timep)
 
 	return tm;
 }
+
+/*
+ * util_safe_strcpy -- copies string from src to dst, returns -1
+ * when length of source string (including null-terminator)
+ * is greater than max_length, 0 otherwise
+ *
+ * For gcc (found in version 8.1.1) calling this function with
+ * max_length equal to dst size produces -Wstringop-truncation warning
+ *
+ * https://gcc.gnu.org/bugzilla/show_bug.cgi?id=85902
+ */
+#ifdef STRINGOP_TRUNCATION_SUPPORTED
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-truncation"
+#endif
+int
+util_safe_strcpy(char *dst, const char *src, size_t max_length)
+{
+	if (max_length == 0)
+		return -1;
+
+	strncpy(dst, src, max_length);
+
+	return dst[max_length - 1] == '\0' ? 0 : -1;
+}
+#ifdef STRINGOP_TRUNCATION_SUPPORTED
+#pragma GCC diagnostic pop
+#endif

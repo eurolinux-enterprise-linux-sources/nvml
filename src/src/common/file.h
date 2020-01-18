@@ -36,15 +36,18 @@
 
 #ifndef PMDK_FILE_H
 #define PMDK_FILE_H 1
-#ifdef __cplusplus
-extern "C" {
-#endif
+
 #include <stddef.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <dirent.h>
 #include <limits.h>
 #include "os.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifdef _WIN32
 #define NAME_MAX _MAX_FNAME
 #endif
@@ -64,12 +67,20 @@ struct dir_handle {
 #endif
 };
 
+enum file_type {
+	OTHER_ERROR = -2,
+	NOT_EXISTS = -1,
+	TYPE_NORMAL = 1,
+	TYPE_DEVDAX = 2
+};
+
 int util_file_dir_open(struct dir_handle *a, const char *path);
 int util_file_dir_next(struct dir_handle *a, struct file_info *info);
 int util_file_dir_close(struct dir_handle *a);
 int util_file_dir_remove(const char *path);
-int util_file_is_device_dax(const char *path);
-int util_fd_is_device_dax(int fd);
+int util_file_exists(const char *path);
+enum file_type util_fd_get_type(int fd);
+enum file_type util_file_get_type(const char *path);
 int util_ddax_region_find(const char *path);
 ssize_t util_file_get_size(const char *path);
 size_t util_file_device_dax_alignment(const char *path);
@@ -88,6 +99,8 @@ int util_file_open(const char *path, size_t *size, size_t minsize, int flags);
 int util_unlink(const char *path);
 int util_unlink_flock(const char *path);
 int util_file_mkdir(const char *path, mode_t mode);
+
+int util_write_all(int fd, const char *buf, size_t count);
 
 #ifndef _WIN32
 #define util_read	read

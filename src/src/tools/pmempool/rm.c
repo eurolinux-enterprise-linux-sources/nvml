@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -75,7 +75,7 @@ static enum ask_type ask_mode;
 static int rpmem_avail;
 
 /* help message */
-static const char *help_str =
+static const char * const help_str =
 "Remove pool file or all files from poolset\n"
 "\n"
 "Available options:\n"
@@ -118,7 +118,7 @@ print_usage(const char *appname)
  * pmempool_rm_help -- print help message
  */
 void
-pmempool_rm_help(char *appname)
+pmempool_rm_help(const char *appname)
 {
 	print_usage(appname);
 	printf(help_str, appname);
@@ -142,6 +142,9 @@ rm_file(const char *file)
 	case ASK_SOMETIMES:
 		cask = write_protected ? '?' : 'y';
 		break;
+	default:
+		outv_err("unknown state");
+		return 1;
 	}
 
 	const char *pre_msg = write_protected ? "write-protected " : "";
@@ -177,6 +180,9 @@ remove_remote(const char *target, const char *pool_set)
 	case ASK_SOMETIMES:
 		cask = 'y';
 		break;
+	default:
+		outv_err("unknown state");
+		return 1;
 	}
 
 	char ans = ask_Yn(cask, "remove remote pool '%s' on '%s'?",
@@ -241,14 +247,17 @@ rm_poolset_cb(struct part_file *pf, void *arg)
 	int *error = (int *)arg;
 	int ret;
 	if (pf->is_remote) {
-		ret = remove_remote(pf->node_addr, pf->pool_desc);
+		ret = remove_remote(pf->remote->node_addr,
+					pf->remote->pool_desc);
 	} else {
-		const char *part_file = pf->path;
+		const char *part_file = pf->part->path;
 
 		outv(2, "part file   : %s\n", part_file);
 
-		int exists = os_access(part_file, F_OK) == 0;
-		if (!exists) {
+		int exists = util_file_exists(part_file);
+		if (exists < 0)
+			ret = 1;
+		else if (!exists) {
 			/*
 			 * Ignore not accessible file if force
 			 * flag is set.
@@ -295,7 +304,7 @@ rm_poolset(const char *file)
  * pmempool_rm_func -- main function for rm command
  */
 int
-pmempool_rm_func(char *appname, int argc, char *argv[])
+pmempool_rm_func(const char *appname, int argc, char *argv[])
 {
 	/* by default do not remove any poolset files */
 	rm_poolset_mode = RM_POOLSET_NONE;

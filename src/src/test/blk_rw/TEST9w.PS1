@@ -34,12 +34,6 @@
 #
 # src\test\blk_rw\TEST9 -- unit test for pmemblk_read\write\set_zero\set_error
 #
-[CmdletBinding(PositionalBinding=$false)]
-Param(
-    [alias("d")]
-    $DIR = ""
-    )
-
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
@@ -50,6 +44,8 @@ require_test_type medium
 require_fs_type pmem non-pmem
 
 setup
+
+require_free_space 2G
 
 create_poolset $DIR\testset1 1G:$DIR\testfile1:x 1G:$DIR\testfile2:x
 

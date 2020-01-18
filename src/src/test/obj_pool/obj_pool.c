@@ -52,7 +52,7 @@ pool_create(const char *path, const char *layout, size_t poolsize,
 	PMEMobjpool *pop = pmemobj_create(path, layout, poolsize, mode);
 
 	if (pop == NULL)
-		UT_OUT("!%s: pmemobj_create", path);
+		UT_OUT("!%s: pmemobj_create: %s", path, pmemobj_errormsg());
 	else {
 		os_stat_t stbuf;
 		STAT(path, &stbuf);
@@ -77,7 +77,7 @@ pool_open(const char *path, const char *layout)
 {
 	PMEMobjpool *pop = pmemobj_open(path, layout);
 	if (pop == NULL)
-		UT_OUT("!%s: pmemobj_open", path);
+		UT_OUT("!%s: pmemobj_open: %s", path, pmemobj_errormsg());
 	else {
 		UT_OUT("%s: pmemobj_open: Success", path);
 		pmemobj_close(pop);
@@ -103,7 +103,7 @@ main(int argc, char *argv[])
 
 	switch (argv[1][0]) {
 	case 'c':
-		poolsize = strtoul(argv[4], NULL, 0) * MB; /* in megabytes */
+		poolsize = strtoull(argv[4], NULL, 0) * MB; /* in megabytes */
 		mode = strtoul(argv[5], NULL, 8);
 
 		pool_create(argv[2], layout, poolsize, mode);

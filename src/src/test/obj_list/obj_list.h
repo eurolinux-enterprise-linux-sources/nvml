@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017, Intel Corporation
+ * Copyright 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -75,15 +75,15 @@ struct list {
 	POBJ_LIST_HEAD(listhead, struct item) head;
 };
 
-enum redo_fail
+enum ulog_fail
 {
 	/* don't fail at all */
 	NO_FAIL,
-	/* fail after redo_log_store_last or redo_log_set_last */
+	/* fail after ulog_store */
 	FAIL_AFTER_FINISH,
-	/* fail before redo_log_store_last or redo_log_set_last */
+	/* fail before ulog_store */
 	FAIL_BEFORE_FINISH,
-	/* fail after redo_log_process */
+	/* fail after process */
 	FAIL_AFTER_PROCESS
 };
 
@@ -92,12 +92,12 @@ extern PMEMobjpool *Pop;
 /* pointer to heap offset */
 extern uint64_t *Heap_offset;
 /* list lane section */
-extern struct lane_section Lane_section;
+extern struct lane Lane;
 /* actual item id */
 extern int *Id;
 
 /* fail event */
-extern enum redo_fail Redo_fail;
+extern enum ulog_fail Ulog_fail;
 
 /* global "in band" lists */
 extern TOID(struct list) List;

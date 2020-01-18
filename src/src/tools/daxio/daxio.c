@@ -35,6 +35,7 @@
  *            Device DAX device using mmap instead of file I/O API
  */
 
+#include <assert.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <getopt.h>
@@ -69,10 +70,24 @@ do {\
 		__func__, __LINE__, func, strerror(errno));\
 } while (0)
 
+#define USAGE_MESSAGE \
+"Usage: daxio [option] ...\n"\
+"Valid options:\n"\
+"   -i, --input=FILE                - input device/file (default stdin)\n"\
+"   -o, --output=FILE               - output device/file (default stdout)\n"\
+"   -k, --skip=BYTES                - skip offset for input (default 0)\n"\
+"   -s, --seek=BYTES                - seek offset for output (default 0)\n"\
+"   -l, --len=BYTES                 - total length to perform the I/O\n"\
+"   -b, --clear-bad-blocks=<yes|no> - clear bad blocks (default: yes)\n"\
+"   -z, --zero                      - zeroing the device\n"\
+"   -h. --help                      - print this help\n"\
+"   -V, --version                   - display version of daxio\n"
+
 struct daxio_device {
 	char *path;
 	int fd;
 	size_t size;		/* actual file/device size */
+	int is_devdax;
 
 	/* Device DAX only */
 	size_t align;		/* internal device alignment */
@@ -80,7 +95,6 @@ struct daxio_device {
 	size_t maplen;		/* mapping length */
 	size_t offset;		/* seek or skip */
 
-	struct ndctl_dax *dax;	/* NULL if not DAX */
 	unsigned major;
 	unsigned minor;
 	struct ndctl_ctx *ndctl_ctx;
@@ -93,6 +107,7 @@ struct daxio_device {
 struct daxio_context {
 	size_t len;	/* total length of I/O */
 	int zero;
+	int clear_bad_blocks;
 	struct daxio_device src;
 	struct daxio_device dst;
 };
@@ -103,8 +118,9 @@ struct daxio_context {
 static struct daxio_context Ctx = {
 	SIZE_MAX,	/* len */
 	0,		/* zero */
-	{ NULL, -1, SIZE_MAX, 0, NULL, 0, 0, NULL, 0, 0, NULL, NULL },
-	{ NULL, -1, SIZE_MAX, 0, NULL, 0, 0, NULL, 0, 0, NULL, NULL },
+	1,		/* clear_bad_blocks */
+	{ NULL, -1, SIZE_MAX, 0, 0, NULL, 0, 0, 0, 0, NULL, NULL },
+	{ NULL, -1, SIZE_MAX, 0, 0, NULL, 0, 0, 0, 0, NULL, NULL },
 };
 
 /*
@@ -122,31 +138,23 @@ print_version(void)
 static void
 print_usage(void)
 {
-	printf("Usage: daxio [option] ...\n");
-	printf("Valid options:\n");
-	printf("-i, --input=FILE  - input device/file (default stdin)\n");
-	printf("-o, --output=FILE - output device/file (default stdout)\n");
-	printf("-k, --skip=BYTES  - skip offset for input (default 0)\n");
-	printf("-s, --seek=BYTES  - seek offset for output (default 0)\n");
-	printf("-l, --len=BYTES   - total length to perform the I/O\n");
-	printf("-z, --zero        - zeroing the device\n");
-	printf("-h. --help        - print this help\n");
-	printf("-V, --version     - display version of daxio\n");
+	fprintf(stderr, USAGE_MESSAGE);
 }
 
 /*
  * long_options -- command line options
  */
 static const struct option long_options[] = {
-	{"input",	required_argument,	NULL,	'i'},
-	{"output",	required_argument,	NULL,	'o'},
-	{"skip",	required_argument,	NULL,	'k'},
-	{"seek",	required_argument,	NULL,	's'},
-	{"len",		required_argument,	NULL,	'l'},
-	{"zero",	no_argument,		NULL,	'z'},
-	{"help",	no_argument,		NULL,	'h'},
-	{"version",	no_argument,		NULL,	'V'},
-	{NULL,		0,			NULL,	 0 },
+	{"input",			required_argument,	NULL,	'i'},
+	{"output",			required_argument,	NULL,	'o'},
+	{"skip",			required_argument,	NULL,	'k'},
+	{"seek",			required_argument,	NULL,	's'},
+	{"len",				required_argument,	NULL,	'l'},
+	{"clear-bad-blocks",		required_argument,	NULL,	'b'},
+	{"zero",			no_argument,		NULL,	'z'},
+	{"help",			no_argument,		NULL,	'h'},
+	{"version",			no_argument,		NULL,	'V'},
+	{NULL,				0,			NULL,	 0 },
 };
 
 /*
@@ -159,7 +167,7 @@ parse_args(struct daxio_context *ctx, int argc, char * const argv[])
 	size_t offset;
 	size_t len;
 
-	while ((opt = getopt_long(argc, argv, "i:o:k:s:l:zhV",
+	while ((opt = getopt_long(argc, argv, "i:o:k:s:l:b:zhV",
 			long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'i':
@@ -191,6 +199,18 @@ parse_args(struct daxio_context *ctx, int argc, char * const argv[])
 			break;
 		case 'z':
 			ctx->zero = 1;
+			break;
+		case 'b':
+			if (strcmp(optarg, "no") == 0) {
+				ctx->clear_bad_blocks = 0;
+			} else if (strcmp(optarg, "yes") == 0) {
+				ctx->clear_bad_blocks = 1;
+			} else {
+				ERR(
+					"'%s' -- invalid argument of the '--clear-bad-blocks' option\n",
+					optarg);
+				return -1;
+			}
 			break;
 		case 'h':
 			print_usage();
@@ -275,17 +295,17 @@ match_dev_dax(struct daxio_device *dev, struct daxctl_region *dax_region)
 static int
 find_dev_dax(struct ndctl_ctx *ndctl_ctx, struct daxio_device *dev)
 {
-	struct ndctl_bus *bus;
-	struct ndctl_region *region;
-	struct ndctl_dax *dax;
-	struct daxctl_region *dax_region;
+	struct ndctl_bus *bus = NULL;
+	struct ndctl_region *region = NULL;
+	struct ndctl_dax *dax = NULL;
+	struct daxctl_region *dax_region = NULL;
 
 	ndctl_bus_foreach(ndctl_ctx, bus) {
 		ndctl_region_foreach(bus, region) {
 			ndctl_dax_foreach(region, dax) {
 				dax_region = ndctl_dax_get_daxctl_region(dax);
 				if (match_dev_dax(dev, dax_region)) {
-					dev->dax = dax;
+					dev->is_devdax = 1;
 					dev->align = ndctl_dax_get_align(dax);
 					dev->region = region;
 					return 1;
@@ -302,8 +322,8 @@ find_dev_dax(struct ndctl_ctx *ndctl_ctx, struct daxio_device *dev)
 	int ret = 0;
 	daxctl_region_foreach(daxctl_ctx, dax_region) {
 		if (match_dev_dax(dev, dax_region)) {
-			dev->dax = dax;
-			dev->align = ndctl_dax_get_align(dax);
+			dev->is_devdax = 1;
+			dev->align = daxctl_region_get_align(dax_region);
 			dev->region = region;
 			ret = 1;
 			goto end;
@@ -319,7 +339,8 @@ end:
  * setup_device -- (internal) open/mmap file/device
  */
 static int
-setup_device(struct ndctl_ctx *ndctl_ctx, struct daxio_device *dev, int is_dst)
+setup_device(struct ndctl_ctx *ndctl_ctx, struct daxio_device *dev, int is_dst,
+		int clear_bad_blocks)
 {
 	int ret;
 	int flags = O_RDWR;
@@ -330,12 +351,12 @@ setup_device(struct ndctl_ctx *ndctl_ctx, struct daxio_device *dev, int is_dst)
 		return 0;	/* stdin/stdout */
 	}
 
-	/* check if file/device exists */
-	struct stat stbuf;
-	ret = stat(dev->path, &stbuf);
-	if (ret == -1) {
+	/* try to open file/device (if exists) */
+	dev->fd = open(dev->path, flags, S_IRUSR|S_IWUSR);
+	if (dev->fd == -1) {
 		ret = errno;
 		if (ret == ENOENT && is_dst) {
+			/* file does not exist - create it */
 			flags = O_CREAT|O_WRONLY|O_TRUNC;
 			dev->size = SIZE_MAX;
 			dev->fd = open(dev->path, flags, S_IRUSR|S_IWUSR);
@@ -344,19 +365,26 @@ setup_device(struct ndctl_ctx *ndctl_ctx, struct daxio_device *dev, int is_dst)
 				return -1;
 			}
 			return 0;
+		} else {
+			ERR("failed to open '%s': %s\n", dev->path,
+				strerror(errno));
+			return -1;
 		}
+	}
+
+	struct stat stbuf;
+	ret = fstat(dev->fd, &stbuf);
+	if (ret == -1) {
 		FAIL("stat");
 		return -1;
 	}
 
 	/* check if this is regular file or device */
 	if (S_ISREG(stbuf.st_mode)) {
-		if (is_dst) {
-			flags = O_RDWR|O_TRUNC;
+		if (is_dst)
 			dev->size = SIZE_MAX;
-		} else {
+		else
 			dev->size = (size_t)stbuf.st_size;
-		}
 	} else if (S_ISBLK(stbuf.st_mode)) {
 		dev->size = (size_t)stbuf.st_size;
 	} else if (S_ISCHR(stbuf.st_mode)) {
@@ -371,20 +399,22 @@ setup_device(struct ndctl_ctx *ndctl_ctx, struct daxio_device *dev, int is_dst)
 	if (S_ISCHR(stbuf.st_mode))
 		find_dev_dax(ndctl_ctx, dev);
 
-	dev->fd = open(dev->path, flags, S_IRUSR|S_IWUSR);
-	if (dev->fd == -1) {
-		FAIL("open");
-		return -1;
-	}
-
-	if (!dev->dax)
+	if (!dev->is_devdax)
 		return 0;
 
-	if (is_dst) {
+	if (is_dst && clear_bad_blocks) {
 		/* XXX - clear only badblocks in range bound by offset/len */
-		if (os_dimm_devdax_clear_badblocks(dev->path)) {
-			ERR("failed to clear badblocks on \"%s\"\n",
-					dev->path);
+		if (os_dimm_devdax_clear_badblocks_all(dev->path)) {
+			ERR("failed to clear bad blocks on \"%s\"\n"
+			    "       Probably you have not enough permissions to do that.\n"
+			    "       You can choose one of three options now:\n"
+			    "       1) run 'daxio' with 'sudo' or as 'root',\n"
+			    "       2) turn off clearing bad blocks using\n"
+			    "          the '-b/--clear-bad-blocks=no' option or\n"
+			    "       3) change permissions of some resource files -\n"
+			    "          - for details see the description of the CHECK_BAD_BLOCKS\n"
+			    "          compat feature in the pmempool-feature(1) man page.\n",
+				dev->path);
 			return -1;
 		}
 	}
@@ -424,9 +454,9 @@ static int
 setup_devices(struct ndctl_ctx *ndctl_ctx, struct daxio_context *ctx)
 {
 	if (!ctx->zero &&
-	    setup_device(ndctl_ctx, &ctx->src, 0))
+	    setup_device(ndctl_ctx, &ctx->src, 0, ctx->clear_bad_blocks))
 		return -1;
-	return setup_device(ndctl_ctx, &ctx->dst, 1);
+	return setup_device(ndctl_ctx, &ctx->dst, 1, ctx->clear_bad_blocks);
 }
 
 /*
@@ -435,24 +465,26 @@ setup_devices(struct ndctl_ctx *ndctl_ctx, struct daxio_context *ctx)
 static void
 adjust_io_len(struct daxio_context *ctx)
 {
-	if (ctx->len != SIZE_MAX)
+	size_t src_len = ctx->src.maplen - ctx->src.offset;
+	size_t dst_len = ctx->dst.maplen - ctx->dst.offset;
+	size_t max_len = SIZE_MAX;
+
+	if (ctx->zero)
+		assert(ctx->dst.is_devdax);
+	else
+		assert(ctx->src.is_devdax || ctx->dst.is_devdax);
+
+	if (ctx->src.is_devdax)
+		max_len = src_len;
+	if (ctx->dst.is_devdax)
+		max_len = max_len < dst_len ? max_len : dst_len;
+
+	/* if length is specified and is not bigger than mmaped region */
+	if (ctx->len != SIZE_MAX && ctx->len <= max_len)
 		return;
 
-	if (ctx->zero) {
-		/* adjust len to device size */
-		ctx->len = ctx->dst.maplen - ctx->dst.offset;
-	} else if (ctx->src.dax && ctx->dst.dax) {
-		size_t src_len = ctx->src.maplen - ctx->src.offset;
-		size_t dst_len = ctx->dst.maplen - ctx->dst.offset;
-
-		ctx->len = src_len < dst_len ? src_len : dst_len;
-	} else if (ctx->src.dax) {
-		ctx->len = ctx->src.maplen - ctx->src.offset;
-	} else if (ctx->dst.dax) {
-		ctx->len = ctx->dst.maplen - ctx->dst.offset;
-	} else {
-		/* should never get here */
-	}
+	/* adjust len to device size */
+	ctx->len = max_len;
 }
 
 /*
@@ -486,6 +518,8 @@ do_io(struct ndctl_ctx *ndctl_ctx, struct daxio_context *ctx)
 {
 	ssize_t cnt = 0;
 
+	assert(ctx->src.is_devdax || ctx->dst.is_devdax);
+
 	if (ctx->zero) {
 		if (ctx->dst.offset > ctx->dst.maplen) {
 			ERR("output offset larger than device size");
@@ -499,13 +533,13 @@ do_io(struct ndctl_ctx *ndctl_ctx, struct daxio_context *ctx)
 		char *dst_addr = ctx->dst.addr + ctx->dst.offset;
 		pmem_memset_persist(dst_addr, 0, ctx->len);
 		cnt = (ssize_t)ctx->len;
-	} else if (ctx->src.dax && ctx->dst.dax) {
+	} else if (ctx->src.is_devdax && ctx->dst.is_devdax) {
 		/* memcpy between src and dst */
 		char *src_addr = ctx->src.addr + ctx->src.offset;
 		char *dst_addr = ctx->dst.addr + ctx->dst.offset;
 		pmem_memcpy_persist(dst_addr, src_addr, ctx->len);
 		cnt = (ssize_t)ctx->len;
-	} else if (ctx->src.dax) {
+	} else if (ctx->src.is_devdax) {
 		/* write to file directly from mmap'ed src */
 		char *src_addr = ctx->src.addr + ctx->src.offset;
 		if (ctx->dst.offset) {
@@ -524,7 +558,7 @@ do_io(struct ndctl_ctx *ndctl_ctx, struct daxio_context *ctx)
 			}
 			cnt += wcnt;
 		} while ((size_t)cnt < ctx->len);
-	} else if (ctx->dst.dax) {
+	} else if (ctx->dst.is_devdax) {
 		/* read from file directly to mmap'ed dst */
 		char *dst_addr = ctx->dst.addr + ctx->dst.offset;
 		if (ctx->src.offset) {
@@ -552,12 +586,9 @@ do_io(struct ndctl_ctx *ndctl_ctx, struct daxio_context *ctx)
 		if ((size_t)cnt != ctx->len)
 			ERR("requested size %zu larger than source\n",
 					ctx->len);
-	} else {
-		ERR("neither input or output is device dax\n");
-		return -1;
 	}
 
-	ERR("copied %zu bytes to device \"%s\"\n", cnt, ctx->dst.path);
+	ERR("copied %zd bytes to device \"%s\"\n", cnt, ctx->dst.path);
 	return 0;
 
 err:
@@ -581,6 +612,12 @@ main(int argc, char **argv)
 		return EXIT_FAILURE;
 
 	if (setup_devices(ndctl_ctx, &Ctx)) {
+		ret = EXIT_FAILURE;
+		goto err;
+	}
+
+	if (!Ctx.src.is_devdax && !Ctx.dst.is_devdax) {
+		ERR("neither input nor output is device dax\n");
 		ret = EXIT_FAILURE;
 		goto err;
 	}

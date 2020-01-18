@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017, Intel Corporation
+ * Copyright 2014-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,18 +43,24 @@
 
 #include "util.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * Suppress errors which are after appropriate ASSERT* macro for nondebug
  * builds.
  */
-#if !defined(DEBUG) && (defined(__clang_analyzer__) || defined(__COVERITY__))
+#if !defined(DEBUG) && (defined(__clang_analyzer__) || defined(__COVERITY__) ||\
+		defined(__KLOCWORK__))
 #define OUT_FATAL_DISCARD_NORETURN __attribute__((noreturn))
 #else
 #define OUT_FATAL_DISCARD_NORETURN
 #endif
 
 #ifndef EVALUATE_DBG_EXPRESSIONS
-#if defined(DEBUG) || defined(__clang_analyzer__) || defined(__COVERITY__)
+#if defined(DEBUG) || defined(__clang_analyzer__) || defined(__COVERITY__) ||\
+	defined(__KLOCWORK__)
 #define EVALUATE_DBG_EXPRESSIONS 1
 #else
 #define EVALUATE_DBG_EXPRESSIONS 0
@@ -98,7 +104,7 @@ out_fatal_discard(const char *file, int line, const char *func,
 	(void) fmt;
 }
 
-static __attribute__((always_inline)) __attribute__((noreturn)) inline void
+static __attribute__((always_inline)) NORETURN inline void
 out_fatal_abort(const char *file, int line, const char *func,
 		const char *fmt, ...)
 {
@@ -115,6 +121,22 @@ out_fatal_abort(const char *file, int line, const char *func,
 #define OUT_FATAL out_fatal_discard
 #define OUT_FATAL_ABORT out_fatal_abort
 
+#endif
+
+#if defined(__KLOCWORK__)
+#define TEST_ALWAYS_TRUE_EXPR(cnd)
+#define TEST_ALWAYS_EQ_EXPR(cnd)
+#define TEST_ALWAYS_NE_EXPR(cnd)
+#else
+#define TEST_ALWAYS_TRUE_EXPR(cnd)\
+	if (__builtin_constant_p(cnd))\
+		ASSERT_COMPILE_ERROR_ON(cnd);
+#define TEST_ALWAYS_EQ_EXPR(lhs, rhs)\
+	if (__builtin_constant_p(lhs) && __builtin_constant_p(rhs))\
+		ASSERT_COMPILE_ERROR_ON((lhs) == (rhs));
+#define TEST_ALWAYS_NE_EXPR(lhs, rhs)\
+	if (__builtin_constant_p(lhs) && __builtin_constant_p(rhs))\
+		ASSERT_COMPILE_ERROR_ON((lhs) != (rhs));
 #endif
 
 /* produce debug/trace output */
@@ -169,8 +191,7 @@ out_fatal_abort(const char *file, int line, const char *func,
 		 * Detect useless asserts on always true expression. Please use\
 		 * COMPILE_ERROR_ON(!cnd) or ASSERT_rt(cnd) in such cases.\
 		 */\
-		if (__builtin_constant_p(cnd))\
-			ASSERT_COMPILE_ERROR_ON(cnd);\
+		TEST_ALWAYS_TRUE_EXPR(cnd);\
 		ASSERT_rt(cnd);\
 	} while (0)
 
@@ -178,8 +199,7 @@ out_fatal_abort(const char *file, int line, const char *func,
 #define ASSERTinfo(cnd, info)\
 	do {\
 		/* See comment in ASSERT. */\
-		if (__builtin_constant_p(cnd))\
-			ASSERT_COMPILE_ERROR_ON(cnd);\
+		TEST_ALWAYS_TRUE_EXPR(cnd);\
 		ASSERTinfo_rt(cnd, info);\
 	} while (0)
 
@@ -187,8 +207,7 @@ out_fatal_abort(const char *file, int line, const char *func,
 #define ASSERTeq(lhs, rhs)\
 	do {\
 		/* See comment in ASSERT. */\
-		if (__builtin_constant_p(lhs) && __builtin_constant_p(rhs))\
-			ASSERT_COMPILE_ERROR_ON((lhs) == (rhs));\
+		TEST_ALWAYS_EQ_EXPR(lhs, rhs);\
 		ASSERTeq_rt(lhs, rhs);\
 	} while (0)
 
@@ -196,8 +215,7 @@ out_fatal_abort(const char *file, int line, const char *func,
 #define ASSERTne(lhs, rhs)\
 	do {\
 		/* See comment in ASSERT. */\
-		if (__builtin_constant_p(lhs) && __builtin_constant_p(rhs))\
-			ASSERT_COMPILE_ERROR_ON((lhs) != (rhs));\
+		TEST_ALWAYS_NE_EXPR(lhs, rhs);\
 		ASSERTne_rt(lhs, rhs);\
 	} while (0)
 
@@ -214,9 +232,8 @@ void out_log(const char *file, int line, const char *func, int level,
 	const char *fmt, ...) FORMAT_PRINTF(5, 6);
 void out_err(const char *file, int line, const char *func,
 	const char *fmt, ...) FORMAT_PRINTF(4, 5);
-void out_fatal(const char *file, int line, const char *func,
-	const char *fmt, ...) FORMAT_PRINTF(4, 5)
-	__attribute__((noreturn));
+void NORETURN out_fatal(const char *file, int line, const char *func,
+	const char *fmt, ...) FORMAT_PRINTF(4, 5);
 void out_set_print_func(void (*print_func)(const char *s));
 void out_set_vsnprintf_func(int (*vsnprintf_func)(char *str, size_t size,
 	const char *format, va_list ap));
@@ -234,6 +251,10 @@ const char *out_get_errormsg(void);
 #else
 const char *out_get_errormsgU(void);
 const wchar_t *out_get_errormsgW(void);
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif
