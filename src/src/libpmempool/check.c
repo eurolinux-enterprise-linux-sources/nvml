@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -63,8 +63,14 @@ static const struct step steps[] = {
 	},
 	{
 		.type		= POOL_TYPE_BLK | POOL_TYPE_LOG |
-					POOL_TYPE_UNKNOWN,
+					POOL_TYPE_OBJ | POOL_TYPE_UNKNOWN,
 		.func		= check_pool_hdr,
+		.part		= true,
+	},
+	{
+		.type		= POOL_TYPE_BLK | POOL_TYPE_LOG |
+					POOL_TYPE_OBJ | POOL_TYPE_UNKNOWN,
+		.func		= check_pool_hdr_uuids,
 		.part		= true,
 	},
 	{
@@ -112,6 +118,14 @@ error_pool_malloc:
 error_data_malloc:
 	return -1;
 }
+
+#ifdef _WIN32
+void
+convert_status_cache(PMEMpoolcheck *ppc, char *buf, size_t size)
+{
+	cache_to_utf8(ppc->data, buf, size);
+}
+#endif
 
 /*
  * status_get -- (internal) get next check_status
@@ -164,7 +178,7 @@ check_step(PMEMpoolcheck *ppc)
 	LOG(3, NULL);
 
 	struct check_status *status = NULL;
-	/* return if we have informations or questions to ask or check ended */
+	/* return if we have information or questions to ask or check ended */
 	if ((status = status_get(ppc)) || check_is_end(ppc->data))
 		return status;
 
@@ -212,7 +226,7 @@ check_fini(PMEMpoolcheck *ppc)
 /*
  * check_is_end -- return if check has ended
  */
-inline int
+int
 check_is_end(struct check_data *data)
 {
 	return check_is_end_util(data);
@@ -221,7 +235,7 @@ check_is_end(struct check_data *data)
 /*
  * check_status_get -- extract pmempool_check_status from check_status
  */
-inline struct pmempool_check_status *
+struct pmempool_check_status *
 check_status_get(struct check_status *status)
 {
 	return check_status_get_util(status);

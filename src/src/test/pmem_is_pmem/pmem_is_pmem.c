@@ -1,5 +1,6 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
+ * Copyright (c) 2016, Microsoft Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,8 +41,8 @@
 
 #define NTHREAD 16
 
-void *Addr;
-size_t Size;
+static void *Addr;
+static size_t Size;
 
 /*
  * worker -- the work each thread performs
@@ -63,19 +64,20 @@ main(int argc, char *argv[])
 		UT_FATAL("usage: %s file [env]", argv[0]);
 
 	if (argc == 3)
-		UT_ASSERTeq(setenv("PMEM_IS_PMEM_FORCE", argv[2], 1), 0);
+		UT_ASSERTeq(os_setenv("PMEM_IS_PMEM_FORCE", argv[2], 1), 0);
 
 	int fd = OPEN(argv[1], O_RDWR);
 
-	struct stat stbuf;
+	os_stat_t stbuf;
 	FSTAT(fd, &stbuf);
 
 	Size = stbuf.st_size;
-	Addr = MMAP(0, stbuf.st_size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+	Addr = MMAP(NULL, stbuf.st_size, PROT_READ|PROT_WRITE, MAP_SHARED, fd,
+		0);
 
 	CLOSE(fd);
 
-	pthread_t threads[NTHREAD];
+	os_thread_t threads[NTHREAD];
 	int ret[NTHREAD];
 
 	/* kick off NTHREAD threads */
@@ -92,7 +94,7 @@ main(int argc, char *argv[])
 
 	UT_OUT("%d", ret[0]);
 
-	UT_ASSERTeq(unsetenv("PMEM_IS_PMEM_FORCE"), 0);
+	UT_ASSERTeq(os_unsetenv("PMEM_IS_PMEM_FORCE"), 0);
 
 	UT_OUT("%d", pmem_is_pmem(Addr, Size));
 

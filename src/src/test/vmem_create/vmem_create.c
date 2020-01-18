@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,7 +38,7 @@
 
 #include "unittest.h"
 
-VMEM *Vmp;
+static VMEM *Vmp;
 
 /*
  * signal_handler -- called on SIGSEGV
@@ -46,11 +46,11 @@ VMEM *Vmp;
 static void
 signal_handler(int sig)
 {
-	UT_OUT("signal: %s", strsignal(sig));
+	UT_OUT("signal: %s", os_strsignal(sig));
 
 	vmem_delete(Vmp);
 
-	DONE(NULL);
+	DONEW(NULL);
 }
 
 int
@@ -63,14 +63,14 @@ main(int argc, char *argv[])
 
 	Vmp = vmem_create(argv[1], VMEM_MIN_POOL);
 
-	if (Vmp == NULL)
+	if (Vmp == NULL) {
 		UT_OUT("!vmem_create");
-	else {
+	} else {
 		struct sigaction v;
 		sigemptyset(&v.sa_mask);
 		v.sa_flags = 0;
 		v.sa_handler = signal_handler;
-		if (sigaction(SIGSEGV, &v, NULL) < 0)
+		if (SIGACTION(SIGSEGV, &v, NULL) != 0)
 			UT_FATAL("!sigaction");
 
 		/* try to dereference the opaque handle */

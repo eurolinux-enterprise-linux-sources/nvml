@@ -1,5 +1,6 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
+ * Copyright (c) 2016, Microsoft Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,6 +39,7 @@
 #include <string.h>
 #include <err.h>
 #include <sys/param.h>
+#include <endian.h>
 
 #include "common.h"
 #include "output.h"
@@ -167,7 +169,7 @@ info_btt_data(struct pmem_info *pip, int v, struct btt_info *infop,
 
 			if (pmempool_info_read(pip, block_buff,
 					infop->external_lbasize, block_off)) {
-				outv_err("cannot read %d block\n", i);
+				outv_err("cannot read %lu block\n", i);
 				ret = -1;
 				goto error;
 			}
@@ -179,7 +181,7 @@ info_btt_data(struct pmem_info *pip, int v, struct btt_info *infop,
 			 * Print block number, offset and flags
 			 * from map entry.
 			 */
-			outv(v, "Block %10d: offset: %s\n",
+			outv(v, "Block %10lu: offset: %s\n",
 				offset + i,
 				out_get_btt_map_entry(map_entry));
 
@@ -256,7 +258,7 @@ info_btt_map(struct pmem_info *pip, int v,
 				arena_count++;
 				(*count)++;
 
-				outv(v, "%010d: %s\n", offset + i,
+				outv(v, "%010lu: %s\n", offset + i,
 					out_get_btt_map_entry(entry));
 			}
 		}
@@ -505,10 +507,18 @@ err:
 static void
 info_blk_descriptor(struct pmem_info *pip, int v, struct pmemblk *pbp)
 {
+	size_t pmemblk_size;
+
+#ifdef DEBUG
+	pmemblk_size = offsetof(struct pmemblk, write_lock);
+#else
+	pmemblk_size = sizeof(*pbp);
+#endif
+
 	outv_title(v, "PMEM BLK Header");
 	/* dump pmemblk header without pool_hdr */
 	outv_hexdump(pip->args.vhdrdump, (uint8_t *)pbp + sizeof(pbp->hdr),
-		sizeof(*pbp) - sizeof(pbp->hdr), sizeof(pbp->hdr), 1);
+		pmemblk_size - sizeof(pbp->hdr), sizeof(pbp->hdr), 1);
 	outv_field(v, "Block size", "%s",
 			out_get_size_str(pbp->bsize, pip->args.human));
 	outv_field(v, "Is zeroed", pbp->is_zeroed ? "true" : "false");

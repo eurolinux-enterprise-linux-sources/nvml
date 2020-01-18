@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,13 +39,8 @@
 
 #include "librpmem.h"
 
-#define __STR(s)	#s
-#define _STR(s)		__STR(s)
-
 #define PACKED	__attribute__((packed))
 
-#define RPMEM_PORT		7636
-#define RPMEM_SERVICE		_STR(RPMEM_PORT)
 #define RPMEM_PROTO		"tcp"
 #define RPMEM_PROTO_MAJOR	0
 #define RPMEM_PROTO_MINOR	1
@@ -64,11 +59,27 @@ enum rpmem_msg_type {
 	RPMEM_MSG_TYPE_OPEN_RESP	= 4, /* open request response */
 	RPMEM_MSG_TYPE_CLOSE		= 5, /* close request */
 	RPMEM_MSG_TYPE_CLOSE_RESP	= 6, /* close request response */
-	RPMEM_MSG_TYPE_REMOVE		= 7, /* remove request */
-	RPMEM_MSG_TYPE_REMOVE_RESP	= 8, /* remove request response */
-
+	RPMEM_MSG_TYPE_SET_ATTR		= 7, /* set attributes request */
+	/* set attributes request response */
+	RPMEM_MSG_TYPE_SET_ATTR_RESP	= 8,
 	MAX_RPMEM_MSG_TYPE,
 };
+
+/*
+ * rpmem_pool_attr_packed -- a packed version
+ */
+struct rpmem_pool_attr_packed {
+	char signature[RPMEM_POOL_HDR_SIG_LEN]; /* pool signature */
+	uint32_t major; /* format major version number */
+	uint32_t compat_features; /* mask: compatible "may" features */
+	uint32_t incompat_features; /* mask: "must support" features */
+	uint32_t ro_compat_features; /* mask: force RO if unsupported */
+	unsigned char poolset_uuid[RPMEM_POOL_HDR_UUID_LEN]; /* pool uuid */
+	unsigned char uuid[RPMEM_POOL_HDR_UUID_LEN]; /* first part uuid */
+	unsigned char next_uuid[RPMEM_POOL_HDR_UUID_LEN]; /* next pool uuid */
+	unsigned char prev_uuid[RPMEM_POOL_HDR_UUID_LEN]; /* prev pool uuid */
+	unsigned char user_flags[RPMEM_POOL_USER_FLAGS_LEN]; /* user flags */
+} PACKED;
 
 /*
  * rpmem_msg_ibc_attr -- in-band connection attributes
@@ -90,7 +101,7 @@ struct rpmem_msg_ibc_attr {
  */
 struct rpmem_msg_pool_desc {
 	uint32_t size;		/* size of pool descriptor */
-	uint8_t desc[0];	/* pool descriptor, NULL-terminated string */
+	uint8_t desc[0];	/* pool descriptor, null-terminated string */
 } PACKED;
 
 /*
@@ -130,7 +141,7 @@ struct rpmem_msg_create {
 	uint64_t pool_size;		/* minimum required size of a pool */
 	uint32_t nlanes;		/* number of lanes used by initiator */
 	uint32_t provider;		/* provider */
-	struct rpmem_pool_attr pool_attr;	/* pool attributes */
+	struct rpmem_pool_attr_packed pool_attr;	/* pool attributes */
 	struct rpmem_msg_pool_desc pool_desc;	/* pool descriptor */
 } PACKED;
 
@@ -171,7 +182,7 @@ struct rpmem_msg_open {
 struct rpmem_msg_open_resp {
 	struct rpmem_msg_hdr_resp hdr;	/* message header */
 	struct rpmem_msg_ibc_attr ibc;	/* in-band connection attributes */
-	struct rpmem_pool_attr pool_attr; /* pool attributes */
+	struct rpmem_pool_attr_packed pool_attr; /* pool attributes */
 } PACKED;
 
 /*
@@ -197,31 +208,6 @@ struct rpmem_msg_close_resp {
 } PACKED;
 
 /*
- * rpmem_msg_remove -- remove request message
- *
- * The type of message must be set to RPMEM_MSG_TYPE_REMOVE.
- * The size of message must be set to
- *     sizeof(struct rpmem_msg_remove) + pool_desc_size
- */
-struct rpmem_msg_remove {
-	struct rpmem_msg_hdr hdr;	/* message header */
-	uint16_t major;			/* protocol version major number */
-	uint16_t minor;			/* protocol version minor number */
-	struct rpmem_msg_pool_desc pool_desc;	/* pool descriptor */
-} PACKED;
-
-/*
- * rpmem_msg_remove_resp -- remove request response message
- *
- * The type of message must be set to RPMEM_MSG_TYPE_REMOVE_RESP
- * The size of message must be set to sizeof(struct rpmem_msg_remove_resp)
- */
-struct rpmem_msg_remove_resp {
-	struct rpmem_msg_hdr_resp hdr;	/* message header */
-	/* no more fields */
-} PACKED;
-
-/*
  * rpmem_msg_persist -- remote persist message
  */
 struct rpmem_msg_persist {
@@ -236,6 +222,27 @@ struct rpmem_msg_persist {
 struct rpmem_msg_persist_resp {
 	uint64_t lane;	/* lane identifier */
 };
+
+/*
+ * rpmem_msg_set_attr -- set attributes request message
+ *
+ * The type of message must be set to RPMEM_MSG_TYPE_SET_ATTR.
+ * The size of message must be set to sizeof(struct rpmem_msg_set_attr)
+ */
+struct rpmem_msg_set_attr {
+	struct rpmem_msg_hdr hdr;	/* message header */
+	struct rpmem_pool_attr_packed pool_attr;	/* pool attributes */
+} PACKED;
+
+/*
+ * rpmem_msg_set_attr_resp -- set attributes request response message
+ *
+ * The type of message must be set to RPMEM_MSG_TYPE_SET_ATTR_RESP.
+ * The size of message must be set to sizeof(struct rpmem_msg_set_attr_resp).
+ */
+struct rpmem_msg_set_attr_resp {
+	struct rpmem_msg_hdr_resp hdr;	/* message header */
+} PACKED;
 
 /*
  * rpmem_ntoh_msg_ibc_attr -- convert rpmem_msg_ibc attr to host byte order
@@ -262,7 +269,7 @@ rpmem_ntoh_msg_pool_desc(struct rpmem_msg_pool_desc *pool_desc)
  * rpmem_ntoh_pool_attr -- convert rpmem_pool_attr to host byte order
  */
 static inline void
-rpmem_ntoh_pool_attr(struct rpmem_pool_attr *attr)
+rpmem_ntoh_pool_attr(struct rpmem_pool_attr_packed *attr)
 {
 	attr->major = be32toh(attr->major);
 	attr->ro_compat_features = be32toh(attr->ro_compat_features);
@@ -400,44 +407,42 @@ rpmem_hton_msg_open_resp(struct rpmem_msg_open_resp *msg)
 }
 
 /*
- * rpmem_ntoh_msg_remove -- convert rpmem_msg_remove to host byte order
+ * rpmem_ntoh_msg_set_attr -- convert rpmem_msg_set_attr to host byte order
  */
 static inline void
-rpmem_ntoh_msg_remove(struct rpmem_msg_remove *msg)
+rpmem_ntoh_msg_set_attr(struct rpmem_msg_set_attr *msg)
 {
 	rpmem_ntoh_msg_hdr(&msg->hdr);
-	msg->major = be16toh(msg->major);
-	msg->minor = be16toh(msg->minor);
-	rpmem_ntoh_msg_pool_desc(&msg->pool_desc);
+	rpmem_ntoh_pool_attr(&msg->pool_attr);
 }
 
 /*
- * rpmem_hton_msg_remove -- convert rpmem_msg_remove to network byte order
+ * rpmem_hton_msg_set_attr -- convert rpmem_msg_set_attr to network byte order
  */
 static inline void
-rpmem_hton_msg_remove(struct rpmem_msg_remove *msg)
+rpmem_hton_msg_set_attr(struct rpmem_msg_set_attr *msg)
 {
-	rpmem_ntoh_msg_remove(msg);
+	rpmem_ntoh_msg_set_attr(msg);
 }
 
 /*
- * rpmem_ntoh_msg_remove_resp -- convert rpmem_msg_remove_resp to host byte
+ * rpmem_ntoh_msg_set_attr_resp -- convert rpmem_msg_set_attr_resp to host byte
  * order
  */
 static inline void
-rpmem_ntoh_msg_remove_resp(struct rpmem_msg_remove_resp *msg)
+rpmem_ntoh_msg_set_attr_resp(struct rpmem_msg_set_attr_resp *msg)
 {
 	rpmem_ntoh_msg_hdr_resp(&msg->hdr);
 }
 
 /*
- * rpmem_hton_msg_remove_resp -- convert rpmem_msg_remove_resp to network byte
- * order
+ * rpmem_hton_msg_set_attr_resp -- convert rpmem_msg_set_attr_resp to network
+ *	byte order
  */
 static inline void
-rpmem_hton_msg_remove_resp(struct rpmem_msg_remove_resp *msg)
+rpmem_hton_msg_set_attr_resp(struct rpmem_msg_set_attr_resp *msg)
 {
-	rpmem_ntoh_msg_remove_resp(msg);
+	rpmem_hton_msg_hdr_resp(&msg->hdr);
 }
 
 /*
@@ -475,4 +480,42 @@ static inline void
 rpmem_hton_msg_close_resp(struct rpmem_msg_close_resp *msg)
 {
 	rpmem_ntoh_msg_close_resp(msg);
+}
+
+/*
+ * pack_rpmem_pool_attr -- copy pool attributes to a packed structure
+ */
+static inline void
+pack_rpmem_pool_attr(const struct rpmem_pool_attr *src,
+		struct rpmem_pool_attr_packed *dst)
+{
+	memcpy(dst->signature, src->signature, sizeof(src->signature));
+	dst->major = src->major;
+	dst->compat_features = src->compat_features;
+	dst->incompat_features = src->incompat_features;
+	dst->ro_compat_features = src->ro_compat_features;
+	memcpy(dst->poolset_uuid, src->poolset_uuid, sizeof(dst->poolset_uuid));
+	memcpy(dst->uuid, src->uuid, sizeof(dst->uuid));
+	memcpy(dst->next_uuid, src->next_uuid, sizeof(dst->next_uuid));
+	memcpy(dst->prev_uuid, src->prev_uuid, sizeof(dst->prev_uuid));
+	memcpy(dst->user_flags, src->user_flags, sizeof(dst->user_flags));
+}
+
+/*
+ * unpack_rpmem_pool_attr -- copy pool attributes to an unpacked structure
+ */
+static inline void
+unpack_rpmem_pool_attr(const struct rpmem_pool_attr_packed *src,
+		struct rpmem_pool_attr *dst)
+{
+	memcpy(dst->signature, src->signature, sizeof(src->signature));
+	dst->major = src->major;
+	dst->compat_features = src->compat_features;
+	dst->incompat_features = src->incompat_features;
+	dst->ro_compat_features = src->ro_compat_features;
+	memcpy(dst->poolset_uuid, src->poolset_uuid, sizeof(dst->poolset_uuid));
+	memcpy(dst->uuid, src->uuid, sizeof(dst->uuid));
+	memcpy(dst->next_uuid, src->next_uuid, sizeof(dst->next_uuid));
+	memcpy(dst->prev_uuid, src->prev_uuid, sizeof(dst->prev_uuid));
+	memcpy(dst->user_flags, src->user_flags, sizeof(dst->user_flags));
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -81,7 +81,7 @@ TAILQ_HEAD(check_status_head, check_status);
 /* check control context */
 struct check_data {
 	unsigned step;
-	struct check_step_data step_data;
+	location step_data;
 
 	struct check_status *error;
 	struct check_status_head infos;
@@ -105,6 +105,7 @@ check_data_alloc(void)
 		return NULL;
 	}
 
+	memset(&data->step_data, 0, sizeof(location));
 	data->check_status_cache = NULL;
 	data->error = NULL;
 	data->step = 0;
@@ -174,13 +175,13 @@ check_step_inc(struct check_data *data)
 		return;
 
 	++data->step;
-	memset(&data->step_data, 0, sizeof(struct check_step_data));
+	memset(&data->step_data, 0, sizeof(location));
 }
 
 /*
  * check_get_step_data -- return pointer to check step data
  */
-struct check_step_data *
+location *
 check_get_step_data(struct check_data *data)
 {
 	return &data->step_data;
@@ -189,7 +190,7 @@ check_get_step_data(struct check_data *data)
 /*
  * check_end -- mark check as ended
  */
-inline void
+void
 check_end(struct check_data *data)
 {
 	LOG(3, NULL);
@@ -200,7 +201,7 @@ check_end(struct check_data *data)
 /*
  * check_is_end_util -- return if check has ended
  */
-inline int
+int
 check_is_end_util(struct check_data *data)
 {
 	return data->step == CHECK_END;
@@ -232,6 +233,11 @@ status_alloc(void)
 static void
 status_release(struct check_status *status)
 {
+#ifdef _WIN32
+	/* dealloc duplicate string after conversion */
+	if (status->status.str.msg != status->msg)
+		free((void *)status->status.str.msg);
+#endif
 	free(status->msg);
 	free(status);
 }
@@ -346,22 +352,28 @@ check_status_create(PMEMpoolcheck *ppc, enum pmempool_check_msg_type type,
 		return 0;
 
 	struct check_status *st = status_alloc();
+	ASSERT(CHECK_IS(ppc, FORMAT_STR));
 
-	if (CHECK_IS(ppc, FORMAT_STR)) {
-		va_list ap;
-		va_start(ap, fmt);
-		int p = vsnprintf(st->msg, MAX_MSG_STR_SIZE, fmt, ap);
-		va_end(ap);
+	va_list ap;
+	va_start(ap, fmt);
+	int p = vsnprintf(st->msg, MAX_MSG_STR_SIZE, fmt, ap);
+	va_end(ap);
 
-		/* append possible strerror at the end of the message */
-		if (type != PMEMPOOL_CHECK_MSG_TYPE_QUESTION && errno &&
-				p > 0) {
-			snprintf(st->msg + p, MAX_MSG_STR_SIZE - (size_t)p,
-				": %s", strerror(errno));
+	/* append possible strerror at the end of the message */
+	if (type != PMEMPOOL_CHECK_MSG_TYPE_QUESTION && errno &&
+			p > 0) {
+		char buff[UTIL_MAX_ERR_MSG];
+		util_strerror(errno, buff, UTIL_MAX_ERR_MSG);
+		int ret = snprintf(st->msg + p, MAX_MSG_STR_SIZE - (size_t)p,
+			": %s", buff);
+		if (ret < 0 || ret >= (int)(MAX_MSG_STR_SIZE - (size_t)p)) {
+			ERR("!snprintf");
+			free(st);
+			return -1;
 		}
-
-		st->status.type = type;
 	}
+
+	st->status.type = type;
 
 	return status_push(ppc, st, question);
 }
@@ -404,7 +416,7 @@ check_pop_question(struct check_data *data)
 }
 
 /*
- * check_pop_info -- pop single info from informations queue
+ * check_pop_info -- pop single info from information queue
  */
 struct check_status *
 check_pop_info(struct check_data *data)
@@ -428,6 +440,33 @@ check_pop_error(struct check_data *data)
 
 	return NULL;
 }
+
+#ifdef _WIN32
+void
+cache_to_utf8(struct check_data *data, char *buf, size_t size)
+{
+	if (data->check_status_cache == NULL)
+		return;
+
+	struct check_status *status = data->check_status_cache;
+
+	/* if it was a question, convert it and the answer to utf8 */
+	if (status->status.type == PMEMPOOL_CHECK_MSG_TYPE_QUESTION) {
+		struct pmempool_check_statusW *wstatus =
+			(struct pmempool_check_statusW *)&status->status;
+		wchar_t *wstring = (wchar_t *)wstatus->str.msg;
+		status->status.str.msg = util_toUTF8(wstring);
+		if (status->status.str.msg == NULL)
+			FATAL("!malloc");
+		util_free_UTF16(wstring);
+
+		if (util_toUTF8_buff(wstatus->str.answer, buf, size) != 0)
+			FATAL("Invalid answer conversion %s",
+				out_get_errormsg());
+		status->status.str.answer = buf;
+	}
+}
+#endif
 
 /*
  * check_clear_status_cache -- release check_status from cache
@@ -541,7 +580,7 @@ pop_answer(struct check_data *data)
 /*
  * check_status_get_util -- extract pmempool_check_status from check_status
  */
-inline struct pmempool_check_status *
+struct pmempool_check_status *
 check_status_get_util(struct check_status *status)
 {
 	return &status->status;
@@ -551,9 +590,8 @@ check_status_get_util(struct check_status *status)
  * check_answer_loop -- loop through all available answers and process them
  */
 int
-check_answer_loop(PMEMpoolcheck *ppc, struct check_step_data *data, void *ctx,
-	int (*callback)(PMEMpoolcheck *, struct check_step_data *, uint32_t,
-	void *ctx))
+check_answer_loop(PMEMpoolcheck *ppc, location *data, void *ctx,
+	int (*callback)(PMEMpoolcheck *, location *, uint32_t, void *ctx))
 {
 	struct check_status *answer;
 
@@ -616,13 +654,17 @@ const char *
 check_get_time_str(time_t time)
 {
 	static char str_buff[STR_MAX] = {0, };
-	struct tm *tm = localtime(&time);
+	struct tm *tm = util_localtime(&time);
 
 	if (tm)
 		strftime(str_buff, STR_MAX, TIME_STR_FMT, tm);
-	else
-		snprintf(str_buff, STR_MAX, "unknown");
-
+	else {
+		int ret = snprintf(str_buff, STR_MAX, "unknown");
+		if (ret < 0) {
+			ERR("failed to get time str");
+			return "";
+		}
+	}
 	return str_buff;
 }
 
@@ -652,11 +694,11 @@ check_get_pool_type_str(enum pool_type type)
 	case POOL_TYPE_BTT:
 		return "btt";
 	case POOL_TYPE_LOG:
-		return "log";
+		return "pmemlog";
 	case POOL_TYPE_BLK:
-		return "blk";
+		return "pmemblk";
 	case POOL_TYPE_OBJ:
-		return "obj";
+		return "pmemobj";
 	default:
 		return "unknown";
 	}

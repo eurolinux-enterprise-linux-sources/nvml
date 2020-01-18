@@ -1,3 +1,8 @@
+Part file:
+path                     : $(nW)file.pool
+type                     : regular file
+size                     : $(nW)
+
 POOL Header:
 Signature                : PMEMOBJ
 Major                    : $(*)
@@ -18,7 +23,7 @@ Machine                  : $(*)
 Checksum                 : $(*) [OK]
 
 PMEM OBJ Header:
-Layout                   : pmempool
+Layout                   : pmempool$(*)
 Lanes offset             : $(*)
 Number of lanes          : $(*)
 Heap offset              : $(*)
@@ -35,26 +40,22 @@ Chunk size               : $(*)
 Chunks per zone          : $(*)
 Checksum                 : $(*) [OK]
 
-Zone:
+Zone 0:
 Magic                    : $(*) [OK]
 Size idx                 : $(*)
  
  Chunk                    : 0
  Type                     : used
- Flags                    : 0x0 
+ Flags                    : $(*)
  Size idx                 : $(*)
 
   Object                   : $(*)
   Offset                   : $(*)
 
    Allocation Header:
-   Zone id                  : $(*)
-   Chunk id                 : $(*)
    Size                     : $(*)
-
-   OOB Header:
-   Undo offset              : $(*)
-   Type Number              : $(*)
+   Extra                    : $(*)
+   Flags                    : $(*)
 
 Statistics:
 
@@ -72,7 +73,7 @@ Heap:
 Number of zones          : 1
 Number of used zones     : 1 [100 %]
 
- Zone:
+ Zone 0:
  Number of chunks         : 1
   used                     : 1 [100 %]
 

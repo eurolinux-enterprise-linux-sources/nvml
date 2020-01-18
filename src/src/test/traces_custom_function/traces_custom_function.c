@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,7 +46,7 @@
 
 #include <sys/types.h>
 #include <stdarg.h>
-#include "out.h"
+#include "pmemcommon.h"
 #include "unittest.h"
 
 /*
@@ -73,8 +73,9 @@ static int
 vsnprintf_custom_function(char *str, size_t size, const char *format,
 		va_list ap)
 {
-	char format2[strlen(format) * 3];
+	char *format2 = MALLOC(strlen(format) * 3);
 	int i = 0;
+	int ret_val;
 
 	while (*format != '\0') {
 		if (*format == '%') {
@@ -85,7 +86,10 @@ vsnprintf_custom_function(char *str, size_t size, const char *format,
 	}
 	format2[i++] = '\0';
 
-	return vsnprintf(str, size, format2, ap);
+	ret_val = vsnprintf(str, size, format2, ap);
+	FREE(format2);
+
+	return ret_val;
 }
 
 int
@@ -98,7 +102,7 @@ main(int argc, char *argv[])
 
 	out_set_print_func(print_custom_function);
 
-	out_init(LOG_PREFIX, LOG_LEVEL_VAR, LOG_FILE_VAR,
+	common_init(LOG_PREFIX, LOG_LEVEL_VAR, LOG_FILE_VAR,
 			MAJOR_VERSION, MINOR_VERSION);
 
 	switch (argv[1][0]) {
@@ -125,7 +129,7 @@ main(int argc, char *argv[])
 	}
 
 	/* Cleanup */
-	out_fini();
+	common_fini();
 
 	DONE(NULL);
 }

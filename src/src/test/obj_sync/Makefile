@@ -1,5 +1,5 @@
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2015-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -36,18 +36,15 @@
 TOP = ../../..
 
 vpath %.c $(TOP)/src/libpmemobj
-vpath %.c $(TOP)/src/common
 
 TARGET = obj_sync
-OBJS = obj_sync.o sync.o util.o util_linux.o out.o
-LIBS = -lrt
+OBJS = obj_sync.o sync.o mocks_linux.o
 
-out.o: CFLAGS += -DSRCVERSION=\"utversion\"
-
+LIBPMEMCOMMON=y
 LIBPMEM=y
 
 include ../Makefile.inc
 
-LDFLAGS += $(call extract_funcs, obj_sync.c)
+LDFLAGS += $(call extract_funcs, mocks_linux.c)
 
-INCS += -I$(TOP)/src/libpmemobj/ -I$(TOP)/src/common/
+INCS += -I$(TOP)/src/libpmemobj/

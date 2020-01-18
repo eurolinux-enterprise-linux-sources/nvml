@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,25 +36,19 @@
 #include <string.h>
 #include <stddef.h>
 
+#include "tx.h"
 #include "unittest.h"
-#include "libpmemobj.h"
 #include "util.h"
 #include "valgrind_internal.h"
-#include "redo.h"
-#include "memops.h"
-#include "pmalloc.h"
-#include "lane.h"
-#include "list.h"
-#include "obj.h"
 
 #define LAYOUT_NAME "tx_add_range"
 
 #define OBJ_SIZE	1024
 #define OVERLAP_SIZE	100
 #define ROOT_TAB_SIZE\
-	(((MAX_CACHED_RANGE_SIZE + 16) * MAX_CACHED_RANGES) / sizeof(int))
+	(TX_DEFAULT_RANGE_CACHE_SIZE / sizeof(int))
 
-#define REOPEN_COUNT	(PMEMOBJ_MIN_POOL / ROOT_TAB_SIZE / 2)
+#define REOPEN_COUNT	10
 
 enum type_number {
 	TYPE_OBJ,
@@ -378,6 +372,33 @@ do_tx_add_range_abort(PMEMobjpool *pop)
 	UT_ASSERTeq(D_RO(obj)->value, 0);
 }
 
+
+
+/*
+ * do_tx_add_huge_range_abort -- call pmemobj_tx_add_range on a huge range and
+ * commit the tx
+ */
+static void
+do_tx_add_huge_range_abort(PMEMobjpool *pop)
+{
+	int ret;
+	size_t snapshot_s = TX_DEFAULT_RANGE_CACHE_THRESHOLD + 1;
+
+	PMEMoid obj;
+	pmemobj_zalloc(pop, &obj, snapshot_s, 0);
+
+	TX_BEGIN(pop) {
+		ret = pmemobj_tx_add_range(obj, 0, snapshot_s);
+		UT_ASSERTeq(ret, 0);
+		memset(pmemobj_direct(obj), 0xc, snapshot_s);
+		pmemobj_tx_abort(-1);
+	} TX_ONCOMMIT {
+		UT_ASSERT(0);
+	} TX_END
+
+	UT_ASSERT(util_is_zeroed(pmemobj_direct(obj), snapshot_s));
+}
+
 /*
  * do_tx_add_range_commit -- call pmemobj_tx_add_range and commit the tx
  */
@@ -393,6 +414,30 @@ do_tx_add_range_commit(PMEMobjpool *pop)
 		UT_ASSERTeq(ret, 0);
 
 		D_RW(obj)->value = TEST_VALUE_1;
+	} TX_ONABORT {
+		UT_ASSERT(0);
+	} TX_END
+
+	UT_ASSERTeq(D_RO(obj)->value, TEST_VALUE_1);
+}
+
+/*
+ * do_tx_xadd_range_commit -- call pmemobj_tx_xadd_range and commit the tx
+ */
+static void
+do_tx_xadd_range_commit(PMEMobjpool *pop)
+{
+	int ret;
+	TOID(struct object) obj;
+	TOID_ASSIGN(obj, do_tx_zalloc(pop, TYPE_OBJ));
+
+	TX_BEGIN(pop) {
+		ret = pmemobj_tx_xadd_range(obj.oid, VALUE_OFF, VALUE_SIZE,
+				POBJ_XADD_NO_FLUSH);
+		UT_ASSERTeq(ret, 0);
+
+		D_RW(obj)->value = TEST_VALUE_1;
+		/* let pmemcheck find we didn't flush it */
 	} TX_ONABORT {
 		UT_ASSERT(0);
 	} TX_END
@@ -557,7 +602,22 @@ do_tx_add_range_reopen(char *path)
 
 		pmemobj_close(pop);
 	}
+}
 
+static void
+do_tx_add_range_too_large(PMEMobjpool *pop)
+{
+	TOID(struct object) obj;
+	TOID_ASSIGN(obj, do_tx_zalloc(pop, TYPE_OBJ));
+
+	TX_BEGIN(pop) {
+		pmemobj_tx_add_range(obj.oid, 0,
+			PMEMOBJ_MAX_ALLOC_SIZE + 1);
+	} TX_ONCOMMIT {
+		UT_ASSERT(0);
+	} TX_END
+
+	UT_ASSERTne(errno, 0);
 }
 
 int
@@ -572,7 +632,7 @@ main(int argc, char *argv[])
 	int do_reopen = atoi(argv[2]);
 
 	PMEMobjpool *pop;
-	if ((pop = pmemobj_create(argv[1], LAYOUT_NAME, PMEMOBJ_MIN_POOL,
+	if ((pop = pmemobj_create(argv[1], LAYOUT_NAME, PMEMOBJ_MIN_POOL * 2,
 	    S_IWUSR | S_IRUSR)) == NULL)
 		UT_FATAL("!pmemobj_create");
 
@@ -600,9 +660,13 @@ main(int argc, char *argv[])
 		VALGRIND_WRITE_STATS;
 		do_tx_add_range_overlapping(pop);
 		VALGRIND_WRITE_STATS;
+		do_tx_add_range_too_large(pop);
+		VALGRIND_WRITE_STATS;
+		do_tx_add_huge_range_abort(pop);
+		VALGRIND_WRITE_STATS;
+		do_tx_xadd_range_commit(pop);
 		pmemobj_close(pop);
 	}
-
 
 	DONE(NULL);
 }

@@ -1,6 +1,6 @@
 #!/bin/bash -e
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2015-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -40,9 +40,18 @@ export UNITTEST_NUM=2
 # standard unit test setup
 . ../unittest/unittest.sh
 
+require_test_type medium
+
+# exits with locked mutexes
+configure_valgrind helgrind force-disable
+configure_valgrind drd force-disable
+
+# the test delibretly fails at various stages of redo logging
+configure_valgrind pmemcheck force-disable ../obj_list/obj_list$EXESUFFIX
+
 setup
 
-truncate -s1M $DIR/testfile
+create_holey_file 1M $DIR/testfile
 
 rm -f log${UNITTEST_NUM}.log
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,93 +44,167 @@
  * of mentioned functions.  They are used only internally, so current
  * implementation is just good enough to satisfy NVML needs and to make it
  * work on Windows.
- *
- * This is a subject for change in the future.  Likely, all these functions
- * will be replaced with "util_xxx" wrappers with OS-specific implementation
- * for Linux and Windows.
  */
 
 #include <windows.h>
 #include <sys/stat.h>
 #include <sys/file.h>
 
+#include "file.h"
+#include "out.h"
+#include "os.h"
+
 /*
- * mkstemp -- generate a unique temporary filename from template
+ * util_tmpfile -- create a temporary file
  */
 int
-mkstemp(char *temp)
+util_tmpfile(const char *dir, const char *templ)
 {
-	/* XXX - limited number of unique file names */
-	char *path = _mktemp(temp);
-	if (path == NULL)
+	LOG(3, "dir \"%s\" template \"%s\"", dir, templ);
+
+	int oerrno;
+	int fd = -1;
+
+	size_t len = strlen(dir) + strlen(templ) + 1;
+	char *fullname = Malloc(sizeof(*fullname) * len);
+	if (fullname == NULL) {
+		ERR("!Malloc");
 		return -1;
-
-	return open(path, O_RDWR | O_CREAT | O_EXCL, S_IWRITE | S_IREAD);
-}
-
-/*
- * posix_fallocate -- allocate file space
- */
-int
-posix_fallocate(int fd, off_t offset, off_t size)
-{
-	if (offset > 0)
-		size += offset;
-
-	off_t len = _filelengthi64(fd);
-	if (len < 0)
-		return -1;
-
-	if (size < len)
-		return 0;
-
-	return _chsize_s(fd, size);
-}
-
-/*
- * flock -- apply or remove an advisory lock on an open file
- */
-int
-flock(int fd, int operation)
-{
-	int flags = 0;
-	SYSTEM_INFO  systemInfo;
-
-	GetSystemInfo(&systemInfo);
-
-	switch (operation & (LOCK_EX | LOCK_SH | LOCK_UN)) {
-		case LOCK_EX:
-		case LOCK_SH:
-			if (operation & LOCK_NB)
-				flags = _LK_NBLCK;
-			else
-				flags = _LK_LOCK;
-			break;
-
-		case LOCK_UN:
-			flags = _LK_UNLCK;
-			break;
-
-		default:
-			errno = EINVAL;
-			return -1;
 	}
 
-	off_t filelen = _filelengthi64(fd);
-	if (filelen < 0)
-		return -1;
+	int ret = _snprintf(fullname, len, "%s%s", dir, templ);
+	if (ret < 0 || ret >= len) {
+		ERR("!snprintf");
+		goto err;
+	}
 
-	/* for our purpose it's enough to lock the first page of the file */
-	long len = (filelen > systemInfo.dwPageSize) ?
-				systemInfo.dwPageSize : (long)filelen;
-	return _locking(fd, flags, len);
+	LOG(4, "fullname \"%s\"", fullname);
+
+	/*
+	 * XXX - block signals and modify file creation mask for the time
+	 * of mkstmep() execution.  Restore previous settings once the file
+	 * is created.
+	 */
+
+	fd = os_mkstemp(fullname);
+	if (fd < 0) {
+		ERR("!os_mkstemp");
+		goto err;
+	}
+
+	/*
+	 * There is no point to use unlink() here.  First, because it does not
+	 * work on open files.  Second, because the file is created with
+	 * O_TEMPORARY flag, and it looks like such temp files cannot be open
+	 * from another process, even though they are visible on
+	 * the filesystem.
+	 */
+
+	Free(fullname);
+	return fd;
+
+err:
+	Free(fullname);
+	oerrno = errno;
+	if (fd != -1)
+		(void) os_close(fd);
+	errno = oerrno;
+	return -1;
 }
 
 /*
- * ftruncate -- truncate a file to a specified length
+ * util_is_absolute_path -- check if the path is absolute
  */
 int
-ftruncate(int fd, off_t length)
+util_is_absolute_path(const char *path)
 {
-	return _chsize_s(fd, length);
+	LOG(3, "path \"%s\"", path);
+
+	if (path == NULL || path[0] == '\0')
+		return 0;
+
+	if (path[0] == '\\' || path[1] == ':')
+		return 1;
+
+	return 0;
+}
+
+/*
+ * util_file_mkdir -- creates new dir
+ */
+int
+util_file_mkdir(const char *path, mode_t mode)
+{
+	/*
+	 * On windows we cannot create read only dir so mode
+	 * parameter is useless.
+	 */
+	UNREFERENCED_PARAMETER(mode);
+	LOG(3, "path: %s mode: %d", path, mode);
+	return _mkdir(path);
+}
+
+/*
+ * util_file_dir_open -- open a directory
+ */
+int
+util_file_dir_open(struct dir_handle *handle, const char *path)
+{
+	/* init handle */
+	handle->handle = NULL;
+	handle->path = path;
+	return 0;
+}
+
+/*
+ * util_file_dir_next - read next file in directory
+ */
+int
+util_file_dir_next(struct dir_handle *handle, struct file_info *info)
+{
+	WIN32_FIND_DATAA data;
+	if (handle->handle == NULL) {
+		handle->handle = FindFirstFileA(handle->path, &data);
+		if (handle->handle == NULL)
+			return 1;
+	} else {
+		if (FindNextFileA(handle->handle, &data) == 0)
+			return 1;
+	}
+	info->filename[NAME_MAX] = '\0';
+	strncpy(info->filename, data.cFileName, NAME_MAX + 1);
+	if (info->filename[NAME_MAX] != '\0')
+		return -1; /* filename truncated */
+	info->is_dir = data.dwFileAttributes == FILE_ATTRIBUTE_DIRECTORY;
+
+	return 0;
+}
+
+/*
+ * util_file_dir_close -- close a directory
+ */
+int
+util_file_dir_close(struct dir_handle *handle)
+{
+	return FindClose(handle->handle);
+}
+
+/*
+ * util_file_dir_close -- remove directory
+ */
+int
+util_file_dir_remove(const char *path)
+{
+	return RemoveDirectoryA(path) == 0 ? -1 : 0;
+}
+
+/*
+ * util_file_device_dax_alignment -- returns internal Device DAX alignment
+ */
+size_t
+util_file_device_dax_alignment(const char *path)
+{
+	LOG(3, "path \"%s\"", path);
+
+	return 0;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -45,7 +45,7 @@ struct rpmemd_fip_attr {
 	size_t nthreads;
 	enum rpmem_provider provider;
 	enum rpmem_persist_method persist_method;
-	void (*persist)(const void *addr, size_t len);
+	int (*persist)(const void *addr, size_t len);
 };
 
 struct rpmemd_fip *rpmemd_fip_init(const char *node,
@@ -55,7 +55,7 @@ struct rpmemd_fip *rpmemd_fip_init(const char *node,
 		enum rpmem_err *err);
 void rpmemd_fip_fini(struct rpmemd_fip *fip);
 
-int rpmemd_fip_accept(struct rpmemd_fip *fip);
+int rpmemd_fip_accept(struct rpmemd_fip *fip, int timeout);
 int rpmemd_fip_process_start(struct rpmemd_fip *fip);
 int rpmemd_fip_process_stop(struct rpmemd_fip *fip);
 int rpmemd_fip_wait_close(struct rpmemd_fip *fip, int timeout);

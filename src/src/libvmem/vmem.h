@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,6 +34,10 @@
  * vmem.h -- internal definitions for libvmem
  */
 
+#include <stddef.h>
+
+#include "pool_hdr.h"
+
 #define VMEM_LOG_PREFIX "libvmem"
 #define VMEM_LOG_LEVEL_VAR "VMEM_LOG_LEVEL"
 #define VMEM_LOG_FILE_VAR "VMEM_LOG_FILE"
@@ -44,6 +48,7 @@
 #define VMEM_FORMAT_COMPAT 0x0000
 #define VMEM_FORMAT_INCOMPAT 0x0000
 #define VMEM_FORMAT_RO_COMPAT 0x0000
+
 
 struct vmem {
 	struct pool_hdr hdr;	/* memory pool header */

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,6 +34,12 @@
  * heap_layout.h -- internal definitions for heap layout
  */
 
+#ifndef LIBPMEMOBJ_HEAP_LAYOUT_H
+#define LIBPMEMOBJ_HEAP_LAYOUT_H 1
+
+#include <stddef.h>
+#include <stdint.h>
+
 #define HEAP_MAJOR 1
 #define HEAP_MINOR 0
 
@@ -46,13 +52,6 @@
 #define ZONE_MIN_SIZE (sizeof(struct zone) + sizeof(struct chunk))
 #define ZONE_MAX_SIZE (sizeof(struct zone) + sizeof(struct chunk) * MAX_CHUNK)
 #define HEAP_MIN_SIZE (sizeof(struct heap_layout) + ZONE_MIN_SIZE)
-
-/*
- * The maximum number of entries in redo log used by the allocator. The common
- * case is to use two, one for modification of the object destination memory
- * location and the second for applying the chunk metadata modifications.
- */
-#define ALLOC_REDO_LOG_SIZE 10
 
 #define BITS_PER_VALUE 64U
 #define MAX_CACHELINE_ALIGNMENT 40 /* run alignment, 5 cachelines */
@@ -67,9 +66,12 @@
 					+ ZONE_MAX_SIZE * (zone_id)))
 
 enum chunk_flags {
-	CHUNK_FLAG_ZEROED	=	0x0001,
-	CHUNK_RUN_ACTIVE	=	0x0002
+	CHUNK_FLAG_COMPACT_HEADER	=	0x0001,
+	CHUNK_FLAG_HEADER_NONE		=	0x0002,
 };
+
+#define CHUNK_FLAGS_ALL_VALID (CHUNK_FLAG_COMPACT_HEADER |\
+	CHUNK_FLAG_HEADER_NONE)
 
 enum chunk_type {
 	CHUNK_TYPE_UNKNOWN,
@@ -77,6 +79,7 @@ enum chunk_type {
 	CHUNK_TYPE_FREE,
 	CHUNK_TYPE_USED,
 	CHUNK_TYPE_RUN,
+	CHUNK_TYPE_RUN_DATA,
 
 	MAX_CHUNK_TYPE
 };
@@ -87,7 +90,7 @@ struct chunk {
 
 struct chunk_run {
 	uint64_t block_size;
-	uint64_t bucket_vptr; /* runtime information */
+	uint64_t incarnation_claim; /* run_id of the last claimant */
 	uint64_t bitmap[MAX_BITMAP_VALUES];
 	uint8_t data[RUNSIZE];
 };
@@ -126,12 +129,20 @@ struct heap_layout {
 	struct zone zone0;	/* first element of zones array */
 };
 
-struct allocation_header {
-	uint32_t zone_id;
-	uint32_t chunk_id;
+#define ALLOC_HDR_SIZE_SHIFT (48ULL)
+#define ALLOC_HDR_FLAGS_MASK (((1ULL) << ALLOC_HDR_SIZE_SHIFT) - 1)
+
+struct allocation_header_legacy {
+	uint8_t unused[8];
 	uint64_t size;
+	uint8_t unused2[32];
+	uint64_t root_size;
+	uint64_t type_num;
 };
 
-struct lane_alloc_layout {
-	struct redo_log redo[ALLOC_REDO_LOG_SIZE];
+struct allocation_header_compact {
+	uint64_t size;
+	uint64_t extra;
 };
+
+#endif

@@ -1,5 +1,6 @@
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2015-2017, Intel Corporation
+# Copyright (c) 2016, Microsoft Corporation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -40,20 +41,18 @@ Param(
     $DIR = ""
     )
 
-$Env:UNITTEST_NAME = "blk_pool\TEST10"
+$Env:UNITTEST_NAME = "blk_pool/TEST10"
 $Env:UNITTEST_NUM = "10"
-# XXX:  bash has a few calls to tools that we don't have on
-# windows (yet) that set PMEM_IS_PMEM and NON_PMEM_IS_PMEM based
-# on their output
-$Env:PMEM_IS_PMEM = $true
-$Env:NON_PMEM_IS_PMEM = $true
+
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
 
+require_test_type medium
+
 setup
 
-create_holey_file 20 $DIR\testfile
+create_holey_file 20M $DIR\testfile
 # XXX Doesn't change outcome whether we make it WO or not,
 # same goes for linux test
 & icacls $DIR\testfile /grant ${Env:USERNAME}:W >$null
@@ -62,10 +61,11 @@ create_holey_file 20 $DIR\testfile
 # TEST10 existing file, file length >= min required size, poolsize > 0
 #        (no read permissions)
 #
-expect_normal_exit ..\..\x64\debug\blk_pool$Env:EXESUFFIX `
+expect_normal_exit $Env:EXE_DIR\blk_pool$Env:EXESUFFIX `
     c $DIR\testfile 4096 20 0640
 
 check_files $DIR\testfile
 
-# check will print the appropriate pass/fail message
 check
+
+pass

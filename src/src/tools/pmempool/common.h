@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,11 +36,10 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include <sys/queue.h>
 #include <stdarg.h>
 #include <stdbool.h>
 
-#include "util.h"
+#include "queue.h"
 #include "log.h"
 #include "blk.h"
 #include "libpmemobj.h"
@@ -56,6 +55,11 @@
 #include "tx.h"
 #include "heap.h"
 #include "btt_layout.h"
+
+/* XXX - modify Linux makefiles to generate srcversion.h and remove #ifdef */
+#ifdef _WIN32
+#include "srcversion.h"
+#endif
 
 #define COUNT_OF(x) (sizeof(x) / sizeof(0[x]))
 
@@ -79,13 +83,9 @@
 #define OPT_REQ6(c) _OPT_REQ(c, 6)
 #define OPT_REQ7(c) _OPT_REQ(c, 7)
 
+#ifndef min
 #define min(a, b) ((a) < (b) ? (a) : (b))
-#define ENTIRE_UINT64 (\
-{\
-struct range _entire_uint64 = {\
-	.first = 0,\
-	.last = UINT64_MAX\
-}; _entire_uint64; })
+#endif
 
 #define FOREACH_RANGE(range, ranges)\
 	LIST_FOREACH(range, &(ranges)->head, next)
@@ -93,30 +93,11 @@ struct range _entire_uint64 = {\
 #define PLIST_OFF_TO_PTR(pop, off)\
 ((off) == 0 ? NULL : (void *)((uintptr_t)(pop) + (off) - OBJ_OOB_SIZE))
 
-#define PLIST_FOREACH(entry, pop, head)\
-for ((entry) = PLIST_OFF_TO_PTR(pop, (head)->pe_first.off);\
-	(entry) != NULL;\
-	(entry) = ((entry)->pe_next.off == (head)->pe_first.off ?\
-	NULL : PLIST_OFF_TO_PTR(pop, (entry)->pe_next.off)))
-
-#define PLIST_FIRST(pop, head)\
-((struct list_entry *)PLIST_OFF_TO_PTR(pop, (head)->pe_first.off))
-
-#define PLIST_EMPTY(head) ((head)->pe_first.off == 0)
-
-#define ENTRY_TO_OOB_HDR(entry) ((struct oob_header *)(entry))
-
-#define ENTRY_TO_TX_RANGE(entry)\
-((void *)((uintptr_t)(entry) + sizeof(struct oob_header)))
-
 #define ENTRY_TO_ALLOC_HDR(entry)\
 ((void *)((uintptr_t)(entry) - sizeof(struct allocation_header)))
 
-#define ENTRY_TO_DATA(entry)\
-((void *)((uintptr_t)(entry) + sizeof(struct oob_header)))
-
 #define OBJH_FROM_PTR(ptr)\
-((void *)((uintptr_t)ptr - sizeof(struct obj_header)))
+((void *)((uintptr_t)ptr - sizeof(struct legacy_object_header)))
 
 #define DEFAULT_HDR_SIZE	4096UL /* 4 KB */
 #define DEFAULT_DESC_SIZE	4096UL /* 4 KB */
@@ -124,16 +105,15 @@ for ((entry) = PLIST_OFF_TO_PTR(pop, (head)->pe_first.off);\
 
 #define PTR_TO_ALLOC_HDR(ptr)\
 ((void *)((uintptr_t)(ptr) -\
-	sizeof(struct oob_header) -\
-	sizeof(struct allocation_header)))
+	sizeof(struct legacy_object_header)))
 
 #define OBJH_TO_PTR(objh)\
-((void *)((uintptr_t)objh + sizeof(struct obj_header)))
+((void *)((uintptr_t)objh + sizeof(struct legacy_object_header)))
 
-struct obj_header {
-	struct allocation_header ahdr;
-	struct oob_header oobh;
-};
+/* invalid answer for ask_* functions */
+#define INV_ANS	'\0'
+
+#define FORMAT_PRINTF(a, b) __attribute__((__format__(__printf__, (a), (b))))
 
 /*
  * pmem_pool_type_t -- pool types
@@ -154,7 +134,7 @@ struct option_requirement {
 };
 
 struct options {
-	const struct option *options;
+	const struct option *opts;
 	size_t noptions;
 	char *bitmap;
 	const struct option_requirement *req;
@@ -167,6 +147,7 @@ struct pmem_pool_params {
 	mode_t mode;
 	int is_poolset;
 	int is_part;
+	int is_checksum_ok;
 	union {
 		struct {
 			uint64_t bsize;
@@ -197,7 +178,10 @@ int pool_set_file_read(struct pool_set_file *file, void *buff,
 int pool_set_file_write(struct pool_set_file *file, void *buff,
 		size_t nbytes, uint64_t off);
 int pool_set_file_set_replica(struct pool_set_file *file, size_t replica);
+size_t pool_set_file_nreplicas(struct pool_set_file *file);
 void *pool_set_file_map(struct pool_set_file *file, uint64_t offset);
+void pool_set_file_persist(struct pool_set_file *file,
+		const void *addr, size_t len);
 
 struct range {
 	LIST_ENTRY(range) next;
@@ -211,6 +195,7 @@ struct ranges {
 
 pmem_pool_type_t pmem_pool_type_parse_hdr(const struct pool_hdr *hdrp);
 pmem_pool_type_t pmem_pool_type(const void *base_pool_addr);
+int pmem_pool_checksum(const void *base_pool_addr);
 pmem_pool_type_t pmem_pool_type_parse_str(const char *str);
 uint64_t pmem_pool_get_min_size(pmem_pool_type_t type);
 int pmem_pool_parse_params(const char *fname, struct pmem_pool_params *paramsp,
@@ -236,17 +221,20 @@ int util_parse_chunk_types(const char *str, uint64_t *types);
 int util_parse_lane_sections(const char *str, uint64_t *types);
 char ask(char op, char *answers, char def_ans, const char *fmt, va_list ap);
 char ask_yn(char op, char def_ans, const char *fmt, va_list ap);
-char ask_Yn(char op, const char *fmt, ...);
-char ask_yN(char op, const char *fmt, ...);
+char ask_Yn(char op, const char *fmt, ...) FORMAT_PRINTF(2, 3);
+char ask_yN(char op, const char *fmt, ...) FORMAT_PRINTF(2, 3);
 unsigned util_heap_max_zone(size_t size);
 int util_heap_get_bitmap_params(uint64_t block_size, uint64_t *nallocsp,
 		uint64_t *nvalsp, uint64_t *last_valp);
-size_t util_plist_nelements(struct pmemobjpool *pop, struct list_head *headp);
-struct list_entry *util_plist_get_entry(struct pmemobjpool *pop,
-	struct list_head *headp, size_t n);
 
 static inline uint32_t
 util_count_ones(uint64_t val)
 {
 	return (uint32_t)__builtin_popcountll(val);
 }
+
+static const struct range ENTIRE_UINT64 = {
+	{ NULL, NULL },	/* range */
+	0,		/* first */
+	UINT64_MAX	/* last */
+};

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -75,10 +75,12 @@
 #include "libvmmalloc.h"
 
 #include "jemalloc.h"
-#include "util.h"
+#include "pmemcommon.h"
+#include "file.h"
+#include "os.h"
+#include "os_thread.h"
 #include "vmem.h"
 #include "vmmalloc.h"
-#include "out.h"
 #include "valgrind_internal.h"
 
 #define HUGE (2 * 1024 * 1024)
@@ -361,15 +363,15 @@ libvmmalloc_create(const char *dir, size_t size)
 	if (Fd == -1)
 		return NULL;
 
-	if ((errno = posix_fallocate(Fd, 0, (off_t)size)) != 0) {
+	if ((errno = os_posix_fallocate(Fd, 0, (off_t)size)) != 0) {
 		ERR("!posix_fallocate");
-		(void) close(Fd);
+		(void) os_close(Fd);
 		return NULL;
 	}
 
 	void *addr;
-	if ((addr = util_map(Fd, size, 0, 4 << 20)) == NULL) {
-		(void) close(Fd);
+	if ((addr = util_map(Fd, size, MAP_SHARED, 0, 4 << 20)) == NULL) {
+		(void) os_close(Fd);
 		return NULL;
 	}
 
@@ -404,27 +406,25 @@ libvmmalloc_create(const char *dir, size_t size)
 /*
  * libvmmalloc_clone - (internal) clone the entire pool
  */
-static void *
+static int
 libvmmalloc_clone(void)
 {
 	LOG(3, NULL);
 
 	Fd_clone = util_tmpfile(Dir, "/vmem.XXXXXX");
 	if (Fd_clone == -1)
-		return NULL;
+		return -1;
 
-	if ((errno = posix_fallocate(Fd_clone, 0, (off_t)Vmp->size)) != 0) {
+	if ((errno = os_posix_fallocate(Fd_clone, 0, (off_t)Vmp->size)) != 0) {
 		ERR("!posix_fallocate");
-		(void) close(Fd_clone);
-		return NULL;
+		goto err_close;
 	}
 
 	void *addr = mmap(NULL, Vmp->size, PROT_READ|PROT_WRITE,
 			MAP_SHARED, Fd_clone, 0);
 	if (addr == MAP_FAILED) {
 		LOG(1, "!mmap");
-		(void) close(Fd_clone);
-		return NULL;
+		goto err_close;
 	}
 
 	LOG(3, "copy the entire pool file: dst %p src %p size %zu",
@@ -441,9 +441,16 @@ libvmmalloc_clone(void)
 	memcpy(addr, Vmp->addr, Vmp->size);
 	VALGRIND_DO_ENABLE_ERROR_REPORTING;
 
+	if (munmap(addr, Vmp->size)) {
+		ERR("!munmap");
+		goto err_close;
+	}
 	util_range_none(Vmp->addr, sizeof(struct pool_hdr));
+	return 0;
 
-	return addr;
+err_close:
+	(void) os_close(Fd_clone);
+	return -1;
 }
 
 /*
@@ -480,7 +487,7 @@ libvmmalloc_prefork(void)
 	case 2:
 		LOG(3, "clone the entire pool file");
 
-		if (libvmmalloc_clone() != NULL)
+		if (libvmmalloc_clone() == 0)
 			break;
 
 		if (Forkopt == 2) {
@@ -537,7 +544,7 @@ libvmmalloc_postfork_parent(void)
 		LOG(3, "pool mapped as private - do nothing");
 	} else {
 		LOG(3, "close the cloned pool file");
-		(void) close(Fd_clone);
+		(void) os_close(Fd_clone);
 	}
 }
 
@@ -558,7 +565,7 @@ libvmmalloc_postfork_child(void)
 		LOG(3, "pool mapped as private - do nothing");
 	} else {
 		LOG(3, "close the original pool file");
-		(void) close(Fd);
+		(void) os_close(Fd);
 		Fd = Fd_clone;
 
 		void *addr = Vmp->addr;
@@ -604,39 +611,38 @@ libvmmalloc_init(void)
 	 * have to register fork handlers before the call to out_init(),
 	 * as it may indirectly call malloc() when opening the log file.
 	 */
-	if (pthread_atfork(libvmmalloc_prefork,
+	if (os_thread_atfork(libvmmalloc_prefork,
 			libvmmalloc_postfork_parent,
 			libvmmalloc_postfork_child) != 0) {
-		perror("Error (libvmmalloc): pthread_atfork");
+		perror("Error (libvmmalloc): os_thread_atfork");
 		abort();
 	}
 
-	out_init(VMMALLOC_LOG_PREFIX, VMMALLOC_LOG_LEVEL_VAR,
+	common_init(VMMALLOC_LOG_PREFIX, VMMALLOC_LOG_LEVEL_VAR,
 			VMMALLOC_LOG_FILE_VAR, VMMALLOC_MAJOR_VERSION,
 			VMMALLOC_MINOR_VERSION);
 	out_set_vsnprintf_func(je_vmem_navsnprintf);
 	LOG(3, NULL);
-	util_init();
 
 	/* set up jemalloc messages to a custom print function */
 	je_vmem_malloc_message = print_jemalloc_messages;
 
 	Header_size = roundup(sizeof(VMEM), Pagesize);
 
-	if ((Dir = getenv(VMMALLOC_POOL_DIR_VAR)) == NULL) {
+	if ((Dir = os_getenv(VMMALLOC_POOL_DIR_VAR)) == NULL) {
 		out_log(NULL, 0, NULL, 0, "Error (libvmmalloc): "
 				"environment variable %s not specified",
 				VMMALLOC_POOL_DIR_VAR);
 		abort();
 	}
 
-	if ((env_str = getenv(VMMALLOC_POOL_SIZE_VAR)) == NULL) {
+	if ((env_str = os_getenv(VMMALLOC_POOL_SIZE_VAR)) == NULL) {
 		out_log(NULL, 0, NULL, 0, "Error (libvmmalloc): "
 				"environment variable %s not specified",
 				VMMALLOC_POOL_SIZE_VAR);
 		abort();
 	} else {
-		long long int v = atoll(env_str);
+		long long v = atoll(env_str);
 		if (v < 0) {
 			out_log(NULL, 0, NULL, 0,
 				"Error (libvmmalloc): negative %s",
@@ -655,7 +661,7 @@ libvmmalloc_init(void)
 		abort();
 	}
 
-	if ((env_str = getenv(VMMALLOC_FORK_VAR)) != NULL) {
+	if ((env_str = os_getenv(VMMALLOC_FORK_VAR)) != NULL) {
 		Forkopt = atoi(env_str);
 		if (Forkopt < 0 || Forkopt > 3) {
 			out_log(NULL, 0, NULL, 0, "Error (libvmmalloc): "
@@ -692,7 +698,7 @@ libvmmalloc_fini(void)
 {
 	LOG(3, NULL);
 
-	char *env_str = getenv(VMMALLOC_LOG_STATS_VAR);
+	char *env_str = os_getenv(VMMALLOC_LOG_STATS_VAR);
 	if ((env_str == NULL) || strcmp(env_str, "1") != 0)
 		return;
 
@@ -704,5 +710,5 @@ libvmmalloc_fini(void)
 	je_vmem_pool_malloc_stats_print(
 		(pool_t *)((uintptr_t)Vmp + Header_size),
 		print_jemalloc_stats, NULL, "gba");
-	out_fini();
+	common_fini();
 }

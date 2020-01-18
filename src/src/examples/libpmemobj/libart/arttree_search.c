@@ -1,6 +1,6 @@
 /*
  * Copyright 2016, FUJITSU TECHNOLOGY SOLUTIONS GMBH
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -48,6 +48,7 @@
  */
 
 #include <stdio.h>
+#include <inttypes.h>
 #include <libgen.h>
 #include <string.h>
 #include <unistd.h>
@@ -102,18 +103,18 @@ void arttree_search_help(char *appname);
 int arttree_search_func(char *appname, struct pmem_context *ctx,
 		int ac, char *av[]);
 
-const char *arttree_search_help_str =
+static const char *arttree_search_help_str =
 "Search for key in ART tree\n"
 "Arguments: <key>\n"
 "   <key> key\n"
 ;
 
 static const struct option long_options[] = {
-	{"hexdump",	no_argument,	0,	'x'},
-	{0,		0,		0,	 0 },
+	{"hexdump",	no_argument,	NULL,	'x'},
+	{NULL,		0,		NULL,	 0 },
 };
 
-struct search s_funcs[] = {
+static struct search s_funcs[] = {
 	{
 		.name = "key",
 		.brief = "search for key",
@@ -325,7 +326,7 @@ find_child(art_node *n, int node_type, unsigned char c)
 
 	case ART_NODE256:
 		p.p4 = (art_node256 *)n;
-		printf("0x%lx", p.p4->children[c].oid.off);
+		printf("0x%" PRIx64, p.p4->children[c].oid.off);
 		if (p.p4->children[c].oid.off != 0) {
 			printf("]\n");
 			return p.p4->children[c].oid.off;
@@ -385,7 +386,7 @@ get_node(struct search_ctx *ctx, int node_type, uint64_t off)
 	obj_len = art_node_sizes[node_type];
 	off_pages = (off / pagesize) * pagesize;
 	off_in_page = off - off_pages;
-	printf("%s at off 0x%lx\n", art_node_names[node_type], off);
+	printf("%s at off 0x%" PRIx64 "\n", art_node_names[node_type], off);
 	p = mmap(NULL, off_in_page + obj_len,
 		    PROT_READ, MAP_SHARED, fd, off_pages);
 	if (node_type == VAR_STRING) {
@@ -400,13 +401,41 @@ get_node(struct search_ctx *ctx, int node_type, uint64_t off)
 	return p + off_in_page;
 }
 
+static void
+release_node(struct search_ctx *ctx, void *p, int node_type, uint64_t off)
+{
+	size_t obj_len;
+	uint64_t off_in_page, off_pages;
+	int pagesize;
+
+	if (!VALID_NODE_TYPE(node_type)) {
+		return;
+	}
+
+	pagesize = ctx->pmem_ctx->sys_pagesize;
+
+	obj_len = art_node_sizes[node_type];
+	off_pages = (off / pagesize) * pagesize;
+	off_in_page = off - off_pages;
+
+	if (node_type == VAR_STRING) {
+		var_string *vp = (var_string *)p;
+		obj_len = vp->len + sizeof(size_t);
+	}
+
+	munmap(p - off_in_page, off_in_page + obj_len);
+}
+
 static char *
 search_key(char *appname, struct search_ctx *ctx)
 {
 	int errors = 0;
 	void *p;		/* something */
+	off_t p_off;
 	art_node_u *p_au;	/* art_node_u */
+	off_t p_au_off;
 	void *p_an;		/* specific art node from art_node_u */
+	off_t p_an_off;
 	art_node *an;		/* art node */
 	var_string *n_value;
 	char *value;
@@ -417,25 +446,27 @@ search_key(char *appname, struct search_ctx *ctx)
 
 	key_len = strlen((char *)(ctx->search_key));
 	value = NULL;
-	p = get_node(ctx, ART_TREE_ROOT, ctx->pmem_ctx->art_tree_root_offset);
+
+	p_off = ctx->pmem_ctx->art_tree_root_offset;
+	p = get_node(ctx, ART_TREE_ROOT, p_off);
+	assert(p != NULL);
 	if (p != MAP_FAILED) {
-		dump_art_tree_root("art_tree_root",
-		    ctx->pmem_ctx->art_tree_root_offset, p);
+		dump_art_tree_root("art_tree_root", p_off, p);
 	} else {
 		perror("search_key mmap failed");
 		errors++;
 	}
 	if (!errors) {
-		p_au = (art_node_u *)get_node(ctx, ART_NODE_U,
-			    ((art_tree_root *)p)->root.oid.off);
+		p_au_off = ((art_tree_root *)p)->root.oid.off;
+		p_au = (art_node_u *)get_node(ctx, ART_NODE_U, p_au_off);
 		if (p_au == NULL)
 			errors++;
 	}
 
 	if (!errors) {
 		while (p_au) {
-			p_an = get_node(ctx, p_au->art_node_type,
-				    get_offset_an(p_au));
+			p_an_off = get_offset_an(p_au);
+			p_an = get_node(ctx, p_au->art_node_type, p_an_off);
 			assert(p_an != NULL);
 			if (p_au->art_node_type == ART_LEAF) {
 				if (!leaf_matches(ctx, (art_leaf *)p_an,
@@ -458,14 +489,20 @@ search_key(char *appname, struct search_ctx *ctx)
 			}
 			child_off = find_child(an, p_au->art_node_type,
 				    ctx->search_key[depth]);
+
+			release_node(ctx, p_au, ART_NODE_U, p_au_off);
+
 			if (child_off != 0) {
-				p_au = get_node(ctx, ART_NODE_U, child_off);
+				p_au_off = child_off;
+				p_au = get_node(ctx, ART_NODE_U, p_au_off);
 			} else {
 				p_au = NULL;
 			}
 			depth++;
 		}
 	}
+
+	release_node(ctx, p, ART_TREE_ROOT, p_off);
 
 	if (errors) {
 		return NULL;
@@ -478,8 +515,8 @@ static void
 dump_art_tree_root(char *prefix, uint64_t off, void *p)
 {
 	art_tree_root *tree_root;
-	tree_root = (art_tree_root *)((unsigned char *)p);
-	printf("at offset 0x%lx, art_tree_root {\n", off);
+	tree_root = (art_tree_root *)p;
+	printf("at offset 0x%" PRIx64 ", art_tree_root {\n", off);
 	printf("    size %d\n", tree_root->size);
 	dump_PMEMoid("    art_node_u", (PMEMoid *)&(tree_root->root));
 	printf("\n};\n");
@@ -488,6 +525,7 @@ dump_art_tree_root(char *prefix, uint64_t off, void *p)
 static void
 dump_PMEMoid(char *prefix, PMEMoid *oid)
 {
-	printf("%s { PMEMoid pool_uuid_lo %lx off 0x%lx = %ld }\n",
+	printf("%s { PMEMoid pool_uuid_lo %" PRIx64
+	    " off 0x%" PRIx64 " = %" PRId64 " }\n",
 	    prefix, oid->pool_uuid_lo, oid->off, oid->off);
 }

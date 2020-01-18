@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -114,7 +114,9 @@
  *	Checks for overlapped ranges to determine whether to copy from
  *	the beginning of the range or from the end.  If MOVNT instructions
  *	are available, uses the memory copy flow described above, otherwise
- *	calls the libc memmove() followed by pmem_flush().
+ *	calls the libc memmove() followed by pmem_flush(). Since no conditional
+ *	compilation and/or architecture specific CFLAGS are in use at the
+ *	moment, SSE2 ( thus movnt ) is just assumed to be available.
  *
  * pmem_memcpy_nodrain()
  *
@@ -172,13 +174,20 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <limits.h>
+
+#ifdef _WIN32
+#include <memoryapi.h>
+#endif
 
 #include "libpmem.h"
-
 #include "pmem.h"
-#include "util.h"
 #include "cpu.h"
 #include "out.h"
+#include "util.h"
+#include "os.h"
+#include "mmap.h"
+#include "file.h"
 #include "valgrind_internal.h"
 
 #ifndef _MSC_VER
@@ -222,6 +231,8 @@ static size_t Movnt_threshold = MOVNT_THRESHOLD;
 int
 pmem_has_hw_drain(void)
 {
+	LOG(3, NULL);
+
 	return 0;
 }
 
@@ -263,7 +274,7 @@ static void (*Func_predrain_fence)(void) = predrain_fence_empty;
 void
 pmem_drain(void)
 {
-	LOG(10, NULL);
+	LOG(15, NULL);
 
 	Func_predrain_fence();
 
@@ -331,6 +342,17 @@ flush_clflushopt(const void *addr, size_t len)
 }
 
 /*
+ * flush_empty -- (internal) do not flush the CPU cache
+ */
+static void
+flush_empty(const void *addr, size_t len)
+{
+	LOG(15, "addr %p len %zu", addr, len);
+
+	/* NOP */
+}
+
+/*
  * pmem_flush() calls through Func_flush to do the work.  Although
  * initialized to flush_clflush(), once the existence of the clflushopt
  * feature is confirmed by pmem_init() at library initialization time,
@@ -345,7 +367,7 @@ static void (*Func_flush)(const void *, size_t) = flush_clflush;
 void
 pmem_flush(const void *addr, size_t len)
 {
-	LOG(10, "addr %p len %zu", addr, len);
+	LOG(15, "addr %p len %zu", addr, len);
 
 	VALGRIND_DO_CHECK_MEM_IS_ADDRESSABLE(addr, len);
 
@@ -416,7 +438,7 @@ pmem_msync(const void *addr, size_t len)
 static int
 is_pmem_always(const void *addr, size_t len)
 {
-	LOG(3, NULL);
+	LOG(3, "addr %p len %zu", addr, len);
 
 	return 1;
 }
@@ -427,7 +449,7 @@ is_pmem_always(const void *addr, size_t len)
 static int
 is_pmem_never(const void *addr, size_t len)
 {
-	LOG(3, NULL);
+	LOG(3, "addr %p len %zu", addr, len);
 
 	return 0;
 }
@@ -436,7 +458,7 @@ is_pmem_never(const void *addr, size_t len)
  * pmem_is_pmem() calls through Func_is_pmem to do the work.  Although
  * initialized to is_pmem_never(), once the existence of the clflush
  * feature is confirmed by pmem_init() at library initialization time,
- * Func_is_pmem is set to is_pmem_proc().  That's the most common case
+ * Func_is_pmem is set to is_pmem_detect().  That's the most common case
  * on modern hardware.
  */
 static int (*Func_is_pmem)(const void *addr, size_t len) = is_pmem_never;
@@ -456,7 +478,7 @@ pmem_is_pmem_init(void)
 	static volatile unsigned init;
 
 	while (init != 2) {
-		if (!__sync_bool_compare_and_swap(&init, 0, 1))
+		if (!util_bool_compare_and_swap32(&init, 0, 1))
 			continue;
 
 		/*
@@ -469,7 +491,7 @@ pmem_is_pmem_init(void)
 		 * for systems where pmem_is_pmem() isn't correctly detecting
 		 * true persistent memory.
 		 */
-		char *ptr = getenv("PMEM_IS_PMEM_FORCE");
+		char *ptr = os_getenv("PMEM_IS_PMEM_FORCE");
 		if (ptr) {
 			int val = atoi(ptr);
 
@@ -481,8 +503,8 @@ pmem_is_pmem_init(void)
 			LOG(4, "PMEM_IS_PMEM_FORCE=%d", val);
 		}
 
-		if (!__sync_bool_compare_and_swap(&init, 1, 2))
-			FATAL("__sync_bool_compare_and_swap");
+		if (!util_bool_compare_and_swap32(&init, 1, 2))
+			FATAL("util_bool_compare_and_swap32");
 	}
 }
 
@@ -508,6 +530,9 @@ pmem_is_pmem(const void *addr, size_t len)
 #define PMEM_FILE_ALL_FLAGS\
 	(PMEM_FILE_CREATE|PMEM_FILE_EXCL|PMEM_FILE_SPARSE|PMEM_FILE_TMPFILE)
 
+#define PMEM_DAX_VALID_FLAGS\
+	(PMEM_FILE_CREATE|PMEM_FILE_SPARSE)
+
 #ifndef USE_O_TMPFILE
 #ifdef O_TMPFILE
 #define USE_O_TMPFILE 1
@@ -517,11 +542,14 @@ pmem_is_pmem(const void *addr, size_t len)
 #endif
 
 /*
- * pmem_map_file -- create or open the file and map it to memory
+ * pmem_map_fileU -- create or open the file and map it to memory
  */
+#ifndef _WIN32
+static inline
+#endif
 void *
-pmem_map_file(const char *path, size_t len, int flags, mode_t mode,
-	size_t *mapped_lenp, int *is_pmemp)
+pmem_map_fileU(const char *path, size_t len, int flags,
+	mode_t mode, size_t *mapped_lenp, int *is_pmemp)
 {
 	LOG(3, "path \"%s\" size %zu flags %x mode %o mapped_lenp %p "
 		"is_pmemp %p", path, len, flags, mode, mapped_lenp, is_pmemp);
@@ -530,11 +558,37 @@ pmem_map_file(const char *path, size_t len, int flags, mode_t mode,
 	int fd;
 	int open_flags = O_RDWR;
 	int delete_on_err = 0;
+	int is_dev_dax = util_file_is_device_dax(path);
 
 	if (flags & ~(PMEM_FILE_ALL_FLAGS)) {
 		ERR("invalid flag specified %x", flags);
 		errno = EINVAL;
 		return NULL;
+	}
+
+	if (is_dev_dax) {
+		if (flags & ~(PMEM_DAX_VALID_FLAGS)) {
+			ERR("flag unsupported for Device DAX %x", flags);
+			errno = EINVAL;
+			return NULL;
+		} else {
+			/* we are ignoring all of the flags */
+			flags = 0;
+			ssize_t actual_len = util_file_get_size(path);
+			if (actual_len < 0) {
+				ERR("unable to read Device DAX size");
+				errno = EINVAL;
+				return NULL;
+			}
+			if (len != 0 && len != (size_t)actual_len) {
+				ERR("Device DAX length must be either 0 or "
+					"the exact size of the device %zu",
+					len);
+				errno = EINVAL;
+				return NULL;
+			}
+			len = 0;
+		}
 	}
 
 	if (flags & PMEM_FILE_CREATE) {
@@ -572,7 +626,7 @@ pmem_map_file(const char *path, size_t len, int flags, mode_t mode,
 	if (flags & PMEM_FILE_TMPFILE)
 		open_flags |= O_TMPFILE;
 
-	if ((fd = open(path, open_flags, mode)) < 0) {
+	if ((fd = os_open(path, open_flags, mode)) < 0) {
 		ERR("!open %s", path);
 		return NULL;
 	}
@@ -580,11 +634,14 @@ pmem_map_file(const char *path, size_t len, int flags, mode_t mode,
 #else
 
 	if (flags & PMEM_FILE_TMPFILE) {
-		if ((fd = util_tmpfile(path, "/pmem.XXXXXX")) < 0) {
+		if ((fd = util_tmpfile(path,
+					OS_DIR_SEP_STR"pmem.XXXXXX")) < 0) {
+			LOG(2, "failed to create temporary file at \"%s\"",
+				path);
 			return NULL;
 		}
 	} else {
-		if ((fd = open(path, open_flags, mode)) < 0) {
+		if ((fd = os_open(path, open_flags, mode)) < 0) {
 			ERR("!open %s", path);
 			return NULL;
 		}
@@ -596,60 +653,91 @@ pmem_map_file(const char *path, size_t len, int flags, mode_t mode,
 
 	if (flags & PMEM_FILE_CREATE) {
 		if (flags & PMEM_FILE_SPARSE) {
-			if (ftruncate(fd, (off_t)len) != 0) {
+			if (os_ftruncate(fd, (off_t)len) != 0) {
 				ERR("!ftruncate");
 				goto err;
 			}
 		} else {
-			if ((errno = posix_fallocate(fd, 0, (off_t)len)) != 0) {
+			if ((errno = os_posix_fallocate(fd, 0,
+							(off_t)len)) != 0) {
 				ERR("!posix_fallocate");
 				goto err;
 			}
 		}
 	} else {
-		util_stat_t stbuf;
-
-		if (util_fstat(fd, &stbuf) < 0) {
-			ERR("!fstat %s", path);
-			goto err;
-		}
-
-		if (stbuf.st_size < 0) {
+		ssize_t actual_size = util_file_get_size(path);
+		if (actual_size < 0) {
 			ERR("stat %s: negative size", path);
 			errno = EINVAL;
 			goto err;
 		}
 
-		len = (size_t)stbuf.st_size;
+		len = (size_t)actual_size;
 	}
 
 	void *addr;
-	if ((addr = util_map(fd, len, 0, 0)) == NULL)
+	if ((addr = util_map(fd, len, MAP_SHARED, 0, 0)) == NULL)
 		goto err;    /* util_map() set errno, called LOG */
+
+#ifndef _WIN32
+	/* XXX only Device DAX regions (PMEM) are tracked so far */
+	if (is_dev_dax && util_range_register(addr, len) != 0) {
+		LOG(2, "can't track mapped region");
+	}
+#endif
 
 	if (mapped_lenp != NULL)
 		*mapped_lenp = len;
 
 	if (is_pmemp != NULL)
-		*is_pmemp = pmem_is_pmem(addr, len);
+		*is_pmemp = is_dev_dax || pmem_is_pmem(addr, len);
 
 	LOG(3, "returning %p", addr);
 
 	VALGRIND_REGISTER_PMEM_MAPPING(addr, len);
 	VALGRIND_REGISTER_PMEM_FILE(fd, addr, len, 0);
 
-	(void) close(fd);
+	(void) os_close(fd);
 
 	return addr;
 
 err:
 	oerrno = errno;
-	(void) close(fd);
+	(void) os_close(fd);
 	if (delete_on_err)
-		(void) unlink(path);
+		(void) os_unlink(path);
 	errno = oerrno;
 	return NULL;
 }
+
+#ifndef _WIN32
+/*
+ * pmem_map_file -- create or open the file and map it to memory
+ */
+void *
+pmem_map_file(const char *path, size_t len, int flags,
+	mode_t mode, size_t *mapped_lenp, int *is_pmemp)
+{
+	return pmem_map_fileU(path, len, flags, mode, mapped_lenp, is_pmemp);
+}
+#else
+/*
+ * pmem_map_fileW -- create or open the file and map it to memory
+ */
+void *
+pmem_map_fileW(const wchar_t *path, size_t len, int flags, mode_t mode,
+		size_t *mapped_lenp, int *is_pmemp) {
+	char *upath = util_toUTF8(path);
+	if (upath == NULL)
+		return NULL;
+
+	void *ret = pmem_map_fileU(upath, len, flags, mode, mapped_lenp,
+					is_pmemp);
+
+	util_free_UTF8(upath);
+	return ret;
+}
+#endif
 
 /*
  * pmem_unmap -- unmap the specified region
@@ -659,11 +747,11 @@ pmem_unmap(void *addr, size_t len)
 {
 	LOG(3, "addr %p len %zu", addr, len);
 
-	int ret = util_unmap(addr, len);
-
+#ifndef _WIN32
+	util_range_unregister(addr, len);
+#endif
 	VALGRIND_REMOVE_PMEM_MAPPING(addr, len);
-
-	return ret;
+	return util_unmap(addr, len);
 }
 
 /*
@@ -912,6 +1000,8 @@ static void *(*Func_memmove_nodrain)
 void *
 pmem_memmove_nodrain(void *pmemdest, const void *src, size_t len)
 {
+	LOG(15, "pmemdest %p src %p len %zu", pmemdest, src, len);
+
 	return Func_memmove_nodrain(pmemdest, src, len);
 }
 
@@ -1072,6 +1162,8 @@ static void *(*Func_memset_nodrain)
 void *
 pmem_memset_nodrain(void *pmemdest, int c, size_t len)
 {
+	LOG(15, "pmemdest %p c 0x%x len %zu", pmemdest, c, len);
+
 	return Func_memset_nodrain(pmemdest, c, len);
 }
 
@@ -1089,20 +1181,50 @@ pmem_memset_persist(void *pmemdest, int c, size_t len)
 }
 
 /*
+ * pmem_log_cpuinfo -- log the results of cpu dispatching decisions,
+ * and verify them
+ */
+static void
+pmem_log_cpuinfo(void)
+{
+	LOG(3, NULL);
+
+	if (Func_flush == flush_clwb)
+		LOG(3, "using clwb");
+	else if (Func_flush == flush_clflushopt)
+		LOG(3, "using clflushopt");
+	else if (Func_flush == flush_clflush)
+		LOG(3, "using clflush");
+	else if (Func_flush == flush_empty)
+		LOG(3, "not flushing CPU cache");
+	else
+		FATAL("invalid flush function address");
+
+	if (Func_memmove_nodrain == memmove_nodrain_movnt)
+		LOG(3, "using movnt");
+	else if (Func_memmove_nodrain == memmove_nodrain_normal)
+		LOG(3, "not using movnt");
+	else
+		FATAL("invalid memove_nodrain function address");
+}
+
+/*
  * pmem_get_cpuinfo -- configure libpmem based on CPUID
  */
 static void
 pmem_get_cpuinfo(void)
 {
+	LOG(3, NULL);
+
 	if (is_cpu_clflush_present()) {
-		Func_is_pmem = is_pmem_proc;
+		Func_is_pmem = is_pmem_detect;
 		LOG(3, "clflush supported");
 	}
 
 	if (is_cpu_clflushopt_present()) {
 		LOG(3, "clflushopt supported");
 
-		char *e = getenv("PMEM_NO_CLFLUSHOPT");
+		char *e = os_getenv("PMEM_NO_CLFLUSHOPT");
 		if (e && strcmp(e, "1") == 0)
 			LOG(3, "PMEM_NO_CLFLUSHOPT forced no clflushopt");
 		else {
@@ -1114,7 +1236,7 @@ pmem_get_cpuinfo(void)
 	if (is_cpu_clwb_present()) {
 		LOG(3, "clwb supported");
 
-		char *e = getenv("PMEM_NO_CLWB");
+		char *e = os_getenv("PMEM_NO_CLWB");
 		if (e && strcmp(e, "1") == 0)
 			LOG(3, "PMEM_NO_CLWB forced no clwb");
 		else {
@@ -1122,34 +1244,6 @@ pmem_get_cpuinfo(void)
 			Func_predrain_fence = predrain_fence_sfence;
 		}
 	}
-
-	if (Func_flush == flush_clwb)
-		LOG(3, "using clwb");
-	else if (Func_flush == flush_clflushopt)
-		LOG(3, "using clflushopt");
-	else if (Func_flush == flush_clflush)
-		LOG(3, "using clflush");
-	else
-		ASSERT(0);
-
-	if (is_cpu_sse2_present()) {
-		LOG(3, "movnt supported");
-
-		char *e = getenv("PMEM_NO_MOVNT");
-		if (e && strcmp(e, "1") == 0)
-			LOG(3, "PMEM_NO_MOVNT forced no movnt");
-		else {
-			Func_memmove_nodrain = memmove_nodrain_movnt;
-			Func_memset_nodrain = memset_nodrain_movnt;
-		}
-	}
-
-	if (Func_memmove_nodrain == memmove_nodrain_movnt)
-		LOG(3, "using movnt");
-	else if (Func_memmove_nodrain == memmove_nodrain_normal)
-		LOG(3, "not using movnt");
-	else
-		ASSERT(0);
 }
 
 /*
@@ -1162,13 +1256,20 @@ pmem_init(void)
 
 	pmem_get_cpuinfo();
 
+	char *e = os_getenv("PMEM_NO_FLUSH");
+	if (e && strcmp(e, "1") == 0) {
+		LOG(3, "forced not flushing CPU cache");
+		Func_flush = flush_empty;
+		Func_predrain_fence = predrain_fence_sfence;
+	}
+
 	/*
 	 * For testing, allow overriding the default threshold
 	 * for using non-temporal stores in pmem_memcpy_*(), pmem_memmove_*()
 	 * and pmem_memset_*().
 	 * It has no effect if movnt is not supported or disabled.
 	 */
-	char *ptr = getenv("PMEM_MOVNT_THRESHOLD");
+	char *ptr = os_getenv("PMEM_MOVNT_THRESHOLD");
 	if (ptr) {
 		long long val = atoll(ptr);
 
@@ -1179,6 +1280,22 @@ pmem_init(void)
 			Movnt_threshold = (size_t)val;
 		}
 	}
+
+	ptr = os_getenv("PMEM_NO_MOVNT");
+	if (ptr && strcmp(ptr, "1") == 0)
+		LOG(3, "PMEM_NO_MOVNT forced no movnt");
+	else {
+		Func_memmove_nodrain = memmove_nodrain_movnt;
+		Func_memset_nodrain = memset_nodrain_movnt;
+	}
+
+	pmem_log_cpuinfo();
+
+#if defined(_WIN32) && (NTDDI_VERSION >= NTDDI_WIN10_RS1)
+	Func_qvmi = (PQVM)GetProcAddress(
+			GetModuleHandle(TEXT("KernelBase.dll")),
+			"QueryVirtualMemoryInformation");
+#endif
 }
 
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,13 +34,23 @@
  * out.h -- definitions for "out" module
  */
 
+#ifndef NVML_OUT_H
+#define NVML_OUT_H 1
+
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdlib.h>
 
-#ifndef _WIN32
-#define DIR_SEPARATOR '/'
+#include "util.h"
+
+/*
+ * Suppress errors which are after appropriate ASSERT* macro for nondebug
+ * builds.
+ */
+#if !defined(DEBUG) && (defined(__clang_analyzer__) || defined(__COVERITY__))
+#define OUT_FATAL_DISCARD_NORETURN __attribute__((noreturn))
 #else
-#define DIR_SEPARATOR '\\'
+#define OUT_FATAL_DISCARD_NORETURN
 #endif
 
 #ifdef DEBUG
@@ -70,7 +80,7 @@ out_nonl_discard(int level, const char *fmt, ...)
 	(void) fmt;
 }
 
-static __attribute__((always_inline)) inline void
+static __attribute__((always_inline)) OUT_FATAL_DISCARD_NORETURN inline void
 out_fatal_discard(const char *file, int line, const char *func,
 		const char *fmt, ...)
 {
@@ -151,7 +161,7 @@ out_fatal_abort(const char *file, int line, const char *func,
 		/* See comment in ASSERT. */\
 		if (__builtin_constant_p(cnd))\
 			ASSERT_COMPILE_ERROR_ON(cnd);\
-		ASSERTinfo_rt(cnd);\
+		ASSERTinfo_rt(cnd, info);\
 	} while (0)
 
 /* assert two integer values are equal */
@@ -179,20 +189,32 @@ void out_init(const char *log_prefix, const char *log_level_var,
 		const char *log_file_var, int major_version,
 		int minor_version);
 void out_fini(void);
-void out(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-void out_nonl(int level, const char *fmt,
-	...) __attribute__((format(printf, 2, 3)));
+void out(const char *fmt, ...) FORMAT_PRINTF(1, 2);
+void out_nonl(int level, const char *fmt, ...) FORMAT_PRINTF(2, 3);
 void out_log(const char *file, int line, const char *func, int level,
-	const char *fmt, ...)
-	__attribute__((format(printf, 5, 6)));
+	const char *fmt, ...) FORMAT_PRINTF(5, 6);
 void out_err(const char *file, int line, const char *func,
-	const char *fmt, ...)
-	__attribute__((format(printf, 4, 5)));
+	const char *fmt, ...) FORMAT_PRINTF(4, 5);
 void out_fatal(const char *file, int line, const char *func,
-	const char *fmt, ...)
-	__attribute__((format(printf, 4, 5)))
+	const char *fmt, ...) FORMAT_PRINTF(4, 5)
 	__attribute__((noreturn));
 void out_set_print_func(void (*print_func)(const char *s));
 void out_set_vsnprintf_func(int (*vsnprintf_func)(char *str, size_t size,
 	const char *format, va_list ap));
+
+#ifdef _WIN32
+#ifndef NVML_UTF8_API
+#define out_get_errormsg out_get_errormsgW
+#else
+#define out_get_errormsg out_get_errormsgU
+#endif
+#endif
+
+#ifndef _WIN32
 const char *out_get_errormsg(void);
+#else
+const char *out_get_errormsgU(void);
+const wchar_t *out_get_errormsgW(void);
+#endif
+
+#endif

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,7 +43,8 @@
 #include <ctype.h>
 #include <err.h>
 #include <elf.h>
-
+#include <endian.h>
+#include <inttypes.h>
 #include "common.h"
 #include "output.h"
 
@@ -66,7 +67,7 @@
 static char out_indent_str[MAX_INDENT + 1];
 static int out_indent_level;
 static int out_vlevel;
-static unsigned int out_column_width = 20;
+static unsigned out_column_width = 20;
 static FILE *out_fh;
 static const char *out_prefix;
 
@@ -87,7 +88,7 @@ outv_check(int vlevel)
  * See: outv_field() function
  */
 void
-out_set_col_width(unsigned int col_width)
+out_set_col_width(unsigned col_width)
 {
 	out_column_width = col_width;
 }
@@ -136,26 +137,31 @@ outv_err(const char *fmt, ...)
 }
 
 /*
- * out_err -- for src/common
- */
-void
-out_err(const char *file, int line, const char *func,
-	const char *fmt, ...)
-{
-	/* stub */
-}
-
-
-/*
  * outv_err_vargs -- print error message
  */
 void
 outv_err_vargs(const char *fmt, va_list ap)
 {
+	char *_str = strdup(fmt);
+	if (!_str)
+		err(1, "strdup");
+	char *str = _str;
+
 	fprintf(stderr, "error: ");
-	vfprintf(stderr, fmt, ap);
-	if (!strchr(fmt, '\n'))
-		fprintf(stderr, "\n");
+	int errstr = str[0] == '!';
+	if (errstr)
+		str++;
+
+	char *nl = strchr(str, '\n');
+	if (nl)
+		*nl = '\0';
+
+	vfprintf(stderr, str, ap);
+	if (errstr)
+		fprintf(stderr, ": %s", strerror(errno));
+	fprintf(stderr, "\n");
+
+	free(_str);
 }
 
 /*
@@ -276,9 +282,12 @@ const char *
 out_get_percentage(double perc)
 {
 	static char str_buff[STR_MAX] = {0, };
+	int ret = 0;
 
 	if (perc > 0.0 && perc < 0.0001) {
-		snprintf(str_buff, STR_MAX, "%e %%", perc);
+		ret = snprintf(str_buff, STR_MAX, "%e %%", perc);
+		if (ret < 0)
+			return "";
 	} else {
 		int decimal = 0;
 		if (perc >= 100.0 || perc == 0.0)
@@ -286,7 +295,9 @@ out_get_percentage(double perc)
 		else
 			decimal = 6;
 
-		snprintf(str_buff, STR_MAX, "%.*f %%", decimal, perc);
+		ret = snprintf(str_buff, STR_MAX, "%.*f %%", decimal, perc);
+		if (ret < 0 || ret >= STR_MAX)
+			return "";
 	}
 
 	return str_buff;
@@ -307,9 +318,10 @@ out_get_size_str(uint64_t size, int human)
 		'K', 'M', 'G', 'T', '\0'
 	};
 	const int nunits = sizeof(units) / sizeof(units[0]);
+	int ret = 0;
 
 	if (!human) {
-		snprintf(str_buff, STR_MAX, "%ld", size);
+		ret = snprintf(str_buff, STR_MAX, "%"PRIu64, size);
 	} else {
 		int i = -1;
 		double dsize = (double)size;
@@ -323,15 +335,18 @@ out_get_size_str(uint64_t size, int human)
 
 		if (i >= 0 && i < nunits)
 			if (human == 1)
-				snprintf(str_buff, STR_MAX, "%.1f%c",
+				ret = snprintf(str_buff, STR_MAX, "%.1f%c",
 					dsize, units[i]);
 			else
-				snprintf(str_buff, STR_MAX, "%.1f%c [%lu]",
-					dsize, units[i], size);
+				ret = snprintf(str_buff, STR_MAX, "%.1f%c [%"
+					PRIu64"]", dsize, units[i], size);
 		else
-			snprintf(str_buff, STR_MAX, "%ld",
+			ret = snprintf(str_buff, STR_MAX, "%"PRIu64,
 					size);
 	}
+
+	if (ret < 0 || ret >= STR_MAX)
+		return "";
 
 	return str_buff;
 }
@@ -359,30 +374,24 @@ const char *
 out_get_time_str(time_t time)
 {
 	static char str_buff[STR_MAX] = {0, };
-	struct tm *tm = localtime(&time);
+	struct tm *tm = util_localtime(&time);
 
-	if (tm)
+	if (tm) {
 		strftime(str_buff, STR_MAX, TIME_STR_FMT, tm);
-	else
-		snprintf(str_buff, STR_MAX, "unknown");
+	} else {
+		int ret = snprintf(str_buff, STR_MAX, "unknown");
+		if (ret < 0 || ret >= STR_MAX)
+			return "";
+	}
 
 	return str_buff;
-}
-
-/*
- * out_get_printable_ascii -- convert non-printable ascii to dot '.'
- */
-static char
-out_get_printable_ascii(char c)
-{
-	return isprint(c) ? c : '.';
 }
 
 /*
  * out_get_ascii_str -- get string with printable ASCII dump buffer
  *
  * Convert non-printable ASCII characters to dot '.'
- * See: out_get_printable_ascii() function.
+ * See: util_get_printable_ascii() function.
  */
 static int
 out_get_ascii_str(char *str, size_t str_len, const uint8_t *datap, size_t len)
@@ -395,7 +404,7 @@ out_get_ascii_str(char *str, size_t str_len, const uint8_t *datap, size_t len)
 		return -1;
 
 	for (i = 0; i < len; i++) {
-		pch = out_get_printable_ascii((char)datap[i]);
+		pch = util_get_printable_ascii((char)datap[i]);
 		int t = snprintf(str + c, str_len - (size_t)c, "%c", pch);
 		if (t < 0)
 			return -1;
@@ -485,7 +494,7 @@ outv_hexdump(int vlevel, const void *addr, size_t len, size_t offset, int sep)
 				HEXDUMP_ROW_ASCII_LEN, datap + curr, curr_len);
 
 			if (ra && rh)
-				n = fprintf(out_fh, "%08lx  %-*s|%-*s|\n",
+				n = fprintf(out_fh, "%08zx  %-*s|%-*s|\n",
 					curr + offset,
 					HEXDUMP_ROW_HEX_LEN, row_hex_str,
 					HEXDUMP_ROW_WIDTH, row_ascii_str);
@@ -510,20 +519,40 @@ const char *
 out_get_checksum(void *addr, size_t len, uint64_t *csump)
 {
 	static char str_buff[STR_MAX] = {0, };
+	int ret = 0;
+	/*
+	 * The memory range can be mapped with PROT_READ, so allocate a new
+	 * buffer for the checksum and calculate there.
+	 */
+
+	void *buf = Malloc(len);
+	if (buf == NULL) {
+		ret = snprintf(str_buff, STR_MAX, "failed");
+		if (ret < 0 || ret >= STR_MAX)
+			return "";
+		return str_buff;
+	}
+	memcpy(buf, addr, len);
+	uint64_t *ncsump = (uint64_t *)
+		((char *)buf + ((char *)csump - (char *)addr));
+
 	uint64_t csum = *csump;
 
 	/* validate checksum and get correct one */
-	int valid = util_validate_checksum(addr, len, csump);
+	int valid = util_validate_checksum(buf, len, ncsump);
 
 	if (valid)
-		snprintf(str_buff, STR_MAX, "0x%08x [OK]", (uint32_t)csum);
+		ret = snprintf(str_buff, STR_MAX, "0x%" PRIx64" [OK]",
+			le64toh(csum));
 	else
-		snprintf(str_buff, STR_MAX,
-			"0x%08x [wrong! should be: 0x%08x]",
-			(uint32_t)csum, (uint32_t)*csump);
+		ret = snprintf(str_buff, STR_MAX,
+			"0x%" PRIx64 " [wrong! should be: 0x%" PRIx64 "]",
+			le64toh(csum), le64toh(*ncsump));
 
-	/* restore original checksum */
-	*csump = csum;
+	Free(buf);
+
+	if (ret < 0 || ret >= STR_MAX)
+		return "";
 
 	return str_buff;
 }
@@ -546,11 +575,14 @@ out_get_btt_map_entry(uint32_t map)
 
 	uint32_t lba = map & BTT_MAP_ENTRY_LBA_MASK;
 
-	snprintf(str_buff, STR_MAX, "0x%08x state: %s", lba,
+	int ret = snprintf(str_buff, STR_MAX, "0x%08x state: %s", lba,
 			is_init ? "init" :
 			is_zero ? "zero" :
 			is_error ? "error" :
 			is_normal ? "normal" : "unknown");
+
+	if (ret < 0 || ret >= STR_MAX)
+		return "";
 
 	return str_buff;
 }
@@ -631,7 +663,7 @@ out_get_tx_state_str(uint64_t state)
  * out_get_chunk_type_str -- get chunk type string
  */
 const char *
-out_get_chunk_type_str(unsigned type)
+out_get_chunk_type_str(enum chunk_type type)
 {
 	switch (type) {
 	case CHUNK_TYPE_FOOTER:
@@ -654,7 +686,12 @@ out_get_chunk_type_str(unsigned type)
 const char *
 out_get_chunk_flags(uint16_t flags)
 {
-	return flags & CHUNK_FLAG_ZEROED ? "zeroed" : "";
+	if (flags & CHUNK_FLAG_COMPACT_HEADER)
+		return "compact header";
+	else if (flags & CHUNK_FLAG_HEADER_NONE)
+		return "header none";
+
+	return "";
 }
 
 /*
@@ -679,7 +716,10 @@ out_get_zone_magic_str(uint32_t magic)
 		break;
 	}
 
-	snprintf(str_buff, STR_MAX, "0x%08x [%s]", magic, correct);
+	int ret = snprintf(str_buff, STR_MAX, "0x%08x [%s]", magic, correct);
+
+	if (ret < 0 || ret >= STR_MAX)
+		return "";
 
 	return str_buff;
 }
@@ -692,39 +732,30 @@ out_get_pmemoid_str(PMEMoid oid, uint64_t uuid_lo)
 {
 	static char str_buff[STR_MAX] = {0, };
 	int free_cor = 0;
+	int ret = 0;
 	char *correct = "OK";
 	if (oid.pool_uuid_lo && oid.pool_uuid_lo != uuid_lo) {
-		snprintf(str_buff, STR_MAX, "wrong! should be 0x%016lx",
-				uuid_lo);
+		ret = snprintf(str_buff, STR_MAX,
+			"wrong! should be 0x%016"PRIx64, uuid_lo);
+		if (ret < 0 || ret >= STR_MAX)
+			err(1, "!snprintf");
 		correct = strdup(str_buff);
 		if (!correct)
 			err(1, "Cannot allocate memory for PMEMoid string\n");
 		free_cor = 1;
 	}
 
-	snprintf(str_buff, STR_MAX, "off: 0x%016lx pool_uuid_lo: 0x%016lx [%s]",
-			oid.off, oid.pool_uuid_lo, correct);
+	ret = snprintf(str_buff, STR_MAX,
+			"off: 0x%016"PRIx64" pool_uuid_lo: 0x%016"
+			PRIx64" [%s]", oid.off, oid.pool_uuid_lo, correct);
 
 	if (free_cor)
 		free(correct);
 
-	return str_buff;
-}
+	if (ret < 0 || ret >= STR_MAX)
+		err(1, "!snprintf");
 
-/*
- * out_get_internal_type_str -- get internal type string
- */
-const char *
-out_get_internal_type_str(enum internal_type type)
-{
-	switch (type) {
-	case TYPE_NONE:
-		return "none";
-	case TYPE_ALLOCATED:
-		return "allocated";
-	default:
-		return "unknonw";
-	}
+	return str_buff;
 }
 
 /*
@@ -733,6 +764,7 @@ out_get_internal_type_str(enum internal_type type)
 const char *
 out_get_ei_class_str(uint8_t ei_class)
 {
+
 	switch (ei_class) {
 	case ELFCLASSNONE:
 		return "none";
@@ -779,7 +811,9 @@ out_get_e_machine_str(uint16_t e_machine)
 		if (e_machine >= EM_NUM) {
 			return "unknown";
 		} else {
-			snprintf(str_buff, STR_MAX, "%u", e_machine);
+			int ret = snprintf(str_buff, STR_MAX, "%u", e_machine);
+			if (ret < 0 || ret >= STR_MAX)
+				return "";
 			return str_buff;
 		}
 	}
@@ -792,12 +826,16 @@ const char *
 out_get_alignment_desc_str(uint64_t ad, uint64_t valid_ad)
 {
 	static char str_buff[STR_MAX] = {0, };
+	int ret = 0;
 
 	if (ad == valid_ad)
-		snprintf(str_buff, STR_MAX, "0x%016lx [OK]", ad);
+		ret = snprintf(str_buff, STR_MAX, "0x%016"PRIx64"[OK]", ad);
 	else
-		snprintf(str_buff, STR_MAX, "0x%016lx "
-			"[wrong! should be 0x%016lx]", ad, valid_ad);
+		ret = snprintf(str_buff, STR_MAX, "0x%016"PRIx64" "
+			"[wrong! should be 0x%016"PRIx64"]", ad, valid_ad);
+
+	if (ret < 0 || ret >= STR_MAX)
+		return "";
 
 	return str_buff;
 }

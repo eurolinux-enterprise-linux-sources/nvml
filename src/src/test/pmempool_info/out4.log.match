@@ -1,3 +1,8 @@
+Part file:
+path                     : $(nW)file.pool
+type                     : regular file
+size                     : $(nW)
+
 POOL Header:
 Signature                : PMEMBLK
 Major                    : $(*)
@@ -47,6 +52,11 @@ Zeroed blocks            : $(*) [100 %]
 Error blocks             : 0 [0 %]
 Blocks without flag      : 0 [0 %]
 
+Part file:
+path                     : $(nW)file.pool
+type                     : regular file
+size                     : $(nW)
+
 POOL Header:
 Signature                : PMEMLOG
 Major                    : $(*)
@@ -66,12 +76,12 @@ Data                     : $(*)
 Machine                  : $(*)
 Checksum                 : $(*) [OK]
 
-PMEM LOG header:
+PMEM LOG Header:
 Start offset             : $(*)
 Write offset             : $(*) [OK]
 End offset               : $(*)
 
-PMEM LOG statistics:
+PMEM LOG Statistics:
 Total                    : $(*)
 Available                : $(*) [100 %]
 Used                     : 0 [0 %]

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,7 +34,12 @@
  * log.h -- internal definitions for libpmem log module
  */
 
-#include <pthread.h>
+#include <stdint.h>
+#include <stddef.h>
+
+#include "util.h"
+#include "os_thread.h"
+#include "pool_hdr.h"
 
 #define PMEMLOG_LOG_PREFIX "libpmemlog"
 #define PMEMLOG_LOG_LEVEL_VAR "PMEMLOG_LOG_LEVEL"
@@ -46,8 +51,6 @@
 #define LOG_FORMAT_COMPAT 0x0000
 #define LOG_FORMAT_INCOMPAT 0x0000
 #define LOG_FORMAT_RO_COMPAT 0x0000
-
-extern unsigned long long Pagesize;
 
 struct pmemlog {
 	struct pool_hdr hdr;	/* memory pool header */
@@ -62,11 +65,14 @@ struct pmemlog {
 	size_t size;			/* size of mapped region */
 	int is_pmem;			/* true if pool is PMEM */
 	int rdonly;			/* true if pool is opened read-only */
-	pthread_rwlock_t *rwlockp;	/* pointer to RW lock */
+	os_rwlock_t *rwlockp;	/* pointer to RW lock */
+	int is_dev_dax;			/* true if mapped on device dax */
+
+	struct pool_set *set;		/* pool set info */
 };
 
 /* data area starts at this alignment after the struct pmemlog above */
 #define LOG_FORMAT_DATA_ALIGN ((uintptr_t)4096)
 
-void pmemlog_convert2h(struct pmemlog *plp);
-void pmemlog_convert2le(struct pmemlog *plp);
+void log_convert2h(struct pmemlog *plp);
+void log_convert2le(struct pmemlog *plp);

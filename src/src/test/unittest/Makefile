@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -37,9 +37,14 @@
 TOP := $(dir $(lastword $(MAKEFILE_LIST)))../../..
 include $(TOP)/src/common.inc
 
+vpath %.c $(TOP)/src/common
+vpath %.h $(TOP)/src/common
+
 TARGET = libut.a
-OBJS = ut.o ut_alloc.o ut_file.o ut_pthread.o ut_signal.o ut_backtrace.o
+OBJS = ut.o ut_alloc.o ut_file.o ut_pthread.o ut_signal.o ut_backtrace.o\
+	os_linux.o os_thread_linux.o
 CFLAGS = -I$(TOP)/src/include
+CFLAGS += -I$(TOP)/src/common
 CFLAGS += -std=gnu99
 CFLAGS += -ggdb
 CFLAGS += -Wall
@@ -73,6 +78,12 @@ endif
 endif
 endif
 
+ifeq ($(COVERAGE),1)
+CFLAGS += $(GCOV_CFLAGS)
+LDFLAGS += $(GCOV_LDFLAGS)
+LIBS += $(GCOV_LIBS)
+endif
+
 CFLAGS += $(EXTRA_CFLAGS)
 
 all test: $(TARGET)
@@ -80,21 +91,32 @@ all test: $(TARGET)
 $(TARGET): $(OBJS)
 	$(AR) rv $@ $(OBJS)
 
+ifneq ($(CSTYLEON),0)
+$(TARGET): unittest.htmp
+endif
+
 objdir=.
 
 .c.o:
+	$(call check-cstyle, $<)
 	@mkdir -p .deps
-	$(CC) -MD -c $(CFLAGS) $(INCS) $(COMMONINCS) $< -o $@
+	$(CC) -MD -c $(CFLAGS) $(INCS) $(COMMONINCS) $(call coverage-path, $<) -o $@
 	$(create-deps)
 
+%.htmp: %.h
+	$(call check-cstyle, $<, $@)
+
 clean:
-	$(RM) *.o core a.out
+	$(RM) *.o core a.out unittest.htmp
 
 clobber: clean
 	$(RM) $(TARGET)
 	$(RM) -r .deps
 
 test check pcheck: all
+
+sparse:
+	$(sparse-c)
 
 .PHONY: all test check clean clobber cstyle format pcheck
 

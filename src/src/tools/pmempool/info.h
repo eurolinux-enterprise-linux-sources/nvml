@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,6 +34,7 @@
  * info.h -- pmempool info command header file
  */
 
+#include "alloc_class.h"
 
 /*
  * Verbose levels used in application:
@@ -57,19 +58,11 @@
 #define VERBOSE_MAX	2
 
 /*
- * The MAX_CLASS_STATS variable defines how many allocation classes can be
- * handled. Because the biggest reasonable run block size is 32 kB the
- * allocation classes are pretty much capped at 512. Doubled for good measure.
- */
-#define MAX_CLASS_STATS\
-	((int)((CHUNKSIZE / RUN_UNIT_MAX / ALLOC_BLOCK_SIZE) * 2))
-
-/*
  * pmempool_info_args -- structure for storing command line arguments
  */
 struct pmempool_info_args {
 	char *file;		/* input file */
-	unsigned int col_width;	/* column width for printing fields */
+	unsigned col_width;	/* column width for printing fields */
 	bool human;		/* sizes in human-readable formats */
 	bool force;		/* force parsing pool */
 	pmem_pool_type_t type;	/* forced pool type */
@@ -132,7 +125,7 @@ struct pmem_obj_zone_stats {
 	uint64_t n_chunks_type[MAX_CHUNK_TYPE];
 	uint64_t size_chunks;
 	uint64_t size_chunks_type[MAX_CHUNK_TYPE];
-	struct pmem_obj_class_stats class_stats[MAX_CLASS_STATS];
+	struct pmem_obj_class_stats class_stats[MAX_ALLOCATION_CLASSES];
 };
 
 struct pmem_obj_type_stats {
@@ -167,6 +160,8 @@ struct pmem_info {
 	} blk;
 	struct {
 		struct pmemobjpool *pop;
+		struct palloc_heap *heap;
+		struct alloc_class_collection *alloc_classes;
 		size_t size;
 		struct pmem_obj_stats stats;
 		uint64_t uuid_lo;

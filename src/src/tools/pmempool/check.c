@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,6 +39,8 @@
 #include "common.h"
 #include "check.h"
 #include "output.h"
+#include "set.h"
+#include "file.h"
 
 #include "libpmempool.h"
 
@@ -52,9 +54,9 @@ typedef enum
 } check_result_t;
 
 /*
- * pmempool_check -- context and arguments for check command
+ * pmempool_check_context -- context and arguments for check command
  */
-struct pmempool_check {
+struct pmempool_check_context {
 	int verbose;		/* verbosity level */
 	char *fname;		/* file name */
 	struct pool_set_file *pfile;
@@ -69,7 +71,7 @@ struct pmempool_check {
 /*
  * pmempool_check_default -- default arguments for check command
  */
-static const struct pmempool_check pmempool_check_default = {
+static const struct pmempool_check_context pmempool_check_default = {
 	.verbose	= 1,
 	.fname		= NULL,
 	.repair		= false,
@@ -103,15 +105,15 @@ static const char *help_str =
  * long_options -- command line options
  */
 static const struct option long_options[] = {
-	{"repair",	no_argument,		0,	'r'},
-	{"yes",		no_argument,		0,	'y'},
-	{"no-exec",	no_argument,		0,	'N'},
-	{"backup",	required_argument,	0,	'b'},
-	{"advanced",	no_argument,		0,	'a'},
-	{"quiet",	no_argument,		0,	'q'},
-	{"verbose",	no_argument,		0,	'v'},
-	{"help",	no_argument,		0,	'h'},
-	{0,		0,			0,	 0 },
+	{"repair",	no_argument,		NULL,	'r'},
+	{"yes",		no_argument,		NULL,	'y'},
+	{"no-exec",	no_argument,		NULL,	'N'},
+	{"backup",	required_argument,	NULL,	'b'},
+	{"advanced",	no_argument,		NULL,	'a'},
+	{"quiet",	no_argument,		NULL,	'q'},
+	{"verbose",	no_argument,		NULL,	'v'},
+	{"help",	no_argument,		NULL,	'h'},
+	{NULL,		0,			NULL,	 0 },
 };
 
 /*
@@ -147,7 +149,7 @@ pmempool_check_help(char *appname)
  * pmempool_check_parse_args -- parse command line arguments
  */
 static int
-pmempool_check_parse_args(struct pmempool_check *pcp, char *appname,
+pmempool_check_parse_args(struct pmempool_check_context *pcp, char *appname,
 		int argc, char *argv[])
 {
 	int opt;
@@ -217,7 +219,7 @@ static check_result_t pmempool_check_2_check_res_t[] =
 static char *
 check_ask(const char *msg)
 {
-	char answer = ask_Yn('?', msg);
+	char answer = ask_Yn('?', "%s", msg);
 
 	switch (answer) {
 	case 'y':
@@ -230,7 +232,7 @@ check_ask(const char *msg)
 }
 
 static check_result_t
-pmempool_check_perform(struct pmempool_check *pc)
+pmempool_check_perform(struct pmempool_check_context *pc)
 {
 	struct pmempool_check_args args = {
 		.path	= pc->fname,
@@ -286,7 +288,7 @@ pmempool_check_func(char *appname, int argc, char *argv[])
 {
 	int ret = 0;
 	check_result_t res = CHECK_RESULT_CONSISTENT;
-	struct pmempool_check pc = pmempool_check_default;
+	struct pmempool_check_context pc = pmempool_check_default;
 
 	/* parse command line arguments */
 	ret = pmempool_check_parse_args(&pc, appname, argc, argv);
@@ -318,7 +320,10 @@ pmempool_check_func(char *appname, int argc, char *argv[])
 	case CHECK_RESULT_ERROR:
 		if (errno)
 			outv_err("%s\n", strerror(errno));
-		outv_err("repairing failed\n");
+		if (pc.repair)
+			outv_err("repairing failed\n");
+		else
+			outv_err("checking consistency failed\n");
 		ret = -1;
 		break;
 	}

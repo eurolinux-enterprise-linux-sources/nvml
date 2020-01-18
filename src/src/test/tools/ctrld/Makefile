@@ -1,4 +1,4 @@
-# Copyright 2016, Intel Corporation
+# Copyright 2016-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -31,10 +31,16 @@
 # Makefile -- Makefile for ctrld tool
 #
 
+SCP_TO_REMOTE_NODES = y
+
 TOP = ../../../..
+
+vpath %.c $(TOP)/src/common
+vpath %.h $(TOP)/src/common
+CFLAGS += -I$(TOP)/src/common
 
 TARGET = ctrld
 
-OBJS = ctrld.o
+OBJS = ctrld.o os_linux.o
 
 include $(TOP)/src/tools/Makefile.inc

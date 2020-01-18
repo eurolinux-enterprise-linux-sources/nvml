@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,8 +39,7 @@
 
 #include "libpmemblk.h"
 
-#include "util.h"
-#include "out.h"
+#include "pmemcommon.h"
 #include "blk.h"
 
 /*
@@ -52,11 +51,10 @@ ATTR_CONSTRUCTOR
 void
 libpmemblk_init(void)
 {
-	out_init(PMEMBLK_LOG_PREFIX, PMEMBLK_LOG_LEVEL_VAR,
+	common_init(PMEMBLK_LOG_PREFIX, PMEMBLK_LOG_LEVEL_VAR,
 			PMEMBLK_LOG_FILE_VAR, PMEMBLK_MAJOR_VERSION,
 			PMEMBLK_MINOR_VERSION);
 	LOG(3, NULL);
-	util_init();
 }
 
 /*
@@ -69,14 +67,17 @@ void
 libpmemblk_fini(void)
 {
 	LOG(3, NULL);
-	out_fini();
+	common_fini();
 }
 
 /*
- * pmemblk_check_version -- see if lib meets application version requirements
+ * pmemblk_check_versionU -- see if lib meets application version requirements
  */
+#ifndef _WIN32
+static inline
+#endif
 const char *
-pmemblk_check_version(unsigned major_required, unsigned minor_required)
+pmemblk_check_versionU(unsigned major_required, unsigned minor_required)
 {
 	LOG(3, "major_required %u minor_required %u",
 			major_required, minor_required);
@@ -96,6 +97,29 @@ pmemblk_check_version(unsigned major_required, unsigned minor_required)
 	return NULL;
 }
 
+#ifndef _WIN32
+/*
+ * pmemblk_check_version -- see if lib meets application version requirements
+ */
+const char *
+pmemblk_check_version(unsigned major_required, unsigned minor_required)
+{
+	return pmemblk_check_versionU(major_required, minor_required);
+}
+#else
+/*
+ * pmemblk_check_versionW -- see if lib meets application version requirements
+ */
+const wchar_t *
+pmemblk_check_versionW(unsigned major_required, unsigned minor_required)
+{
+	if (pmemblk_check_versionU(major_required, minor_required) != NULL)
+		return out_get_errormsgW();
+	else
+		return NULL;
+}
+#endif
+
 /*
  * pmemblk_set_funcs -- allow overriding libpmemblk's call to malloc, etc.
  */
@@ -112,10 +136,33 @@ pmemblk_set_funcs(
 }
 
 /*
+ * pmemblk_errormsgU -- return last error message
+ */
+#ifndef _WIN32
+static inline
+#endif
+const char *
+pmemblk_errormsgU(void)
+{
+	return out_get_errormsg();
+}
+
+#ifndef _WIN32
+/*
  * pmemblk_errormsg -- return last error message
  */
 const char *
 pmemblk_errormsg(void)
 {
-	return out_get_errormsg();
+	return pmemblk_errormsgU();
 }
+#else
+/*
+ * pmemblk_errormsgW -- return last error message as wchar_t
+ */
+const wchar_t *
+pmemblk_errormsgW(void)
+{
+	return out_get_errormsgW();
+}
+#endif

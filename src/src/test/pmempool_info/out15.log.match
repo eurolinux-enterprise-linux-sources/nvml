@@ -1,3 +1,8 @@
+Part file:
+path                     : $(nW)file.pool
+type                     : regular file
+size                     : $(nW)
+
 POOL Header:
 Signature                : PMEMOBJ
 Major                    : $(*)
@@ -18,7 +23,7 @@ Machine                  : $(*)
 Checksum                 : $(*) [OK]
 
 PMEM OBJ Header:
-Layout                   : pmempool
+Layout                   : pmempool$(*)
 Lanes offset             : $(*)
 Number of lanes          : $(*)
 Heap offset              : $(*)
@@ -28,6 +33,11 @@ Root offset              : $(*)
 
 No root object...
 
+Part file:
+path                     : $(nW)file.pool
+type                     : regular file
+size                     : $(nW)
+
 POOL Header:
 Signature                : PMEMOBJ
 Major                    : $(*)
@@ -48,7 +58,7 @@ Machine                  : $(*)
 Checksum                 : $(*) [OK]
 
 PMEM OBJ Header:
-Layout                   : pmempool
+Layout                   : pmempool$(*)
 Lanes offset             : $(*)
 Number of lanes          : $(*)
 Heap offset              : $(*)
@@ -61,10 +71,6 @@ Offset                   : $(*)
 Size                     : 1
 
  Allocation Header:
- Zone id                  : $(*)
- Chunk id                 : $(*)
  Size                     : $(*)
-
- OOB Header:
- Undo offset              : $(*)
- Type Number              : $(*)
+ Extra                    : $(*)
+ Flags                    : $(*)

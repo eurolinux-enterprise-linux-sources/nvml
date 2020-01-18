@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,6 +34,15 @@
  * memops.h -- aggregated memory operations helper definitions
  */
 
+#ifndef LIBPMEMOBJ_MEMOPS_H
+#define LIBPMEMOBJ_MEMOPS_H 1
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include "pmemops.h"
+#include "redo.h"
+
 enum operation_type {
 	OPERATION_SET,
 	OPERATION_AND,
@@ -62,21 +71,24 @@ enum operation_entry_type {
  * operation_context -- context of an ongoing palloc operation
  */
 struct operation_context {
-	PMEMobjpool *pop;
+	const void *base;
+
+	const struct redo_ctx *redo_ctx;
 	struct redo_log *redo;
+	const struct pmem_ops *p_ops;
 
 	size_t nentries[MAX_OPERATION_ENTRY_TYPE];
 	struct operation_entry
 		entries[MAX_OPERATION_ENTRY_TYPE][MAX_PERSITENT_ENTRIES];
 };
 
-void operation_init(PMEMobjpool *pop, struct operation_context *ctx,
-	struct redo_log *redo);
+void operation_init(struct operation_context *ctx, const void *base,
+	const struct redo_ctx *redo_ctx, struct redo_log *redo);
 void operation_add_entry(struct operation_context *ctx,
 	void *ptr, uint64_t value, enum operation_type type);
 void operation_add_typed_entry(struct operation_context *ctx,
 	void *ptr, uint64_t value,
 	enum operation_type type, enum operation_entry_type en_type);
-void operation_add_entries(struct operation_context *ctx,
-	struct operation_entry *entries, size_t nentries);
 void operation_process(struct operation_context *ctx);
+
+#endif

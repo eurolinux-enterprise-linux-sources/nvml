@@ -1,6 +1,6 @@
 #!/bin/bash -e
 #
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -41,13 +41,19 @@ export VALGRIND_OPTS="--suppressions=excluded-errors.supp --leak-check=full\
 # standard unit test setup
 . ../unittest/unittest.sh
 
+require_test_type medium
+
 require_fs_type any
 # there's no point in testing statically linked builds
 require_build_type debug nondebug
-require_valgrind_dev_3_7
+require_valgrind_dev_version 3.7
 set_valgrind_exe_name
-configure_valgrind memcheck force-enable
+configure_valgrind memcheck force-enable $TEST_LD_LIBRARY_PATH/libvmmalloc.so
 setup
+
+if [ $(valgrind_version) -ge 312 ]; then
+	export VALGRIND_OPTS="$VALGRIND_OPTS --soname-synonyms=somalloc=nouserintercepts"
+fi
 
 unset VMMALLOC_LOG_LEVEL
 unset VMMALLOC_LOG_FILE

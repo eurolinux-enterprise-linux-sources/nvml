@@ -31,12 +31,14 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 #
-# pmempool_check/TEST0 -- test for checking pools
+# pmempool_check/TEST1 -- test for checking pools
 #
 export UNITTEST_NAME=pmempool_check/TEST1
 export UNITTEST_NUM=1
 
 . ../unittest/unittest.sh
+
+require_test_type medium
 
 require_fs_type pmem non-pmem
 

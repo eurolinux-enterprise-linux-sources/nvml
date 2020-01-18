@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,7 +34,6 @@
  * obj_pool_lookup.c -- unit test for pmemobj_pool and pmemobj_pool_of
  */
 #include "unittest.h"
-#include "util.h"
 
 #define MAX_PATH_LEN 255
 #define LAYOUT_NAME "pool_lookup"
@@ -53,12 +52,22 @@ main(int argc, char *argv[])
 	const char *dir = argv[1];
 	int r;
 
-	PMEMobjpool *pops[npools];
-	void *guard_after[npools];
+	/* check before pool creation */
+	PMEMoid some_oid = {2, 3};
 
-	char path[MAX_PATH_LEN];
+	UT_ASSERTeq(pmemobj_pool_by_ptr(&some_oid), NULL);
+	UT_ASSERTeq(pmemobj_pool_by_oid(some_oid), NULL);
+
+	PMEMobjpool **pops = MALLOC(npools * sizeof(PMEMobjpool *));
+	void **guard_after = MALLOC(npools * sizeof(void *));
+
+	size_t length = strlen(dir) + MAX_PATH_LEN;
+	char *path = MALLOC(length);
 	for (int i = 0; i < npools; ++i) {
-		snprintf(path, MAX_PATH_LEN, "%s/testfile%d", dir, i);
+		int ret = snprintf(path, length, "%s"OS_DIR_SEP_STR"testfile%d",
+			dir, i);
+		if (ret < 0 || ret >= length)
+			UT_FATAL("!snprintf");
 		pops[i] = pmemobj_create(path, LAYOUT_NAME, PMEMOBJ_MIN_POOL,
 				S_IWUSR | S_IRUSR);
 
@@ -77,7 +86,7 @@ main(int argc, char *argv[])
 			UT_FATAL("!pmemobj_create");
 	}
 
-	PMEMoid oids[npools];
+	PMEMoid *oids = MALLOC(npools * sizeof(PMEMoid));
 
 	for (int i = 0; i < npools; ++i) {
 		r = pmemobj_alloc(pops[i], &oids[i], ALLOC_SIZE, 1, NULL, NULL);
@@ -114,6 +123,10 @@ main(int argc, char *argv[])
 
 		MUNMAP(guard_after[i], Ut_pagesize);
 	}
+	FREE(path);
+	FREE(pops);
+	FREE(guard_after);
+	FREE(oids);
 
 	DONE(NULL);
 }

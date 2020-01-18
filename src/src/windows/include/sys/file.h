@@ -1,5 +1,6 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
+ * Copyright (c) 2016, Microsoft Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,18 +38,3 @@
 /*
  * XXX - see mmap_file.c for details
  */
-
-#ifndef SYS_FILE_H
-#define SYS_FILE_H 1
-
-#include <io.h>
-#include <sys/locking.h>
-
-#define LOCK_SH 1
-#define LOCK_EX 2
-#define LOCK_NB 4
-#define LOCK_UN 8
-
-int flock(int fd, int operation);
-
-#endif /* SYS_FILE_H */

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,9 +34,9 @@
  * obj_ctree.c -- unit test for crit-bit tree
  */
 #include <stdint.h>
-#include <pthread.h>
 
 #include "ctree.h"
+#include "util.h"
 #include "unittest.h"
 
 enum {
@@ -49,21 +49,27 @@ enum {
 #define TEST_VAL_B 2
 #define TEST_VAL_C 3
 
-FUNC_MOCK(malloc, void *, size_t size)
-	FUNC_MOCK_RUN_RET_DEFAULT_REAL(malloc, size)
-	FUNC_MOCK_RUN(TEST_INSERT + 0) /* leaf malloc */
-	FUNC_MOCK_RUN(TEST_INSERT + 3) /* accessor malloc */
-	FUNC_MOCK_RUN(TEST_NEW_DELETE + 0) { /* t malloc */
-		return NULL;
+static int Rcounter_malloc;
+
+static void *
+__wrap_malloc(size_t size)
+{
+	switch (__sync_fetch_and_add(&Rcounter_malloc, 1)) {
+		default:
+			return malloc(size);
+		case TEST_INSERT + 3: /* accessor malloc */
+		case TEST_INSERT + 0: /* leaf malloc */
+		case TEST_NEW_DELETE + 0: /* t malloc */
+			return NULL;
 	}
-FUNC_MOCK_END
+}
 
 static void
-test_ctree_new_delete_empty()
+test_ctree_new_delete_empty(void)
 {
 	struct ctree *t = NULL;
 
-	FUNC_MOCK_RCOUNTER_SET(malloc, TEST_NEW_DELETE);
+	Rcounter_malloc = TEST_NEW_DELETE;
 
 	/* t Malloc fail */
 	t = ctree_new();
@@ -77,12 +83,12 @@ test_ctree_new_delete_empty()
 }
 
 static void
-test_ctree_insert()
+test_ctree_insert(void)
 {
 	struct ctree *t = ctree_new();
 	UT_ASSERT(t != NULL);
 
-	FUNC_MOCK_RCOUNTER_SET(malloc, TEST_INSERT);
+	Rcounter_malloc = TEST_INSERT;
 
 	UT_ASSERT(ctree_is_empty(t));
 
@@ -107,7 +113,7 @@ test_ctree_insert()
 }
 
 static void
-test_ctree_find()
+test_ctree_find(void)
 {
 	struct ctree *t = ctree_new();
 	UT_ASSERT(t != NULL);
@@ -132,12 +138,12 @@ test_ctree_find()
 }
 
 static void
-test_ctree_remove()
+test_ctree_remove(void)
 {
 	struct ctree *t = ctree_new();
 	UT_ASSERT(t != NULL);
 
-	FUNC_MOCK_RCOUNTER_SET(malloc, TEST_REMOVE);
+	Rcounter_malloc = TEST_REMOVE;
 
 	/* remove from empty tree */
 	UT_ASSERT(ctree_remove(t, TEST_VAL_A, 0) == 0);
@@ -158,15 +164,47 @@ test_ctree_remove()
 	ctree_delete(t);
 }
 
+static void
+test_ctree_remove_max(void)
+{
+	struct ctree *t = ctree_new();
+	UT_ASSERT(t != NULL);
+
+	ctree_insert(t, TEST_VAL_A, TEST_VAL_A);
+	ctree_insert(t, TEST_VAL_B, TEST_VAL_B);
+	ctree_insert(t, TEST_VAL_C, TEST_VAL_C);
+
+	uint64_t key;
+	uint64_t value;
+	UT_ASSERTeq(ctree_remove_max_unlocked(t, &key, &value), 0);
+	UT_ASSERTeq(key, TEST_VAL_C);
+	UT_ASSERTeq(key, TEST_VAL_C);
+
+	UT_ASSERTeq(ctree_remove_max_unlocked(t, &key, &value), 0);
+	UT_ASSERTeq(key, TEST_VAL_B);
+	UT_ASSERTeq(key, TEST_VAL_B);
+
+	UT_ASSERTeq(ctree_remove_max_unlocked(t, &key, &value), 0);
+	UT_ASSERTeq(key, TEST_VAL_A);
+	UT_ASSERTeq(key, TEST_VAL_A);
+
+	UT_ASSERTeq(ctree_remove_max_unlocked(t, &key, &value), -1);
+
+	ctree_delete(t);
+}
+
 int
 main(int argc, char *argv[])
 {
 	START(argc, argv, "obj_ctree");
 
+	Malloc = __wrap_malloc;
+
 	test_ctree_new_delete_empty();
 	test_ctree_insert();
 	test_ctree_find();
 	test_ctree_remove();
+	test_ctree_remove_max();
 
 	DONE(NULL);
 }

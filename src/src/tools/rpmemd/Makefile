@@ -1,4 +1,4 @@
-# Copyright 2016, Intel Corporation
+# Copyright 2016-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -36,7 +36,8 @@ vpath %.c ../../rpmem_common/
 TOP = ../../..
 include $(TOP)/src/common.inc
 
-ifeq ($(call check_package, libfabric),y)
+ifeq ($(BUILD_RPMEM),y)
+SCP_TO_REMOTE_NODES = y
 TARGET = rpmemd
 OBJS = rpmemd.o\
        rpmemd_log.o\
@@ -46,7 +47,8 @@ OBJS = rpmemd.o\
        rpmemd_db.o\
        rpmemd_fip.o\
        rpmemd_fip_worker.o\
-       rpmem_fip_common.o
+       rpmem_fip_common.o\
+       rpmemd_util.o
 
 LIBPMEM=y
 TOOLS_COMMON=y
@@ -54,14 +56,16 @@ LIBPMEMBLK_PRIV=btt_info_convert2h
 
 INCS += -I$(TOP)/src/rpmem_common
 CFLAGS += -DRPMEMC_LOG_RPMEMD
+ifneq ($(DEBUG),)
+CFLAGS += -DDEBUG
+endif
 CFLAGS += $(shell $(PKG_CONFIG) --cflags libfabric)
 LIBS += $(shell $(PKG_CONFIG) --libs libfabric)
 
-INSTALL_TARGET=n
+INSTALL_TARGET=y
 
 else
-$(info NOTE: Skipping rpmemd because libfabric is missing \
--- see src/tools/rpmemd/README for details.)
+$(info NOTE: Skipping rpmemd because $(BUILD_RPMEM_INFO))
 endif
 
 include ../Makefile.inc

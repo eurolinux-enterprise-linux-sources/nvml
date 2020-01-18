@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -51,7 +51,7 @@ struct type_sec {
 	int id;
 };
 
-PMEMobjpool *pop;
+static PMEMobjpool *pop;
 typedef void (*fn_op)(int id);
 typedef void (*fn_void)();
 
@@ -92,7 +92,7 @@ get_item_type_sec(int n)
  * do_print_type -- print list elements from type collection
  */
 static void
-do_print_type()
+do_print_type(void)
 {
 	TOID(struct type) item;
 	UT_OUT("type:");
@@ -105,7 +105,7 @@ do_print_type()
  * do_print_type_sec -- print list elements from type_sec collection
  */
 static void
-do_print_type_sec()
+do_print_type_sec(void)
 {
 	TOID(struct type_sec) item;
 	UT_OUT("type_sec:");
@@ -114,7 +114,7 @@ do_print_type_sec()
 	}
 }
 
-fn_void do_print[] = {do_print_type, do_print_type_sec};
+static fn_void do_print[] = {do_print_type, do_print_type_sec};
 
 /*
  * type_constructor -- constructor which sets the item's id to
@@ -170,7 +170,7 @@ do_alloc_type_sec(int id)
 		UT_FATAL("POBJ_NEW");
 }
 
-fn_op do_alloc[] = {do_alloc_type, do_alloc_type_sec};
+static fn_op do_alloc[] = {do_alloc_type, do_alloc_type_sec};
 
 /*
  * do_free_type -- remove and free element from type collection
@@ -200,13 +200,13 @@ do_free_type_sec(int n)
 	POBJ_FREE(&item);
 }
 
-fn_op do_free[] = {do_free_type, do_free_type_sec};
+static fn_op do_free[] = {do_free_type, do_free_type_sec};
 
 /*
  * do_first_type -- prints id of first object in type collection
  */
 static void
-do_first_type()
+do_first_type(void)
 {
 	TOID(struct type) first = POBJ_FIRST(pop, struct type);
 	UT_OUT("first id = %d", D_RO(first)->id);
@@ -216,13 +216,13 @@ do_first_type()
  * do_first_type_sec -- prints id of first object in type_sec collection
  */
 static void
-do_first_type_sec()
+do_first_type_sec(void)
 {
 	TOID(struct type_sec) first = POBJ_FIRST(pop, struct type_sec);
 	UT_OUT("first id = %d", D_RO(first)->id);
 }
 
-fn_void do_first[] = {do_first_type, do_first_type_sec};
+static fn_void do_first[] = {do_first_type, do_first_type_sec};
 
 /*
  * do_next_type -- finds next element from type collection
@@ -254,13 +254,13 @@ do_next_type_sec(int n)
 	UT_OUT("next id = %d", D_RO(item)->id);
 }
 
-fn_op do_next[] = {do_next_type, do_next_type_sec};
+static fn_op do_next[] = {do_next_type, do_next_type_sec};
 
 /*
  * do_cleanup -- de-initialization function
  */
 static void
-do_cleanup()
+do_cleanup(void)
 {
 	PMEMoid oid, oid_tmp;
 	POBJ_FOREACH_SAFE(pop, oid, oid_tmp)
@@ -305,10 +305,11 @@ main(int argc, char *argv[])
 		int list_num;
 		int id;
 		char type;
-		sscanf(argv[i], "%c:%d:%d", &type, &list_num, &id);
+		if (sscanf(argv[i], "%c:%d:%d", &type, &list_num, &id) == EOF)
+			UT_FATAL("!sscanf");
 		switch (type) {
 		case 'P':
-			do_print[list_num](id);
+			do_print[list_num]();
 			break;
 		case 'a':
 			do_alloc[list_num](id);
@@ -317,7 +318,7 @@ main(int argc, char *argv[])
 			do_free[list_num](id);
 			break;
 		case 'f':
-			do_first[list_num](id);
+			do_first[list_num]();
 			break;
 		case 'n':
 			do_next[list_num](id);

@@ -1,22 +1,26 @@
-
 Name:		nvml
-Version:	1.1
-Release:	4%{?dist}
+Version:	1.3
+Release:	3%{?dist}
 Summary:	Non-Volatile Memory Library
 License:	BSD
 URL:		http://pmem.io/nvml
 Source0:	https://github.com/pmem/%{name}/archive/%{version}.tar.gz#/%{name}-%{version}.tar.gz
+Patch0:		fbef3ef-rpmemd-fix-potential-memory-leak.patch
+Patch1:		14a76ef-rpmem_fip-return-failure-for-a-failed-allocation.patch
 
 BuildRequires:	glibc-devel
 BuildRequires:	autoconf
 BuildRequires:	automake
 BuildRequires:	man
 BuildRequires:	pkgconfig
+BuildRequires:	doxygen
+BuildRequires:	gdb
 
+%define min_libfabric_ver 1.4.2
+BuildRequires:	libfabric-devel >= %{min_libfabric_ver}
 
 # Debug variants of the libraries should be filtered out of the provides.
 %global __provides_exclude_from ^%{_libdir}/nvml_debug/.*\\.so.*$
-
 
 # By design, NVML does not support any 32-bit architecture.
 # Due to dependency on xmmintrin.h and some inline assembly, it can be
@@ -45,7 +49,7 @@ support for the persistent memory instructions for flushing changes
 to pmem is provided.
 
 %files -n libpmem
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %dir %{_datadir}/nvml
 %{_libdir}/libpmem.so.*
 %{_datadir}/nvml/nvml.magic
@@ -68,7 +72,7 @@ will find higher level libraries like libpmemobj to be much more
 convenient.
 
 %files -n libpmem-devel
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %{_libdir}/libpmem.so
 %{_libdir}/pkgconfig/libpmem.pc
 %{_includedir}/libpmem.h
@@ -92,7 +96,7 @@ debug version is to set the environment variable LD_LIBRARY_PATH to
 /usr/lib64/nvml_debug.
 
 %files -n libpmem-debug
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %dir %{_libdir}/nvml_debug
 %{_libdir}/nvml_debug/libpmem.so
 %{_libdir}/nvml_debug/libpmem.so.*
@@ -103,14 +107,14 @@ debug version is to set the environment variable LD_LIBRARY_PATH to
 %package -n libpmemblk
 Summary: Persistent Memory Resident Array of Blocks library
 Group: System Environment/Libraries
-Requires: libpmem >= %{version}-%{release}
+Requires: libpmem = %{version}-%{release}
 %description -n libpmemblk
 The libpmemblk implements a pmem-resident array of blocks, all the same
 size, where a block is updated atomically with respect to power
 failure or program interruption (no torn blocks).
 
 %files -n libpmemblk
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %{_libdir}/libpmemblk.so.*
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
@@ -133,7 +137,7 @@ developers will find higher level libraries like libpmemobj to be
 more generally useful.
 
 %files -n libpmemblk-devel
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %{_libdir}/libpmemblk.so
 %{_libdir}/pkgconfig/libpmemblk.pc
 %{_includedir}/libpmemblk.h
@@ -146,6 +150,7 @@ more generally useful.
 Summary: Debug variant of the Persistent Memory Resident Array of Blocks library
 Group: Development/Libraries
 Requires: libpmemblk = %{version}-%{release}
+Requires: libpmem = %{version}-%{release}
 %description -n libpmemblk-debug
 The libpmemblk implements a pmem-resident array of blocks, all the same
 size, where a block is updated atomically with respect to power
@@ -157,7 +162,7 @@ debug version is to set the environment variable LD_LIBRARY_PATH to
 /usr/lib64/nvml_debug.
 
 %files -n libpmemblk-debug
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %dir %{_libdir}/nvml_debug
 %{_libdir}/nvml_debug/libpmemblk.so
 %{_libdir}/nvml_debug/libpmemblk.so.*
@@ -168,14 +173,14 @@ debug version is to set the environment variable LD_LIBRARY_PATH to
 %package -n libpmemlog
 Summary: Persistent Memory Resident Log File library
 Group: System Environment/Libraries
-Requires: libpmem >= %{version}-%{release}
+Requires: libpmem = %{version}-%{release}
 %description -n libpmemlog
 The libpmemlog library provides a pmem-resident log file. This is
 useful for programs like databases that append frequently to a log
 file.
 
 %files -n libpmemlog
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %{_libdir}/libpmemlog.so.*
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
@@ -193,7 +198,7 @@ record variable length entries. Most developers will find higher
 level libraries like libpmemobj to be more generally useful.
 
 %files -n libpmemlog-devel
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %{_libdir}/libpmemlog.so
 %{_libdir}/pkgconfig/libpmemlog.pc
 %{_includedir}/libpmemlog.h
@@ -206,6 +211,7 @@ level libraries like libpmemobj to be more generally useful.
 Summary: Debug variant of the Persistent Memory Resident Log File library
 Group: Development/Libraries
 Requires: libpmemlog = %{version}-%{release}
+Requires: libpmem = %{version}-%{release}
 %description -n libpmemlog-debug
 The libpmemlog library provides a pmem-resident log file. This
 library is provided for cases requiring an append-mostly file to
@@ -218,7 +224,7 @@ debug version is to set the environment variable LD_LIBRARY_PATH to
 /usr/lib64/nvml_debug.
 
 %files -n libpmemlog-debug
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %dir %{_libdir}/nvml_debug
 %{_libdir}/nvml_debug/libpmemlog.so
 %{_libdir}/nvml_debug/libpmemlog.so.*
@@ -229,14 +235,14 @@ debug version is to set the environment variable LD_LIBRARY_PATH to
 %package -n libpmemobj
 Summary: Persistent Memory Transactional Object Store library
 Group: System Environment/Libraries
-Requires: libpmem >= %{version}-%{release}
+Requires: libpmem = %{version}-%{release}
 %description -n libpmemobj
 The libpmemobj library provides a transactional object store,
 providing memory allocation, transactions, and general facilities for
 persistent memory programming.
 
 %files -n libpmemobj
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %{_libdir}/libpmemobj.so.*
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
@@ -254,10 +260,11 @@ persistent memory programming. Developers new to persistent memory
 probably want to start with this library.
 
 %files -n libpmemobj-devel
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %{_libdir}/libpmemobj.so
 %{_libdir}/pkgconfig/libpmemobj.pc
 %{_includedir}/libpmemobj.h
+%{_includedir}/libpmemobj/*.h
 %{_mandir}/man3/libpmemobj.3.gz
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
@@ -267,6 +274,7 @@ probably want to start with this library.
 Summary: Debug variant of the Persistent Memory Transactional Object Store library
 Group: Development/Libraries
 Requires: libpmemobj = %{version}-%{release}
+Requires: libpmem = %{version}-%{release}
 %description -n libpmemobj-debug
 The libpmemobj library provides a transactional object store,
 providing memory allocation, transactions, and general facilities for
@@ -279,7 +287,7 @@ debug version is to set the environment variable LD_LIBRARY_PATH to
 /usr/lib64/nvml_debug.
 
 %files -n libpmemobj-debug
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %dir %{_libdir}/nvml_debug
 %{_libdir}/nvml_debug/libpmemobj.so
 %{_libdir}/nvml_debug/libpmemobj.so.*
@@ -296,7 +304,7 @@ memory pool, similar to the system heap but kept separate and with
 its own malloc-style API.
 
 %files -n libvmem
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %{_libdir}/libvmem.so.*
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
@@ -315,7 +323,7 @@ This sub-package contains libraries and header files for developing
 applications that want to make use of libvmem.
 
 %files -n libvmem-devel
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %{_libdir}/libvmem.so
 %{_libdir}/pkgconfig/libvmem.pc
 %{_includedir}/libvmem.h
@@ -339,7 +347,7 @@ debug version is to set the environment variable LD_LIBRARY_PATH to
 /usr/lib64/nvml_debug.
 
 %files -n libvmem-debug
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %dir %{_libdir}/nvml_debug
 %{_libdir}/nvml_debug/libvmem.so
 %{_libdir}/nvml_debug/libvmem.so.*
@@ -360,7 +368,7 @@ The typical usage of libvmmalloc is to load it via the LD_PRELOAD
 environment variable.
 
 %files -n libvmmalloc
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %{_libdir}/libvmmalloc.so.*
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
@@ -380,7 +388,7 @@ This sub-package contains libraries and header files for developing
 applications that want to specifically make use of libvmmalloc.
 
 %files -n libvmmalloc-devel
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %{_libdir}/libvmmalloc.so
 %{_libdir}/pkgconfig/libvmmalloc.pc
 %{_includedir}/libvmmalloc.h
@@ -405,7 +413,7 @@ debug version is to set the environment variable LD_LIBRARY_PATH to
 /usr/lib64/nvml_debug.
 
 %files -n libvmmalloc-debug
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %dir %{_libdir}/nvml_debug
 %{_libdir}/nvml_debug/libvmmalloc.so
 %{_libdir}/nvml_debug/libvmmalloc.so.*
@@ -413,17 +421,41 @@ debug version is to set the environment variable LD_LIBRARY_PATH to
 %doc ChangeLog CONTRIBUTING.md README.md
 
 
+# Specify a virtual Provide for libpmemobj++-static package, so the package
+# usage can be tracked.
+%package -n libpmemobj++-devel
+Summary: C++ bindings for Persistent Memory Transactional Object Store library
+Group: Development/Libraries
+Provides: libpmemobj++-static = %{version}-%{release}
+Requires: libpmemobj-devel = %{version}-%{release}
+%description -n libpmemobj++-devel
+The libpmemobj library provides a transactional object store,
+providing memory allocation, transactions, and general facilities for
+persistent memory programming.
+
+This sub-package contains header files for libpmemobj C++ bindings.
+
+%files -n libpmemobj++-devel
+%defattr(-,root,root,-)
+%{_libdir}/pkgconfig/libpmemobj++.pc
+%{_includedir}/libpmemobj++/*.hpp
+%{_includedir}/libpmemobj++/detail/*.hpp
+%{_docdir}/libpmemobj++-devel/*
+%license LICENSE
+%doc ChangeLog CONTRIBUTING.md README.md
+
+
 %package -n libpmempool
 Summary: Persistent Memory pool management library
 Group: System Environment/Libraries
-Requires: libpmem >= %{version}-%{release}
+Requires: libpmem = %{version}-%{release}
 %description -n libpmempool
-The libpmempool library provides a set of utilities for off-line administration,
-analysis, diagnostics and repair of persistent memory pools created
-by libpmemlog, libpemblk and libpmemobj libraries.
+The libpmempool library provides a set of utilities for off-line
+administration, analysis, diagnostics and repair of persistent memory
+pools created by libpmemlog, libpemblk and libpmemobj libraries.
 
 %files -n libpmempool
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %{_libdir}/libpmempool.so.*
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
@@ -435,12 +467,12 @@ Group: Development/Libraries
 Requires: libpmempool = %{version}-%{release}
 Requires: libpmem-devel = %{version}-%{release}
 %description -n libpmempool-devel
-The libpmempool library provides a set of utilities for off-line administration,
-analysis, diagnostics and repair of persistent memory pools created
-by libpmemlog, libpemblk and libpmemobj libraries.
+The libpmempool library provides a set of utilities for off-line
+administration, analysis, diagnostics and repair of persistent memory
+pools created by libpmemlog, libpemblk and libpmemobj libraries.
 
 %files -n libpmempool-devel
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %{_libdir}/libpmempool.so
 %{_libdir}/pkgconfig/libpmempool.pc
 %{_includedir}/libpmempool.h
@@ -453,10 +485,11 @@ by libpmemlog, libpemblk and libpmemobj libraries.
 Summary: Debug variant of the Persistent Memory pool management library
 Group: Development/Libraries
 Requires: libpmempool = %{version}-%{release}
+Requires: libpmem = %{version}-%{release}
 %description -n libpmempool-debug
-The libpmempool library provides a set of utilities for off-line administration,
-analysis, diagnostics and repair of persistent memory pools created
-by libpmemlog, libpemblk and libpmemobj libraries.
+The libpmempool library provides a set of utilities for off-line
+administration, analysis, diagnostics and repair of persistent memory
+pools created by libpmemlog, libpemblk and libpmemobj libraries.
 
 This sub-package contains debug variant of the library, providing
 run-time assertions and trace points. The typical way to access the
@@ -464,34 +497,111 @@ debug version is to set the environment variable LD_LIBRARY_PATH to
 /usr/lib64/nvml_debug.
 
 %files -n libpmempool-debug
-%defattr(644,root,root,-)
+%defattr(-,root,root,-)
 %dir %{_libdir}/nvml_debug
 %{_libdir}/nvml_debug/libpmempool.so
 %{_libdir}/nvml_debug/libpmempool.so.*
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
 
+%package -n librpmem
+Summary: Remote Access to Persistent Memory library
+Group: System Environment/Libraries
+Requires: libfabric >= %{min_libfabric_ver}
+Requires: openssh-clients
+%description -n librpmem
+The librpmem library provides low-level support for remote access
+to persistent memory utilizing RDMA-capable NICs. It can be used
+to replicate peristent memory regions over RDMA protocol.
+
+%files -n librpmem
+%defattr(-,root,root,-)
+%{_libdir}/librpmem.so.*
+%license LICENSE
+%doc ChangeLog CONTRIBUTING.md README.md
+
+
+%package -n librpmem-devel
+Summary: Development files for the Remote Access to Persistent Memory library
+Group: Development/Libraries
+Requires: librpmem = %{version}-%{release}
+%description -n librpmem-devel
+The librpmem library provides low-level support for remote access
+to persistent memory utilizing RDMA-capable NICs. It can be used
+to replicate peristent memory regions over RDMA protocol.
+
+This sub-package contains libraries and header files for developing
+applications that want to specifically make use of librpmem.
+
+%files -n librpmem-devel
+%defattr(-,root,root,-)
+%{_libdir}/librpmem.so
+%{_libdir}/pkgconfig/librpmem.pc
+%{_includedir}/librpmem.h
+%{_mandir}/man3/librpmem.3.gz
+%license LICENSE
+%doc ChangeLog CONTRIBUTING.md README.md
+
+
+%package -n librpmem-debug
+Summary: Debug variant of the Remote Access to Persistent Memory library
+Group: Development/Libraries
+Requires: librpmem = %{version}-%{release}
+%description -n librpmem-debug
+The librpmem library provides low-level support for remote access
+to persistent memory utilizing RDMA-capable NICs. It can be used
+to replicate peristent memory regions over RDMA protocol.
+
+This sub-package contains debug variant of the library, providing
+run-time assertions and trace points. The typical way to access the
+debug version is to set the environment variable LD_LIBRARY_PATH to
+/usr/lib64/nvml_debug.
+
+%files -n librpmem-debug
+%defattr(-,root,root,-)
+%dir %{_libdir}/nvml_debug
+%{_libdir}/nvml_debug/librpmem.so
+%{_libdir}/nvml_debug/librpmem.so.*
+%license LICENSE
+%doc ChangeLog CONTRIBUTING.md README.md
+
+
+%package -n rpmemd
+Group: System Environment/Base
+Summary: Target node process executed by librpmem
+Requires: libpmem >= %{version}-%{release}
+Requires: libfabric >= %{min_libfabric_ver}
+%description -n rpmemd
+The rpmemd process is executed on a target node by librpmem library
+and facilitates access to persistent memory over RDMA.
+
+%files -n rpmemd
+%{_bindir}/rpmemd
+%{_mandir}/man1/rpmemd.1.gz
+
 
 %package tools
 Summary: Utilities for Persistent Memory
 Group: System Environment/Base
-Requires: libpmem >= %{version}-%{release}
-Requires: libpmemlog >= %{version}-%{release}
-Requires: libpmemblk >= %{version}-%{release}
-Requires: libpmemobj >= %{version}-%{release}
-Requires: libpmempool >= %{version}-%{release}
+Requires: libpmem = %{version}-%{release}
+Requires: libpmemlog = %{version}-%{release}
+Requires: libpmemblk = %{version}-%{release}
+Requires: libpmemobj = %{version}-%{release}
+Requires: libpmempool = %{version}-%{release}
 %description tools
 Useful applications for administration and diagnosis of persistent memory.
 
 %files tools
 %{_bindir}/pmempool
 %{_mandir}/man1/pmempool.1.gz
-%{_mandir}/man1/pmempool-info.1.gz
+%{_mandir}/man1/pmempool-check.1.gz
+%{_mandir}/man1/pmempool-convert.1.gz
 %{_mandir}/man1/pmempool-create.1.gz
 %{_mandir}/man1/pmempool-dump.1.gz
-%{_mandir}/man1/pmempool-check.1.gz
+%{_mandir}/man1/pmempool-info.1.gz
 %{_mandir}/man1/pmempool-rm.1.gz
-%{_mandir}/man1/pmempool-convert.1.gz
+%{_mandir}/man1/pmempool-sync.1.gz
+%{_mandir}/man1/pmempool-transform.1.gz
 %config(noreplace) %{_sysconfdir}/bash_completion.d/pmempool.sh
 %license LICENSE
 %doc ChangeLog CONTRIBUTING.md README.md
@@ -499,7 +609,8 @@ Useful applications for administration and diagnosis of persistent memory.
 
 %prep
 %setup -q -n %{name}-%{version}
-
+%patch0 -p1
+%patch1 -p1
 
 %build
 # Currently, NVML makefiles do not allow to easily override CFLAGS,
@@ -520,13 +631,16 @@ make install DESTDIR=%{buildroot} \
 	includedir=%{_includedir} \
 	mandir=%{_mandir} \
 	bindir=%{_bindir} \
-	sysconfdir=%{_sysconfdir}
+	sysconfdir=%{_sysconfdir} \
+	docdir=%{_docdir} \
+	CPP_DOC_DIR=libpmemobj++-devel
 mkdir -p %{buildroot}%{_datadir}/nvml
 cp utils/nvml.magic %{buildroot}%{_datadir}/nvml/
 
 
 %check
-cp src/test/testconfig.sh.example src/test/testconfig.sh
+echo "PMEM_FS_DIR=/tmp" > src/test/testconfig.sh
+echo "PMEM_FS_DIR_FORCE_PMEM=1" >> src/test/testconfig.sh
 make check
 
 
@@ -544,7 +658,8 @@ make check
 %postun -n libvmmalloc -p /sbin/ldconfig
 %post   -n libpmempool -p /sbin/ldconfig
 %postun -n libpmempool -p /sbin/ldconfig
-
+%post   -n librpmem -p /sbin/ldconfig
+%postun -n librpmem -p /sbin/ldconfig
 
 %if 0%{?__debug_package} == 0
 %debug_package
@@ -552,6 +667,36 @@ make check
 
 
 %changelog
+* Thu Oct 19 2017 Jeff Moyer <jmoyer@redhat.com> - 1.3-3.el7
+- fix up issues found by the clang static checker
+- Related: rhbz#1455216
+
+* Wed Oct 18 2017 Jeff Moyer <jmoyer@redhat.com> - 1.3-2.el7
+- pull in spec changes from upstream
+- Related: rhbz#1455216
+
+* Mon Oct 16 2017 Jeff Moyer <jmoyer@redhat.com> - 1.3-1.el7
+- rebase to version 1.3
+- Resolves: rhbz#1455216
+
+* Wed Apr 05 2017 Jeff Moyer <jmoyer@redhat.com> - 1.2.1-4.el7
+- Fix mapping type in pool params parse
+- Resolves: bz#1436820
+
+* Tue Mar 28 2017 Jeff Moyer <jmoyer@redhat.com> - 1.2.1-3.el7
+- Add 'Requires: libpmem' lines for debug packages.
+- Related: bz#1383467 bz#1382407
+
+* Tue Mar 28 2017 Jeff Moyer <jmoyer@redhat.com> - 1.2.1-2.el7
+- Actually apply stable update patches
+- Related: bz#1383467 bz#1382407
+
+* Tue Mar 28 2017 Jeff Moyer <jmoyer@redhat.com> - 1.2.1-1.el7
+- Update to latest stable release
+- Pull in pending stable patches for the test harness
+- disable % check temporarily until all test issues are resolved
+- Resolves: bz#1383467 bz#1382407
+
 * Thu Jul 14 2016 Jeff Moyer <jmoyer@redhat.com> - 1.1-4.el7
 - Add missing version dependencies between packages
 - Resolves: bz#1274541

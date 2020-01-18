@@ -1,5 +1,5 @@
 #
-# Copyright 2016, Intel Corporation
+# Copyright 2016-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -30,10 +30,6 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
-LIBRARIES = snippets
-
-LIBS = -lpmemobj -lpmem
-
 include ../../Makefile.inc
 
 TARGETS = persistent.o  make_persistent.o pool.o transaction.o
@@ -43,5 +39,7 @@ TARGETS += mutex.o
 else
 $(info NOTE: Skipping C++ chrono examples because of compiler/stdc++ issues)
 endif
+
+all: $(TARGETS)
 
 libsnippets.o: $(TARGETS)

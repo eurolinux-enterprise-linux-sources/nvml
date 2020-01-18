@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,9 +37,9 @@
 
 #include "unittest.h"
 
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
-#include <libpmemobj/shared_mutex.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
+#include <libpmemobj++/shared_mutex.hpp>
 
 #include <mutex>
 
@@ -129,6 +129,27 @@ reader_trylock(void *arg)
 }
 
 /*
+ * mutex_zero_test -- (internal) test the zeroing constructor
+ */
+void
+mutex_zero_test(nvobj::pool<struct root> &pop)
+{
+	PMEMoid raw_mutex;
+
+	pmemobj_alloc(pop.get_handle(), &raw_mutex, sizeof(PMEMrwlock), 1,
+		      [](PMEMobjpool *pop, void *ptr, void *arg) -> int {
+			      PMEMrwlock *mtx = static_cast<PMEMrwlock *>(ptr);
+			      pmemobj_memset_persist(pop, mtx, 1, sizeof(*mtx));
+			      return 0;
+		      },
+		      NULL);
+
+	nvobj::shared_mutex *placed_mtx =
+		new (pmemobj_direct(raw_mutex)) nvobj::shared_mutex;
+	std::unique_lock<nvobj::shared_mutex> lck(*placed_mtx);
+}
+
+/*
  * mutex_test -- (internal) launch worker threads to test the pshared_mutex
  */
 template <typename Worker>
@@ -136,7 +157,7 @@ void
 mutex_test(nvobj::pool<root> &pop, Worker writer, Worker reader)
 {
 	const int total_threads = num_threads * 2;
-	pthread_t threads[total_threads];
+	os_thread_t threads[total_threads];
 
 	auto proot = pop.get_root();
 
@@ -169,6 +190,8 @@ main(int argc, char *argv[])
 		UT_FATAL("!pool::create: %s %s", pe.what(), path);
 	}
 
+	mutex_zero_test(pop);
+
 	int expected = num_threads * num_ops * 2;
 	mutex_test(pop, writer, reader);
 	UT_ASSERTeq(pop.get_root()->counter, expected);
@@ -184,5 +207,5 @@ main(int argc, char *argv[])
 
 	pop.close();
 
-	DONE(NULL);
+	DONE(nullptr);
 }

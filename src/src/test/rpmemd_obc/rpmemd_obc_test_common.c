@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,8 +37,55 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include "os.h"
 
 #include "rpmemd_obc_test_common.h"
+
+#define CMD_BUFF_SIZE	4096
+static const char *rpmem_cmd;
+
+/*
+ * set_rpmem_cmd -- set RPMEM_CMD variable
+ */
+void
+set_rpmem_cmd(const char *fmt, ...)
+{
+	static char cmd_buff[CMD_BUFF_SIZE];
+
+	if (!rpmem_cmd) {
+		char *cmd = os_getenv(RPMEM_CMD_ENV);
+		UT_ASSERTne(cmd, NULL);
+		rpmem_cmd = STRDUP(cmd);
+	}
+
+	ssize_t ret;
+	size_t cnt = 0;
+
+	va_list ap;
+	va_start(ap, fmt);
+	ret = snprintf(&cmd_buff[cnt], CMD_BUFF_SIZE - cnt,
+			"%s ", rpmem_cmd);
+	UT_ASSERT(ret > 0);
+	cnt += (size_t)ret;
+
+	ret = vsnprintf(&cmd_buff[cnt], CMD_BUFF_SIZE - cnt, fmt, ap);
+	UT_ASSERT(ret > 0);
+	cnt += (size_t)ret;
+
+	va_end(ap);
+
+	ret = os_setenv(RPMEM_CMD_ENV, cmd_buff, 1);
+	UT_ASSERTeq(ret, 0);
+
+	/*
+	 * Rpmem has internal RPMEM_CMD variable copy and it is assumed
+	 * RPMEMD_CMD will not change its value during execution. To refresh the
+	 * internal copy it must be destroyed and a instance must be initialized
+	 * manually.
+	 */
+	rpmem_util_cmds_fini();
+	rpmem_util_cmds_init();
+}
 
 /*
  * req_cb_check_req -- validate request attributes
@@ -70,7 +117,7 @@ req_cb_check_pool_attr(const struct rpmem_pool_attr *pool_attr)
  * struct req_cb_arg.
  */
 static int
-req_cb_create(struct rpmemd_obc_client *client, void *arg,
+req_cb_create(struct rpmemd_obc *obc, void *arg,
 	const struct rpmem_req_attr *req,
 	const struct rpmem_pool_attr *pool_attr)
 {
@@ -96,7 +143,7 @@ req_cb_create(struct rpmemd_obc_client *client, void *arg,
 			.nlanes = NLANES_RESP,
 		};
 
-		ret = rpmemd_obc_client_create_resp(client,
+		ret = rpmemd_obc_create_resp(obc,
 				args->status, &resp);
 	}
 
@@ -113,7 +160,7 @@ req_cb_create(struct rpmemd_obc_client *client, void *arg,
  * struct req_cb_arg.
  */
 static int
-req_cb_open(struct rpmemd_obc_client *client, void *arg,
+req_cb_open(struct rpmemd_obc *obc, void *arg,
 	const struct rpmem_req_attr *req)
 {
 	UT_ASSERTne(arg, NULL);
@@ -138,7 +185,7 @@ req_cb_open(struct rpmemd_obc_client *client, void *arg,
 
 		struct rpmem_pool_attr pool_attr = POOL_ATTR_INIT;
 
-		ret = rpmemd_obc_client_open_resp(client, args->status,
+		ret = rpmemd_obc_open_resp(obc, args->status,
 				&resp, &pool_attr);
 	}
 
@@ -155,7 +202,7 @@ req_cb_open(struct rpmemd_obc_client *client, void *arg,
  * struct req_cb_arg.
  */
 static int
-req_cb_close(struct rpmemd_obc_client *client, void *arg)
+req_cb_close(struct rpmemd_obc *obc, void *arg)
 {
 	UT_ASSERTne(arg, NULL);
 
@@ -166,7 +213,7 @@ req_cb_close(struct rpmemd_obc_client *client, void *arg)
 	int ret = args->ret;
 
 	if (args->resp)
-		ret = rpmemd_obc_client_close_resp(client, args->status);
+		ret = rpmemd_obc_close_resp(obc, args->status);
 
 	if (args->force_ret)
 		ret = args->ret;
@@ -175,27 +222,25 @@ req_cb_close(struct rpmemd_obc_client *client, void *arg)
 }
 
 /*
- * req_cb_remove -- callback for remove request operation
+ * req_cb_set_attr -- callback for set attributes request operation
  *
  * This function behaves according to arguments specified via
  * struct req_cb_arg.
  */
 static int
-req_cb_remove(struct rpmemd_obc_client *client, void *arg,
-		const char *pool_desc)
+req_cb_set_attr(struct rpmemd_obc *obc, void *arg,
+	const struct rpmem_pool_attr *pool_attr)
 {
 	UT_ASSERTne(arg, NULL);
-	UT_ASSERTne(pool_desc, NULL);
-	UT_ASSERTeq(strcmp(pool_desc, POOL_DESC), 0);
 
 	struct req_cb_arg *args = arg;
 
-	args->types |= (1 << RPMEM_MSG_TYPE_REMOVE);
+	args->types |= (1 << RPMEM_MSG_TYPE_SET_ATTR);
 
 	int ret = args->ret;
 
 	if (args->resp)
-		ret = rpmemd_obc_client_remove_resp(client, args->status);
+		ret = rpmemd_obc_set_attr_resp(obc, args->status);
 
 	if (args->force_ret)
 		ret = args->ret;
@@ -203,138 +248,79 @@ req_cb_remove(struct rpmemd_obc_client *client, void *arg,
 	return ret;
 }
 
+
 /*
  * REQ_CB -- request callbacks
  */
-struct rpmemd_obc_client_requests REQ_CB = {
+struct rpmemd_obc_requests REQ_CB = {
 	.create = req_cb_create,
 	.open = req_cb_open,
 	.close = req_cb_close,
-	.remove = req_cb_remove,
+	.set_attr = req_cb_set_attr,
 };
-
-/*
- * clnt_connect_wait -- connect with target in a loop
- */
-int
-clnt_connect_wait(char *target)
-{
-	int fd;
-	do {
-		fd = clnt_connect(target);
-	} while (fd == -1);
-
-	return fd;
-}
 
 /*
  * clnt_wait_disconnect -- wait for disconnection
  */
 void
-clnt_wait_disconnect(int fd)
+clnt_wait_disconnect(struct rpmem_ssh *ssh)
 {
-	int buff;
-	ssize_t rret = read(fd, &buff, sizeof(buff));
-	UT_ASSERT(rret <= 0);
-}
-
-/*
- * clnt_connect -- create a socket connection with specified target
- */
-int
-clnt_connect(char *target)
-{
-	char *node = STRDUP(target);
-	char *service = strrchr(node, ':');
-	if (service) {
-		*service = '\0';
-		service++;
-	} else {
-		service = RPMEM_SERVICE;
-	}
-
-	struct addrinfo *addrinfo;
-	struct addrinfo hints;
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_STREAM;
-	hints.ai_protocol = 0;
-	int ret = getaddrinfo(node, service, &hints, &addrinfo);
-	UT_ASSERTeq(ret, 0);
-	int sockfd;
-
-	for (struct addrinfo *ai = addrinfo; ai; ai = ai->ai_next) {
-		sockfd = socket(ai->ai_family, ai->ai_socktype,
-				ai->ai_protocol);
-
-		if (sockfd == -1)
-			continue;
-
-		if (!connect(sockfd, ai->ai_addr, ai->ai_addrlen))
-			break;
-
-		close(sockfd);
-		sockfd = -1;
-	}
-
-	FREE(node);
-	freeaddrinfo(addrinfo);
-
-	return sockfd;
-}
-
-/*
- * clnt_send -- send data via socket
- */
-void
-clnt_send(int fd, const void *buff, size_t len)
-{
-	size_t wr = 0;
-	const uint8_t *cbuf = buff;
-	while (wr < len) {
-		ssize_t ret = write(fd, &cbuf[wr], len - wr);
-		UT_ASSERT(ret > 0);
-		wr += (size_t)ret;
-	}
-}
-
-/*
- * clnt_recv -- receive data via socket
- */
-void
-clnt_recv(int fd, void *buff, size_t len)
-{
-	size_t rd  = 0;
-	uint8_t *cbuf = buff;
-	while (rd < len) {
-		ssize_t ret = read(fd, &cbuf[rd], len - rd);
-		UT_ASSERT(ret > 0);
-		rd += (size_t)ret;
-	}
-}
-
-/*
- * server_bad_msg -- process a message specified number of times and expect
- * error returned from rpmemd_obc_client_process function
- */
-void
-server_bad_msg(struct rpmemd_obc *rpdc, int count)
-{
-	struct rpmemd_obc_client *client;
 	int ret;
 
-	for (int i = 0; i < count; i++) {
-		client = rpmemd_obc_accept(rpdc);
-		UT_ASSERTne(client, NULL);
+	ret = rpmem_ssh_monitor(ssh, 0);
+	UT_ASSERTne(ret, 1);
+}
 
-		ret = rpmemd_obc_client_process(client, &REQ_CB, NULL);
-		UT_ASSERTne(ret, 0);
+/*
+ * clnt_connect -- create a ssh connection with specified target
+ */
+struct rpmem_ssh *
+clnt_connect(char *target)
+{
 
-		ret = rpmemd_obc_client_close(client);
-		UT_ASSERTeq(ret, 0);
+	struct rpmem_target_info *info;
+	info = rpmem_target_parse(target);
+	UT_ASSERTne(info, NULL);
 
-		rpmemd_obc_client_fini(client);
-	}
+	struct rpmem_ssh *ssh = rpmem_ssh_open(info);
+	UT_ASSERTne(ssh, NULL);
+
+	rpmem_target_free(info);
+
+	return ssh;
+}
+
+/*
+ * clnt_close -- close client
+ */
+void
+clnt_close(struct rpmem_ssh *ssh)
+{
+	rpmem_ssh_close(ssh);
+}
+
+/*
+ * clnt_send -- send data
+ */
+void
+clnt_send(struct rpmem_ssh *ssh, const void *buff, size_t len)
+{
+	int ret;
+
+	ret = rpmem_ssh_send(ssh, buff, len);
+	UT_ASSERTeq(ret, 0);
+}
+
+/*
+ * clnt_recv -- receive data
+ */
+void
+clnt_recv(struct rpmem_ssh *ssh, void *buff, size_t len)
+{
+	int ret;
+
+	ret = rpmem_ssh_recv(ssh, buff, len);
+	UT_ASSERTeq(ret, 0);
 }
 
 /*
@@ -344,36 +330,45 @@ static void
 server_msg_args(struct rpmemd_obc *rpdc, enum conn_wait_close conn,
 	struct req_cb_arg *args)
 {
-	struct rpmemd_obc_client *client;
 	int ret;
 	unsigned long long types = args->types;
 	args->types = 0;
 
-	client = rpmemd_obc_accept(rpdc);
-	UT_ASSERTne(client, NULL);
 
-	ret = rpmemd_obc_client_process(client, &REQ_CB, args);
+	ret = rpmemd_obc_process(rpdc, &REQ_CB, args);
 	UT_ASSERTeq(ret, args->ret);
 	UT_ASSERTeq(args->types, types);
 
 	if (conn == CONN_WAIT_CLOSE) {
-		ret = rpmemd_obc_client_process(client, &REQ_CB, args);
+		ret = rpmemd_obc_process(rpdc, &REQ_CB, args);
 		UT_ASSERTeq(ret, 1);
 	}
 
-	ret = rpmemd_obc_client_close(client);
-	UT_ASSERTeq(ret, 0);
-
-	rpmemd_obc_client_fini(client);
+	rpmemd_obc_fini(rpdc);
 }
 
 /*
  * server_msg_resp -- process a message of specified type, response to client
  * with specific status value and return status of sending response function
  */
-void
-server_msg_resp(struct rpmemd_obc *rpdc, enum rpmem_msg_type type, int status)
+int
+server_msg_resp(const struct test_case *tc, int argc, char *argv[])
 {
+	if (argc < 2)
+		UT_FATAL("usage: %s msg_type status", tc->name);
+
+	int type = atoi(argv[0]);
+	int status = atoi(argv[1]);
+
+	int ret;
+	struct rpmemd_obc *rpdc;
+
+	rpdc = rpmemd_obc_init(STDIN_FILENO, STDOUT_FILENO);
+	UT_ASSERTne(rpdc, NULL);
+
+	ret = rpmemd_obc_status(rpdc, 0);
+	UT_ASSERTeq(ret, 0);
+
 	struct req_cb_arg args = {
 		.ret = 0,
 		.force_ret = 0,
@@ -383,15 +378,30 @@ server_msg_resp(struct rpmemd_obc *rpdc, enum rpmem_msg_type type, int status)
 	};
 
 	server_msg_args(rpdc, CONN_WAIT_CLOSE, &args);
+
+	return 2;
 }
 
 /*
  * server_msg_noresp -- process a message of specified type, do not response to
  * client and return specific value from process callback
  */
-void
-server_msg_noresp(struct rpmemd_obc *rpdc, enum rpmem_msg_type type)
+int
+server_msg_noresp(const struct test_case *tc, int argc, char *argv[])
 {
+	if (argc < 1)
+		UT_FATAL("usage: %s msg_type", tc->name);
+
+	int type = atoi(argv[0]);
+	int ret;
+	struct rpmemd_obc *rpdc;
+
+	rpdc = rpmemd_obc_init(STDIN_FILENO, STDOUT_FILENO);
+	UT_ASSERTne(rpdc, NULL);
+
+	ret = rpmemd_obc_status(rpdc, 0);
+	UT_ASSERTeq(ret, 0);
+
 	struct req_cb_arg args = {
 		.ret = -1,
 		.force_ret = 1,
@@ -401,4 +411,30 @@ server_msg_noresp(struct rpmemd_obc *rpdc, enum rpmem_msg_type type)
 	};
 
 	server_msg_args(rpdc, CONN_CLOSE, &args);
+
+	return 1;
+}
+
+/*
+ * server_bad_msg -- process a message and expect
+ * error returned from rpmemd_obc_process function
+ */
+int
+server_bad_msg(const struct test_case *tc, int argc, char *argv[])
+{
+	int ret;
+	struct rpmemd_obc *rpdc;
+
+	rpdc = rpmemd_obc_init(STDIN_FILENO, STDOUT_FILENO);
+	UT_ASSERTne(rpdc, NULL);
+
+	ret = rpmemd_obc_status(rpdc, 0);
+	UT_ASSERTeq(ret, 0);
+
+	ret = rpmemd_obc_process(rpdc, &REQ_CB, NULL);
+	UT_ASSERTne(ret, 0);
+
+	rpmemd_obc_fini(rpdc);
+
+	return 0;
 }

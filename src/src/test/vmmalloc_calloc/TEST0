@@ -1,6 +1,6 @@
 #!/bin/bash -e
 #
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -32,14 +32,15 @@
 #
 
 #
-# src/test/vmmalloc_calloc/TEST0 -- unit test for
-# libvmmalloc calloc/cfree
+# src/test/vmmalloc_calloc/TEST0 -- unit test for libvmmalloc calloc
 #
 export UNITTEST_NAME=vmmalloc_calloc/TEST0
 export UNITTEST_NUM=0
 
 # standard unit test setup
 . ../unittest/unittest.sh
+
+require_test_type medium
 
 require_fs_type any
 # there's no point in testing statically linked builds

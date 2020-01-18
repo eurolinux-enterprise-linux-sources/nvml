@@ -42,8 +42,12 @@ export UNITTEST_NUM=1
 # standard unit test setup
 . ../unittest/unittest.sh
 
+require_test_type medium
+
 require_fs_type none
 require_build_type nondebug debug
+
+export RPMEM_CMD="echo -n ERROR!=="
 
 setup
 

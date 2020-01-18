@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -77,9 +77,9 @@ struct base {
 	struct slisthead slist;
 };
 
-const int expectedResTQ[] = { 111, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+static const int expectedResTQ[] = { 111, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
 		0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 222 };
-const int expectedResSL[] = { 111, 8, 222, 6, 5, 4, 3, 2, 1, 0, 333 };
+static const int expectedResSL[] = { 111, 8, 222, 6, 5, 4, 3, 2, 1, 0, 333 };
 
 /*
  * dump_tq -- dumps list on standard output
@@ -257,7 +257,7 @@ init_slist(PMEMobjpool *pop, struct slisthead *head)
 int
 main(int argc, char *argv[])
 {
-	unsigned int res = 0;
+	unsigned res = 0;
 	PMEMobjpool *pop;
 	const char *path;
 
@@ -271,7 +271,7 @@ main(int argc, char *argv[])
 	}
 	path = argv[1];
 
-	if (access(path, F_OK) != 0) {
+	if (os_access(path, F_OK) != 0) {
 		if ((pop = pmemobj_create(path, POBJ_LAYOUT_NAME(list),
 			PMEMOBJ_MIN_POOL, 0666)) == NULL) {
 			UT_FATAL("!pmemobj_create: %s", path);

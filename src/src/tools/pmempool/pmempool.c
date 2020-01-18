@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,6 +49,14 @@
 #include "check.h"
 #include "rm.h"
 #include "convert.h"
+#include "synchronize.h"
+#include "transform.h"
+#include "set.h"
+
+#ifndef _WIN32
+#include "rpmem_common.h"
+#include "rpmem_util.h"
+#endif
 
 #define APPNAME	"pmempool"
 
@@ -69,9 +77,9 @@ static void print_help(char *appname);
  * long_options -- pmempool command line arguments
  */
 static const struct option long_options[] = {
-	{"version",	no_argument,	0,	'V'},
-	{"help",	no_argument,	0,	'h'},
-	{0,		0,		0,	 0 },
+	{"version",	no_argument,	NULL,	'V'},
+	{"help",	no_argument,	NULL,	'h'},
+	{NULL,		0,		NULL,	 0 },
 };
 
 /*
@@ -147,6 +155,18 @@ static struct command commands[] = {
 		.help = pmempool_convert_help,
 	},
 	{
+		.name = "sync",
+		.brief = "synchronize data between replicas",
+		.func = pmempool_sync_func,
+		.help = pmempool_sync_help,
+	},
+	{
+		.name = "transform",
+		.brief = "modify internal structure of a poolset",
+		.func = pmempool_transform_func,
+		.help = pmempool_transform_help,
+	},
+	{
 		.name = "help",
 		.brief = "print help text about a command",
 		.func = help_func,
@@ -192,8 +212,11 @@ print_help(char *appname)
 	printf("\n");
 	printf("The available commands are:\n");
 	unsigned i;
-	for (i = 0; i < COMMANDS_NUMBER; i++)
-		printf("%s\t- %s\n", commands[i].name, commands[i].brief);
+	for (i = 0; i < COMMANDS_NUMBER; i++) {
+		const char *format = (strlen(commands[i].name) / 8)
+				? "%s\t- %s\n" : "%s\t\t- %s\n";
+		printf(format, commands[i].name, commands[i].brief);
+	}
 	printf("\n");
 	printf("For complete documentation see %s(1) manual page.\n", appname);
 }
@@ -218,12 +241,29 @@ main(int argc, char *argv[])
 {
 	int opt;
 	int option_index;
-
+	int ret = 0;
+#ifdef _WIN32
+	wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), &argc);
+	for (int i = 0; i < argc; i++) {
+		argv[i] = util_toUTF8(wargv[i]);
+		if (argv[i] == NULL) {
+			for (i--; i >= 0; i--)
+				free(argv[i]);
+			outv_err("Error during arguments conversion\n");
+			return 1;
+		}
+	}
+#endif
 	util_init();
+
+#ifndef _WIN32
+	util_remote_init();
+	rpmem_util_cmds_init();
+#endif
 
 	if (argc < 2) {
 		print_usage(APPNAME);
-		return 0;
+		goto end;
 	}
 
 	while ((opt = getopt_long(2, argv, "Vh",
@@ -231,13 +271,14 @@ main(int argc, char *argv[])
 		switch (opt) {
 		case 'V':
 			print_version(APPNAME);
-			return 0;
+			goto end;
 		case 'h':
 			print_help(APPNAME);
-			return 0;
+			goto end;
 		default:
 			print_usage(APPNAME);
-			return -1;
+			ret = 1;
+			goto end;
 		}
 	}
 
@@ -245,10 +286,24 @@ main(int argc, char *argv[])
 
 	struct command *cmdp = get_command(cmd_str);
 
-	if (cmdp)
-		return cmdp->func(APPNAME, argc - 1, argv + 1);
+	if (cmdp) {
+		ret = cmdp->func(APPNAME, argc - 1, argv + 1);
+	} else {
+		outv_err("'%s' -- unknown command\n", cmd_str);
+		ret = 1;
+	}
+#ifndef _WIN32
+	util_remote_fini();
+	rpmem_util_cmds_fini();
+#endif
 
-	outv_err("'%s' -- unknown command\n", cmd_str);
+end:
+#ifdef _WIN32
+	for (int i = argc; i > 0; i--)
+		free(argv[i - 1]);
+#endif
+	if (ret)
+		return 1;
 
-	return -1;
+	return 0;
 }

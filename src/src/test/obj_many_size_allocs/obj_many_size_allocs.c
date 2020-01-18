@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,6 +38,7 @@
 #include <stddef.h>
 
 #include "unittest.h"
+#include "heap.h"
 
 #define LAYOUT_NAME "many_size_allocs"
 #define TEST_ALLOC_SIZE 2048
@@ -59,10 +60,10 @@ test_constructor(PMEMobjpool *pop, void *addr, void *args)
 	return 0;
 }
 
-static void
+static PMEMobjpool *
 test_allocs(PMEMobjpool *pop, const char *path)
 {
-	PMEMoid oid[TEST_ALLOC_SIZE];
+	PMEMoid *oid = MALLOC(sizeof(PMEMoid) * TEST_ALLOC_SIZE);
 
 	if (pmemobj_alloc(pop, &oid[0], 0, 0, NULL, NULL) == 0)
 		UT_FATAL("pmemobj_alloc(0) succeeded");
@@ -85,11 +86,12 @@ test_allocs(PMEMobjpool *pop, const char *path)
 		pmemobj_free(&oid[i]);
 		UT_ASSERT(OID_IS_NULL(oid[i]));
 	}
+	FREE(oid);
 
-	pmemobj_close(pop);
+	return pop;
 }
 
-static void
+static PMEMobjpool *
 test_lazy_load(PMEMobjpool *pop, const char *path)
 {
 	PMEMoid oid[3];
@@ -108,8 +110,31 @@ test_lazy_load(PMEMobjpool *pop, const char *path)
 
 	ret = pmemobj_alloc(pop, &oid[1], LAZY_LOAD_BIG_SIZE, 0, NULL, NULL);
 	UT_ASSERTeq(ret, 0);
+
+	return pop;
 }
 
+#define ALLOC_BLOCK_SIZE 64
+#define MAX_BUCKET_MAP_ENTRIES (RUNSIZE / ALLOC_BLOCK_SIZE)
+
+static void
+test_all_classes(PMEMobjpool *pop)
+{
+	for (int i = 1; i <= MAX_BUCKET_MAP_ENTRIES; ++i) {
+		int err;
+		int nallocs = 0;
+		while ((err = pmemobj_alloc(pop, NULL, i * ALLOC_BLOCK_SIZE, 0,
+			NULL, NULL)) == 0) {
+			nallocs++;
+		}
+
+		UT_ASSERT(nallocs > 0);
+		PMEMoid iter, niter;
+		POBJ_FOREACH_SAFE(pop, iter, niter) {
+			pmemobj_free(&iter);
+		}
+	}
+}
 
 int
 main(int argc, char *argv[])
@@ -127,8 +152,11 @@ main(int argc, char *argv[])
 			0, S_IWUSR | S_IRUSR)) == NULL)
 		UT_FATAL("!pmemobj_create: %s", path);
 
-	test_lazy_load(pop, path);
-	test_allocs(pop, path);
+	pop = test_lazy_load(pop, path);
+	pop = test_allocs(pop, path);
+	test_all_classes(pop);
+
+	pmemobj_close(pop);
 
 	DONE(NULL);
 }

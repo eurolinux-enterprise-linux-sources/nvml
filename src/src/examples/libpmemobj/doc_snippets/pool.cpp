@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,9 +36,9 @@
 
 //! [pool_example]
 #include <fcntl.h>
-#include <libpmemobj/p.hpp>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
+#include <libpmemobj++/p.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
 
 using namespace nvml::obj;
 
@@ -54,13 +54,13 @@ pool_example()
 	};
 
 	// create a pmemobj pool
-	auto pop = pool<root>::create("poolfile", "layout", PMEMOBJ_MIN_POOL,
-				      S_IWUSR | S_IRUSR);
+	auto pop = pool<root>::create("poolfile", "layout", PMEMOBJ_MIN_POOL);
+
 	// close a pmemobj pool
 	pop.close();
 
 	// or open a pmemobj pool
-	pop = pool<root>::open("poolfile", "");
+	pop = pool<root>::open("poolfile", "layout");
 
 	// typical usage schemes
 	auto root_obj = pop.get_root();
@@ -78,15 +78,15 @@ pool_example()
 	pop.close();
 
 	// check pool consistency
-	pool<root>::check("poolfile", "");
+	pool<root>::check("poolfile", "layout");
 }
 //! [pool_example]
 
 //! [pool_base_example]
 #include <fcntl.h>
-#include <libpmemobj/make_persistent_atomic.hpp>
-#include <libpmemobj/p.hpp>
-#include <libpmemobj/pool.hpp>
+#include <libpmemobj++/make_persistent_atomic.hpp>
+#include <libpmemobj++/p.hpp>
+#include <libpmemobj++/pool.hpp>
 
 using namespace nvml::obj;
 
@@ -101,8 +101,8 @@ pool_base_example()
 	};
 
 	// create a pmemobj pool
-	auto pop = pool_base::create("poolfile", "", PMEMOBJ_MIN_POOL,
-				     S_IWUSR | S_IRUSR);
+	auto pop = pool_base::create("poolfile", "", PMEMOBJ_MIN_POOL);
+
 	// close a pmemobj pool
 	pop.close();
 

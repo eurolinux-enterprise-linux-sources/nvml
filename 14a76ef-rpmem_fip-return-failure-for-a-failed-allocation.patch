@@ -1,0 +1,29 @@
+rpmem_fip: return failure for a failed allocation
+
+BZ: 
+
+commit 14a76ef815d6bd22919b9c9351778ddc42d28212
+Author: Jeff Moyer <jmoyer@redhat.com>
+Date:   Thu Oct 19 17:21:35 2017 -0400
+
+    rpmem_fip: return failure for a failed allocation
+    
+    rpmem_fip_getinfo will return 0 (success) when it fails to
+    allocate space.  This can result in a NULL pointer dereference
+    later on in callers.
+    
+    Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/src/librpmem/rpmem_fip.c b/src/librpmem/rpmem_fip.c
+index 87ffcaf..0993213 100644
+--- a/src/librpmem/rpmem_fip.c
++++ b/src/librpmem/rpmem_fip.c
+@@ -368,7 +368,7 @@ static int
+ rpmem_fip_getinfo(struct rpmem_fip *fip, const char *node, const char *service,
+ 	enum rpmem_provider provider, enum rpmem_persist_method pm)
+ {
+-	int ret = 0;
++	int ret = -1;
+ 	struct fi_info *hints = rpmem_fip_get_hints(provider);
+ 	if (!hints) {
+ 		RPMEM_LOG(ERR, "!getting fabric interface information hints");

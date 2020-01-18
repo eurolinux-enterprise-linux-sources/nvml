@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,37 +30,44 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <errno.h>
-#include <pthread.h>
-
 /*
  * sync.h -- internal to obj synchronization API
  */
+
+#ifndef LIBPMEMOBJ_SYNC_H
+#define LIBPMEMOBJ_SYNC_H 1
+
+#include <errno.h>
+#include <stdint.h>
+
+#include "libpmemobj.h"
+#include "out.h"
+#include "os_thread.h"
 
 /*
  * internal definitions of PMEM-locks
  */
 typedef union padded_pmemmutex {
-	char padding[_POBJ_CL_ALIGNMENT];
+	char padding[_POBJ_CL_SIZE];
 	struct {
 		uint64_t runid;
-		pthread_mutex_t mutex;
+		os_mutex_t mutex;
 	} pmemmutex;
 } PMEMmutex_internal;
 
 typedef union padded_pmemrwlock {
-	char padding[_POBJ_CL_ALIGNMENT];
+	char padding[_POBJ_CL_SIZE];
 	struct {
 		uint64_t runid;
-		pthread_rwlock_t rwlock;
+		os_rwlock_t rwlock;
 	} pmemrwlock;
 } PMEMrwlock_internal;
 
 typedef union padded_pmemcond {
-	char padding[_POBJ_CL_ALIGNMENT];
+	char padding[_POBJ_CL_SIZE];
 	struct {
 		uint64_t runid;
-		pthread_cond_t cond;
+		os_cond_t cond;
 	} pmemcond;
 } PMEMcond_internal;
 
@@ -95,3 +102,5 @@ pmemobj_mutex_unlock_nofail(PMEMobjpool *pop, PMEMmutex *mutexp)
 }
 
 int pmemobj_mutex_assert_locked(PMEMobjpool *pop, PMEMmutex *mutexp);
+
+#endif

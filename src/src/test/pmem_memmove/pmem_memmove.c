@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,6 +39,8 @@
  */
 
 #include "unittest.h"
+#include "util_pmem.h"
+#include "file.h"
 
 /*
  * swap_mappings - given to mmapped regions swap them.
@@ -92,7 +94,10 @@ do_memmove(int fd, char *dest, char *src, char *file_name, off_t dest_off,
 	memset(buf, 0, bytes);
 	memset(src1, 0, bytes);
 	memset(src, 0x5A, bytes / 4);
+	util_persist_auto(util_fd_is_device_dax(fd), src, bytes / 4);
 	memset(src + bytes / 4, 0x54, bytes / 4);
+	util_persist_auto(util_fd_is_device_dax(fd), src + bytes / 4,
+			bytes / 4);
 
 	/* dest == src */
 	old = *(char *)(dest + dest_off);
@@ -260,6 +265,7 @@ main(int argc, char *argv[])
 
 		src = dest + overlap;
 		memset(dest, 0, bytes);
+		util_persist_auto(util_fd_is_device_dax(fd), dest, bytes);
 		do_memmove(fd, dest, src, argv[1], dest_off, src_off,
 			overlap, bytes);
 		MUNMAP(dest, mapped_len);
@@ -272,6 +278,7 @@ main(int argc, char *argv[])
 		src = dest;
 		dest = src + overlap;
 		memset(src, 0, bytes);
+		util_persist_auto(util_fd_is_device_dax(fd), src, bytes);
 		do_memmove(fd, dest, src, argv[1], dest_off, src_off,
 			overlap, bytes);
 		MUNMAP(src, mapped_len);

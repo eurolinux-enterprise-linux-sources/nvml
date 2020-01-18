@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,11 +39,11 @@
 
 #include "unittest.h"
 
-#define TEST_ALLOC_SIZE (131072 - 64) /* last unit size */
+#define TEST_ALLOC_SIZE (32 * 1024)
 #define LAYOUT_NAME "oom_mt"
 
-int allocated;
-PMEMobjpool *pop;
+static int allocated;
+static PMEMobjpool *pop;
 
 static void *
 oom_worker(void *arg)
@@ -73,14 +73,14 @@ main(int argc, char *argv[])
 			PMEMOBJ_MIN_POOL, S_IWUSR | S_IRUSR)) == NULL)
 		UT_FATAL("!pmemobj_create: %s", path);
 
-	pthread_t t;
-	pthread_create(&t, NULL, oom_worker, NULL);
-	pthread_join(t, NULL);
+	os_thread_t t;
+	os_thread_create(&t, NULL, oom_worker, NULL);
+	os_thread_join(t, NULL);
 
 	int first_thread_allocated = allocated;
 
-	pthread_create(&t, NULL, oom_worker, NULL);
-	pthread_join(t, NULL);
+	os_thread_create(&t, NULL, oom_worker, NULL);
+	os_thread_join(t, NULL);
 
 	UT_ASSERTeq(first_thread_allocated, allocated);
 

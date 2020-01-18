@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,10 +44,9 @@
 #include <sys/param.h>
 #include "unittest.h"
 
-#include "util.h"
 #include "blk.h"
 
-size_t Bsize;
+static size_t Bsize;
 
 /*
  * construct -- build a buffer for writing
@@ -92,11 +91,11 @@ static int
 is_zeroed(const char *path)
 {
 	int fd = OPEN(path, O_RDWR);
-	ut_util_stat_t stbuf;
+	os_stat_t stbuf;
 
 	FSTAT(fd, &stbuf);
 
-	void *addr = MMAP(0, stbuf.st_size, PROT_READ|PROT_WRITE,
+	void *addr = MMAP(NULL, stbuf.st_size, PROT_READ|PROT_WRITE,
 			MAP_SHARED, fd, 0);
 
 	struct pmemblk *header = addr;

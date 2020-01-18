@@ -1,5 +1,5 @@
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2015-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -35,6 +35,7 @@
 #
 TOP_SRC := $(dir $(lastword $(MAKEFILE_LIST)))..
 TOP := $(TOP_SRC)/..
+HEADERS = $(wildcard *.h) $(wildcard *.hpp)
 
 INCDIR = $(TOP_SRC)/include
 LIBDIR = $(TOP_SRC)/debug
@@ -42,9 +43,9 @@ LIBDIR = $(TOP_SRC)/debug
 include $(TOP)/src/common.inc
 
 CXXFLAGS = -std=c++11 -ggdb -Wall -Werror $(EXTRA_CXXFLAGS)
-CFLAGS = -std=gnu99 -ggdb -Wall -Werror $(EXTRA_CFLAGS)
+CFLAGS = -std=gnu99 -ggdb -Wall -Werror -Wmissing-prototypes $(EXTRA_CFLAGS)
 LDFLAGS = -Wl,-rpath=$(LIBDIR) -L$(LIBDIR) $(EXTRA_LDFLAGS)
-INCS = -I$(INCDIR) -I.
+INCS = -I$(INCDIR) -I. -I$(TOP_SRC)/examples
 
 LINKER=$(CC)
 ifeq ($(COMPILE_LANG), cpp)
@@ -56,17 +57,20 @@ clean-dirs:   TARGET = clean
 clobber-dirs: TARGET = clobber
 cstyle-dirs:  TARGET = cstyle
 format-dirs:  TARGET = format
+sparse-dirs:  TARGET = sparse
 
 all: $(if $(DIRS), all-dirs) $(if $(LIBRARIES), all-libraries) $(if $(PROGS), all-progs)
 clean: $(if $(DIRS), clean-dirs) $(if $(PROGS), clean-progs) $(if $(LIBRARIES), clean-libraries)
 clobber: $(if $(DIRS), clobber-dirs) $(if $(PROGS), clobber-progs) $(if $(LIBRARIES), clobber-libraries)
 cstyle: $(if $(DIRS), cstyle-dirs)
 format: $(if $(DIRS), format-dirs)
+sparse: $(if $(DIRS), sparse-dirs)
+	$(if $(DIRS), , $(sparse-c))
 
 DYNAMIC_LIBRARIES = $(addprefix lib, $(addsuffix .so, $(LIBRARIES)))
 STATIC_LIBRARIES = $(addprefix lib, $(addsuffix .a, $(LIBRARIES)))
 
-all-dirs clean-dirs clobber-dirs cstyle-dirs format-dirs: $(DIRS)
+all-dirs clean-dirs clobber-dirs cstyle-dirs format-dirs sparse-dirs: $(DIRS)
 all-progs: $(PROGS)
 all-libraries: $(DYNAMIC_LIBRARIES) $(STATIC_LIBRARIES)
 
@@ -92,16 +96,34 @@ ifneq ($(LIBRARIES),)
 endif
 
 clean-progs clean-libraries:
-	$(RM) *.o
+	$(RM) *.o $(TMP_HEADERS)
 
-.c.o:
+MAKEFILE_DEPS=Makefile $(TOP)/src/examples/Makefile.inc $(TOP)/src/common.inc
+
+ifneq ($(HEADERS),)
+ifneq ($(filter 1 2, $(CSTYLEON)),)
+TMP_HEADERS := $(addsuffix tmp, $(HEADERS))
+endif
+endif
+
+all: $(TMP_HEADERS)
+
+%.o: %.c $(MAKEFILE_DEPS)
+	$(call check-cstyle, $<)
 	$(CC) -c -o $@ $(CFLAGS) $(INCS) $<
 
-.cpp.o:
+%.o: %.cpp $(MAKEFILE_DEPS)
+	$(call check-cstyle, $<)
 	$(CXX) -c -o $@ $(CXXFLAGS) $(INCS) $<
 
-$(PROGS):
-	$(LINKER) -o $@ $(LDFLAGS) $^ $(LIBS)
+%.htmp: %.h
+	$(call check-cstyle, $<, $@)
+
+%.hpptmp: %.hpp
+	$(call check-cstyle, $<, $@)
+
+$(PROGS): | $(TMP_HEADERS)
+	$(LINKER) -o $@ $^ $(LDFLAGS) $(LIBS)
 
 lib%.o:
 	$(LD) -o $@ -r $^
@@ -110,7 +132,7 @@ $(STATIC_LIBRARIES):
 	$(AR) rv $@ $<
 
 $(DYNAMIC_LIBRARIES):
-	$(CC) -shared -o $@ $(LDFLAGS) -Wl,-shared,-soname=$@ $<
+	$(LINKER) -shared -o $@ $(LDFLAGS) -Wl,-shared,-soname=$@ $(LIBS) $<
 
 .PHONY: all clean clobber cstyle\
 	all-dirs clean-dirs clobber-dirs cstyle-dirs\

@@ -1,5 +1,6 @@
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2015-2017, Intel Corporation
+# Copyright (c) 2016, Microsoft Corporation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -45,56 +46,21 @@ Param(
     $testtype = "check",
     [alias("f")]
     $fstype = "all",
-    [alias("m")]
-    $mreceivetype = "auto",
-    [alias("p")]
-    $preceivetype = "auto",
-    [alias("h")]
-    $hreceivetype = "auto",
-    [alias("d")]
-    $dreceivetype = "auto",
     [alias("o")]
-    $time = "10s",
+    $time = "180s",
     [alias("s")]
     $testfile = "all",
+    [alias("i")]
+    $testdir = "all",
     [alias("c")]
-    $check_pool = "0"
+    $check_pool = "0",
+    [alias("k")]
+    $skip_dir = "",
+    [alias("j")]
+    $jobs = 1,
+    [alias("h")][switch]
+    $help= $false
     )
-
-# -v is a built in PS thing
-if ($VerbosePreference -ne 'SilentlyContinue') {
-    $verbose = 1
-} else {
-    $verbose = 0
-}
-
-if (-Not ("debug nondebug static-debug static-nondebug all" -match $buildtype)) {
-    usage "bad build-type: $buildtype"
-}
-if (-Not ("check short long" -match $testtype)) {
-    usage "bad test-type: $testtype"
-}
-if (-Not ("none pmem non-pmem any all" -match $fstype)) {
-    usage "bad fs-type: $fstype"
-}
-
-# XXX :missing some logic here that's in the bash script
-# having to do with force-enable and memcheck, pmemcheck.
-# don't really get whats going on there but we don't support
-# either in windows right now so will just save the params
-if (-Not ("auto" -match $mreceivetype)) {
-    usage "bad memcheck: $mreceivetype"
-}
-if (-Not ("auto" -match $preceivetype)) {
-    usage "bad pmemcheck: $preceivetype"
-}
-if (-Not ("auto" -match $ereceivetype)) {
-    usage "bad helgrind: $ereceivetype"
-}
-if (-Not ("auto" -match $dreceivetype)) {
-    usage "bad drd: $dreceivetype"
-}
-sv -Name receivetype $mreceivetype
 
 #
 # usage -- print usage message and exit
@@ -104,40 +70,78 @@ function usage {
         Write-Host "Error: $args"
     }
     Write-Host "Usage: $0 [ -hnv ] [ -b build-type ] [ -t test-type ] [ -f fs-type ]
-                [ -o timeout ] [ -s test-file ] [ -m memcheck ] [-p pmemcheck ] [ -e helgrind ] [ -d drd ] [ -c ] [tests...]
+                [ -o timeout ] [ -s test-file ] [ -k skip-dir ]
+                [ -c ] [ -i testdir ] [-j jobs]
         -h      print this help message
         -n      dry run
         -v      be verbose
+        -i test-dir run test(s) from this test directory (default is all)
         -b build-type   run only specified build type
                 build-type: debug, nondebug, static-debug, static-nondebug, all (default)
         -t test-type    run only specified test type
-                test-type: check (default), short, long
+                test-type: check (default), short, medium, long, all
+                where: check = short + medium; all = short + medium + long
+        -k skip-dir skip a specific test directories (for >1 dir enclose in "" and separate with spaces)
         -f fs-type  run tests only on specified file systems
                 fs-type: pmem, non-pmem, any, none, all (default)
         -o timeout  set timeout for test execution
                 timeout: floating point number with an optional suffix: 's' for seconds
                 (the default), 'm' for minutes, 'h' for hours or 'd' for days.
-                Default value is 3 minutes.
+                Default value is 180 seconds.
         -s test-file    run only specified test file
                 test-file: all (default), TEST0, TEST1, ...
-        -m memcheck run tests with memcheck
-                memcheck: auto (default, enable/disable based on test requirements),
-                force-enable (enable when test does not require memcheck, but
-                obey test's explicit memcheck disable)
-        -p pmemcheck    run tests with pmemcheck
-                pmemcheck: auto (default, enable/disable based on test requirements),
-                force-enable (enable when test does not require pmemcheck, but
-                obey test's explicit pmemcheck disable)
-        -e helgrind run tests with helgrind
-                helgrind: auto (default, enable/disable based on test requirements),
-                force-enable (enable when test does not require helgrind, but
-                obey test's explicit helgrind disable)
-        -d drd      run tests with drd
-                drd: auto (default, enable/disable based on test requirements),
-                force-enable (enable when test does not require drd, but
-                obey test's explicit drd disable)
+        -j jobs    number of tests to run simultaneously
         -c      check pool files with pmempool check utility"
     exit 1
+}
+
+# -v is a built in PS thing
+if ($VerbosePreference -ne 'SilentlyContinue') {
+    $verbose = 1
+} else {
+    $verbose = 0
+}
+
+if ($help) {
+    usage
+    exit 0
+}
+
+#
+# get_build_dir -- returns the directory to pick the test binaries from
+#
+# example, to get release build dir
+#	get_build_dir "nondebug"
+#
+
+function get_build_dir() {
+
+    param([string]$build)
+
+    # default build dir is Debug
+    $build_dir = "..\..\x64\Debug"
+
+    if ($build -eq "nondebug") {
+        $build_dir = "..\..\x64\Release"
+    }
+
+    return $build_dir
+}
+
+function read_global_test_configuration {
+    if ((Test-Path "config.PS1")) {
+        # source the test configuration file
+        . ".\config.PS1"
+        return;
+    }
+}
+
+#
+# test_concole_output -- print output from test to console
+#
+function test_concole_output($out, $err) {
+    Write-Host -NoNewline $out.Result;
+    Write-Host -NoNewline $err.Result;
 }
 
 #
@@ -151,12 +155,22 @@ function runtest {
     [int64]$timeval = $time.Substring(0,$time.length-1)
     if ($time -match "m") {
         [int64]$time = $timeval * 60
-    } ElseIf ($time -eq "h") {
+    } ElseIf ($time -match "h") {
         [int64]$time = $timeval * 60 * 60
-    } ElseIf ($time -eq "d") {
+    } ElseIf ($time -match "d") {
         [int64]$time = $timeval * 60 * 60 * 24
     } Else {
         [int64]$time = $timeval
+    }
+
+    #
+    # FS type was forced by user, necessary to treat "any" as either pmem or
+    # non-pmem with "-f"
+    #
+    if($fstype -ne "all") {
+        $Env:FORCE_FS= 1
+    } else {
+        $Env:FORCE_FS= 0
     }
 
     #
@@ -170,12 +184,15 @@ function runtest {
     if ($builds -eq "all") {
         $builds = "debug nondebug"
     }
-
+    if ($skip_dir.split() -contains $testName) {
+        Write-Host "RUNTESTS: Skipping: $testName"
+        return
+    }
     cd $testName
     if ($testfile -eq "all") {
         sv -Name dirCheck ".\TEST*.ps1"
     } else {
-        sv -Name dirCheck "..\$testName\TEST*.ps1"
+        sv -Name dirCheck "..\$testName\$testfile.ps1"
     }
     sv -Name runscripts ""
     Get-ChildItem $dirCheck | Sort-Object { $_.BaseName -replace "\D+" -as [Int] } | % {
@@ -188,68 +205,111 @@ function runtest {
         return
     }
 
-    Foreach ($fs in $fss.split(" ").trim()) {
-        # don't bother trying when fs-type isn't available...
-        if ($fs -match "pmem" -And $PMEM_FS_DIR -eq "") {
-            $pmem_skip = 1
-            continue
-        }
-        if ($fs -match "non-pmem" -And $NON_PMEM_FS_DIR -eq "") {
-            $non_pmem_skip = 1
-            continue
-        }
-        if ($fs -match "any" -And $NON_PMEM_FS_DIR -eq "" -And $PMEM_FS_DIR -eq "") {
-            continue
-        }
-
+    # for each TEST script found...
+    Foreach ($runscript in $runscripts.split(" ")) {
         if ($verbose) {
-            Write-Host "RUNTESTS: Testing fs-type: $fs..."
+            Write-Host "RUNTESTS: Test: $testName/$runscript "
         }
 
-        # for each build-type being tested...
-        Foreach ($build in $builds.split(" ").trim()) {
-            if ($verbose) {
-                Write-Host "RUNTESTS: Testing build-type: $build..."
-            }
-            $Env:CHECK_TYPE = $checktype
-            $Env:CHECK_POOL = $check_pool
-            $Env:VERBOSE = $verbose
-            $Env:TEST = $testtype
-            $Env:FS = $fs
-            $Env:BUILD = $build
-            # for each TEST script found...
-            Foreach ($runscript in $runscripts.split(" ")) {
-                if ($verbose) {
-                    Write-Host -NoNewline "RUNTESTS: Test: $testName/$runscript "
+        read_global_test_configuration
+        if ($testtype -ne "all") {
+            $type = get-content $runscript | select-string -pattern "require_test_type *" | select -last 1
+            if ($type -ne $null) {
+                $type = $type.ToString().split(" ")[1];
+                if ($testtype -eq "check" -and $type -eq "long") {
+                    continue
                 }
+                if ($testtype -ne "check" -and $testtype -ne $type) {
+                    continue
+                }
+            }
+        }
+
+        $test_fss = get-content $runscript | select-string -pattern "require_fs_type *" | select -last 1
+
+        Foreach ($fs in $fss.split(" ").trim()) {
+            if ($test_fss -ne $null) {
+                $found = 0
+                Foreach ($test_fs in $test_fss.ToString().Split(" ") | select -skip 1) {
+                    if ($test_fs -eq $fs) {
+                        $found = 1
+                        break
+                    }
+                }
+                if ($found -eq 0) {
+                    continue
+                }
+            }
+            # don't bother trying when fs-type isn't available...
+            if ($fs -eq "pmem" -And (-Not $Env:PMEM_FS_DIR)) {
+                $pmem_skip = 1
+                continue
+            }
+            if ($fs -eq "non-pmem" -And (-Not $Env:NON_PMEM_FS_DIR)) {
+                $non_pmem_skip = 1
+                continue
+            }
+            if ($fs -eq "any" -And (-Not $Env:NON_PMEM_FS_DIR) -And (-Not $Env:PMEM_FS_DIR)) {
+                continue
+            }
+
+            if ($verbose) {
+                Write-Host "RUNTESTS: Testing fs-type: $fs..."
+            }
+            # for each build-type being tested...
+            Foreach ($build in $builds.split(" ").trim()) {
+                if ($verbose) {
+                    Write-Host "RUNTESTS: Testing build-type: $build..."
+                }
+
+                $Env:CHECK_TYPE = $checktype
+                $Env:CHECK_POOL = $check_pool
+                $Env:VERBOSE = $verbose
+                $Env:TYPE = $testtype
+                $Env:FS = $fs
+                $Env:BUILD = $build
+                $Env:EXE_DIR = get_build_dir $build
+
                 if ($dryrun -eq "1") {
                     Write-Host "(in ./$testName) TEST=$testtype FS=$fs BUILD=$build .\$runscript"
-                } ElseIf ($use_timeout -And $testtype -eq "check") {
+                    break
+                }
+
+                $sb = {
+                    cd $args[0]
+                    Invoke-Expression $args[1]
+                }
+                $j1 = Start-Job -Name $name -ScriptBlock $sb -ArgumentList (pwd).Path, ".\$runscript"
+
+                If ($use_timeout -And $testtype -eq "check") {
                     # execute with timeout
-                    $p = Start-Process -NoNewWindow -PassThru -FilePath powershell.exe -ArgumentList ".\$runscript"
-                    sv -Name msg "FAILED"
-                    try {
-                        $p | Wait-Process -Timeout $time -ErrorAction Stop
-                    } catch {
-                        $p | Stop-Process -Force
-                        sv -Name msg "TIMED OUT"
+                    $timeout = New-Timespan -Seconds $time
+                    $stopwatch = [diagnostics.stopwatch]::StartNew()
+                    while (($stopwatch.Elapsed.ToString('hh\:mm\:ss') -lt $timeout) -And `
+                        ($j1.State -eq "NotStarted" -or $j1.State -eq "Running")) {
+                        Receive-Job -Job $j1
                     }
-                    if ($p.ExitCode -ne 0) {
-                        Write-Error "RUNTESTS: stopping: $testName/$runscript $msg, TEST=$testtype FS=$fs BUILD=$build"
+
+                    if ($stopwatch.Elapsed.ToString('hh\:mm\:ss') -ge $timeout) {
+                        Stop-Job -Job $j1
+                        Receive-Job -Job $j1
+                        Remove-Job -Job $j1 -Force
                         cd ..
-                        exit $p.ExitCode
+                        throw "RUNTESTS: stopping: $testName/$runscript TIMED OUT, TEST=$testtype FS=$fs BUILD=$build"
                     }
                 } Else {
-                    $p = Start-Process -Wait -NoNewWindow -PassThru -FilePath powershell.exe -ArgumentList ".\$runscript"
-                    if ($p.ExitCode -ne 0) {
-                        Write-Error "RUNTESTS: stopping: $testName/$runscript FAILED, TEST=$testtype FS=$fs BUILD=$build"
-                        cd ..
-                        exit $p.ExitCode
-                    }
+                    Receive-Job -Job $j1 -Wait
                 }
-            } # for runscripts
-        } # for builds
-    } # for fss
+
+                if ($j1.State -ne "Completed") {
+                    Remove-Job -Job $j1 -Force
+                    cd ..
+                    throw "RUNTESTS: stopping: $testName/$runscript FAILED TEST=$testtype FS=$fs BUILD=$build"
+                }
+                Remove-Job -Job $j1 -Force
+            } # for builds
+        } # for fss
+    } # for runscripts
     cd ..
 }
 
@@ -272,13 +332,38 @@ RUNTESTS: stopping because no testconfig.ps1 is found.
 
 . .\testconfig.ps1
 
+if ($Env:TEST_BUILD) {
+    $buildtype = $Env:TEST_BUILD
+}
+
+if ($Env:TEST_TYPE) {
+    $testtype = $Env:TEST_TYPE
+}
+
+if ($Env:TEST_FS) {
+    $fstype = $Env:TEST_FS
+}
+
+if ($Env:TEST_TIMEOUT) {
+    $time = $Env:TEST_TIMEOUT
+}
+
+if (-Not ("debug nondebug static-debug static-nondebug all" -match $buildtype)) {
+    usage "bad build-type: $buildtype"
+}
+if (-Not ("check short medium long all" -match $testtype)) {
+    usage "bad test-type: $testtype"
+}
+if (-Not ("none pmem non-pmem any all" -match $fstype)) {
+    usage "bad fs-type: $fstype"
+}
 
 if ($verbose -eq "1") {
     Write-Host -NoNewline "Options:"
-    if ($dryrun) {
+    if ($dryrun -eq "1") {
         Write-Host -NoNewline " -n"
     }
-    if ($verbose) {
+    if ($verbose -eq "1") {
         Write-Host -NoNewline " -v"
     }
     Write-Host ""
@@ -294,18 +379,93 @@ if ($verbose -eq "1") {
     Write-Host "    check-pool: $check_pool_str"
     Write-Host "Tests: $args"
 }
-if ($testfile -eq "all") {
-    Get-ChildItem -Directory | % {
-        $LASTEXITCODE = 0
-        runtest $_.Name
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host ""
-            Write-Error "RUNTESTS FAILED at $test_script"
-            Exit $LASTEXITCODE
+
+$threads = 0
+$status = 0
+
+try {
+    if ($testdir -eq "all") {
+        if ($jobs -gt 1) {
+            $it = 0
+            # unique name for all jobs
+            $name = [guid]::NewGuid().ToString()
+            $tests = (Get-ChildItem -Directory)
+
+            # script block - job's start function
+            $sb = {
+                cd $args[0]
+                $LASTEXITCODE = 0
+                .\RUNTESTS.ps1 -dryrun $args[1] -buildtype $args[2] `
+                        -testtype $args[3] -fstype $args[4] -time $args[5] `
+                        -testdir $args[6]
+                if ($LASTEXITCODE -ne 0) {
+                    throw "RUNTESTS FAILED $args[0]"
+                }
+            }
+
+            # start worker jobs
+            1..$jobs | % {
+                if ($it -lt $tests.Length) {
+                    $j1 = Start-Job -Name $name -ScriptBlock $sb `
+                            -ArgumentList (pwd).ToString(), `
+                            $dryrun, $buildtype, $testtype, $fstype, `
+                            $time, $tests[$it].Name | Out-Null
+                    $it++
+                    $threads++
+                }
+            }
+
+            $fail = $false
+
+            # control loop for receiving job outputs and starting new jobs
+            while ($threads -ne 0) {
+                Get-Job -name $name | Receive-Job
+                Get-Job -name $name | % {
+                    if ($_.State -eq "Running" -or $_.State -eq "NotStarted") {
+                        return
+                    }
+                    if ($_.State -eq "Failed") {
+                        $fail = $true
+                    }
+                    Receive-Job $_
+                    Remove-Job $_ -Force
+                    $threads--
+                    if ($fail -eq $false) {
+                        if ($it -lt $tests.Length) {
+                            Start-Job -Name $name -ScriptBlock $sb `
+                                    -ArgumentList (pwd).ToString(), `
+                                    $dryrun, $buildtype, $testtype, $fstype, `
+                                    $time, $tests[$it].Name | Out-Null
+                            $it++
+                            $threads++
+                        }
+                    }
+                }
+            }
+            if ($fail -eq $true) {
+                Write-Error "RUNTESTS FAILED"
+                Exit 1
+            }
+        } else {
+            # only one job
+            Get-ChildItem -Directory | % {
+                $LASTEXITCODE = 0
+                runtest $_.Name
+            }
         }
+    } else {
+        # only one test
+        $LASTEXITCODE = 0
+        runtest $testdir
     }
-} else {
-    ForEach ($test in $testfile.split(" ").trim()) {
-        runtest $test
+} catch {
+    Write-Error "RUNTESTS FAILED"
+    $status = 1
+} finally {
+    # cleanup jobs in case of exception or C-c
+    if ($threads -ne 0) {
+        Get-Job -name $name | Remove-Job -Force
     }
 }
+
+Exit $status

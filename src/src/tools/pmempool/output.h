@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -41,17 +41,18 @@
 void out_set_vlevel(int vlevel);
 void out_set_stream(FILE *stream);
 void out_set_prefix(const char *prefix);
-void out_set_col_width(unsigned int col_width);
-void outv_err(const char *fmt, ...);
+void out_set_col_width(unsigned col_width);
+void outv_err(const char *fmt, ...) FORMAT_PRINTF(1, 2);
 void out_err(const char *file, int line, const char *func,
-		const char *fmt, ...);
+		const char *fmt, ...) FORMAT_PRINTF(4, 5);
 void outv_err_vargs(const char *fmt, va_list ap);
 void outv_indent(int vlevel, int i);
-void outv(int vlevel, const char *fmt, ...);
+void outv(int vlevel, const char *fmt, ...) FORMAT_PRINTF(2, 3);
 void outv_nl(int vlevel);
 int outv_check(int vlevel);
-void outv_title(int vlevel, const char *fmt, ...);
-void outv_field(int vlevel, const char *field, const char *fmt, ...);
+void outv_title(int vlevel, const char *fmt, ...) FORMAT_PRINTF(2, 3);
+void outv_field(int vlevel, const char *field, const char *fmt,
+		...) FORMAT_PRINTF(3, 4);
 void outv_hexdump(int vlevel, const void *addr, size_t len, size_t offset,
 		int sep);
 const char *out_get_uuid_str(uuid_t uuid);
@@ -68,7 +69,6 @@ const char *out_get_chunk_type_str(enum chunk_type type);
 const char *out_get_chunk_flags(uint16_t flags);
 const char *out_get_zone_magic_str(uint32_t magic);
 const char *out_get_pmemoid_str(PMEMoid oid, uint64_t uuid_lo);
-const char *out_get_internal_type_str(enum internal_type type);
 const char *out_get_ei_class_str(uint8_t ei_class);
 const char *out_get_ei_data_str(uint8_t ei_class);
 const char *out_get_e_machine_str(uint16_t e_machine);

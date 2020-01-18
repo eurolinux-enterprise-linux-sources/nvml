@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,11 +34,11 @@
  * lists.c -- example usage of atomic lists API
  */
 
+#include <ex_common.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <assert.h>
 #include <libpmemobj.h>
 
@@ -85,7 +85,7 @@ struct list_constr_args {
 /*
  * list_print -- prints the chosen list content to standard output
  */
-void
+static void
 list_print(PMEMobjpool *pop, struct listbase *base, enum list_type type)
 {
 	switch (type) {
@@ -109,19 +109,19 @@ list_print(PMEMobjpool *pop, struct listbase *base, enum list_type type)
 /*
  * list_element_constr -- constructor of the list element
  */
-int
+static int
 list_element_constr(PMEMobjpool *pop, void *ptr, void *arg)
 {
-	struct list_constr_args *args = arg;
+	struct list_constr_args *args = (struct list_constr_args *)arg;
 
 	switch (args->type) {
 	case LIST_FOO: {
-		struct foo_el *e = ptr;
+		struct foo_el *e = (struct foo_el *)ptr;
 		e->value = args->value;
 		pmemobj_persist(pop, &e->value, sizeof(e->value));
 	} break;
 	case LIST_BAR: {
-		struct bar_el *e = ptr;
+		struct bar_el *e = (struct bar_el *)ptr;
 		e->value = args->value;
 		pmemobj_persist(pop, &e->value, sizeof(e->value));
 	} break;
@@ -135,7 +135,7 @@ list_element_constr(PMEMobjpool *pop, void *ptr, void *arg)
 /*
  * list_insert -- inserts a new element into the chosen list
  */
-void
+static void
 list_insert(PMEMobjpool *pop, struct listbase *base,
 	enum list_type type, int value)
 {
@@ -169,7 +169,7 @@ main(int argc, char *argv[])
 
 	PMEMobjpool *pop;
 
-	if (access(path, F_OK) != 0) {
+	if (file_exists(path) != 0) {
 		if ((pop = pmemobj_create(path, POBJ_LAYOUT_NAME(two_lists),
 			PMEMOBJ_MIN_POOL, 0666)) == NULL) {
 			perror("failed to create pool\n");
@@ -208,6 +208,8 @@ main(int argc, char *argv[])
 		int val = atoi(argv[4]);
 		list_insert(pop, &D_RW(r)->lists[id], type, val);
 	}
+
+	pmemobj_close(pop);
 
 	return 0;
 }

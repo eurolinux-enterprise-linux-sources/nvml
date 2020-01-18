@@ -41,14 +41,16 @@ export UNITTEST_NUM=0
 # standard unit test setup
 . ../unittest/unittest.sh
 
+require_test_type medium
+
 setup
 
-rm -f	stdout$UNITTEST_NUM.log\
+rm -f	stderr$UNITTEST_NUM.log\
 	logfile$UNITTEST_NUM.log\
 	syslog$UNITTEST_NUM.log
 
 expect_normal_exit ./rpmemd_log\
-	log stdout stdout$UNITTEST_NUM.log
+	log stderr stderr$UNITTEST_NUM.log
 
 expect_normal_exit ./rpmemd_log\
 	log file logfile$UNITTEST_NUM.log

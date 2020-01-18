@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,6 +34,7 @@
  * blk.c -- block memory pool entry points for libpmem
  */
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
@@ -42,19 +43,20 @@
 #include <errno.h>
 #include <time.h>
 #include <stdint.h>
-#include <pthread.h>
 #include <endian.h>
 
 #include "libpmem.h"
 #include "libpmemblk.h"
 
-#include "util.h"
+#include "mmap.h"
+#include "set.h"
 #include "out.h"
 #include "btt.h"
 #include "blk.h"
+#include "util.h"
 #include "sys_util.h"
+#include "util_pmem.h"
 #include "valgrind_internal.h"
-
 /*
  * lane_enter -- (internal) acquire a unique lane number
  */
@@ -91,11 +93,11 @@ nsread(void *ns, unsigned lane, void *buf, size_t count, uint64_t off)
 {
 	struct pmemblk *pbp = (struct pmemblk *)ns;
 
-	LOG(13, "pbp %p lane %u count %zu off %ju", pbp, lane, count, off);
+	LOG(13, "pbp %p lane %u count %zu off %" PRIu64, pbp, lane, count, off);
 
 	if (off + count > pbp->datasize) {
 		ERR("offset + count (%zu) past end of data area (%zu)",
-				off + count, pbp->datasize);
+				(size_t)off + count, pbp->datasize);
 		errno = EINVAL;
 		return -1;
 	}
@@ -117,11 +119,11 @@ nswrite(void *ns, unsigned lane, const void *buf, size_t count,
 {
 	struct pmemblk *pbp = (struct pmemblk *)ns;
 
-	LOG(13, "pbp %p lane %u count %zu off %ju", pbp, lane, count, off);
+	LOG(13, "pbp %p lane %u count %zu off %" PRIu64, pbp, lane, count, off);
 
 	if (off + count > pbp->datasize) {
 		ERR("offset + count (%zu) past end of data area (%zu)",
-				off + count, pbp->datasize);
+				(size_t)off + count, pbp->datasize);
 		errno = EINVAL;
 		return -1;
 	}
@@ -134,7 +136,7 @@ nswrite(void *ns, unsigned lane, const void *buf, size_t count,
 #endif
 
 	/* unprotect the memory (debug version only) */
-	RANGE_RW(dest, count);
+	RANGE_RW(dest, count, pbp->is_dev_dax);
 
 	if (pbp->is_pmem)
 		pmem_memcpy_nodrain(dest, buf, count);
@@ -142,7 +144,7 @@ nswrite(void *ns, unsigned lane, const void *buf, size_t count,
 		memcpy(dest, buf, count);
 
 	/* protect the memory again (debug version only) */
-	RANGE_RO(dest, count);
+	RANGE_RO(dest, count, pbp->is_dev_dax);
 
 #ifdef DEBUG
 	/* release debug write lock */
@@ -172,13 +174,13 @@ nsmap(void *ns, unsigned lane, void **addrp, size_t len, uint64_t off)
 {
 	struct pmemblk *pbp = (struct pmemblk *)ns;
 
-	LOG(12, "pbp %p lane %u len %zu off %ju", pbp, lane, len, off);
+	LOG(12, "pbp %p lane %u len %zu off %" PRIu64, pbp, lane, len, off);
 
 	ASSERT(((ssize_t)len) >= 0);
 
 	if (off + len >= pbp->datasize) {
 		ERR("offset + len (%zu) past end of data area (%zu)",
-				off + len, pbp->datasize - 1);
+				(size_t)off + len, pbp->datasize - 1);
 		errno = EINVAL;
 		return -1;
 	}
@@ -229,11 +231,11 @@ nszero(void *ns, unsigned lane, size_t count, uint64_t off)
 {
 	struct pmemblk *pbp = (struct pmemblk *)ns;
 
-	LOG(13, "pbp %p lane %u count %zu off %ju", pbp, lane, count, off);
+	LOG(13, "pbp %p lane %u count %zu off %" PRIu64, pbp, lane, count, off);
 
 	if (off + count > pbp->datasize) {
 		ERR("offset + count (%zu) past end of data area (%zu)",
-				off + count, pbp->datasize);
+				(size_t)off + count, pbp->datasize);
 		errno = EINVAL;
 		return -1;
 	}
@@ -241,12 +243,12 @@ nszero(void *ns, unsigned lane, size_t count, uint64_t off)
 	void *dest = (char *)pbp->data + off;
 
 	/* unprotect the memory (debug version only) */
-	RANGE_RW(dest, count);
+	RANGE_RW(dest, count, pbp->is_dev_dax);
 
 	pmem_memset_persist(dest, 0, count);
 
 	/* protect the memory again (debug version only) */
-	RANGE_RO(dest, count);
+	RANGE_RO(dest, count, pbp->is_dev_dax);
 
 	return 0;
 }
@@ -262,28 +264,26 @@ static struct ns_callback ns_cb = {
 };
 
 /*
- * pmemblk_descr_create -- (internal) create block memory pool descriptor
+ * blk_descr_create -- (internal) create block memory pool descriptor
  */
-static int
-pmemblk_descr_create(PMEMblkpool *pbp, uint32_t bsize, int zeroed)
+static void
+blk_descr_create(PMEMblkpool *pbp, uint32_t bsize, int zeroed)
 {
 	LOG(3, "pbp %p bsize %u zeroed %d", pbp, bsize, zeroed);
 
 	/* create the required metadata */
 	pbp->bsize = htole32(bsize);
-	pmem_msync(&pbp->bsize, sizeof(bsize));
+	util_persist(pbp->is_pmem, &pbp->bsize, sizeof(bsize));
 
 	pbp->is_zeroed = zeroed;
-	pmem_msync(&pbp->is_zeroed, sizeof(pbp->is_zeroed));
-
-	return 0;
+	util_persist(pbp->is_pmem, &pbp->is_zeroed, sizeof(pbp->is_zeroed));
 }
 
 /*
- * pmemblk_descr_check -- (internal) validate block memory pool descriptor
+ * blk_descr_check -- (internal) validate block memory pool descriptor
  */
 static int
-pmemblk_descr_check(PMEMblkpool *pbp, size_t *bsize)
+blk_descr_check(PMEMblkpool *pbp, size_t *bsize)
 {
 	LOG(3, "pbp %p bsize %zu", pbp, *bsize);
 
@@ -301,13 +301,13 @@ pmemblk_descr_check(PMEMblkpool *pbp, size_t *bsize)
 }
 
 /*
- * pmemblk_runtime_init -- (internal) initialize block memory pool runtime data
+ * blk_runtime_init -- (internal) initialize block memory pool runtime data
  */
 static int
-pmemblk_runtime_init(PMEMblkpool *pbp, size_t bsize, int rdonly, int is_pmem)
+blk_runtime_init(PMEMblkpool *pbp, size_t bsize, int rdonly)
 {
-	LOG(3, "pbp %p bsize %zu rdonly %d is_pmem %d",
-			pbp, bsize, rdonly, is_pmem);
+	LOG(3, "pbp %p bsize %zu rdonly %d",
+			pbp, bsize, rdonly);
 
 	/* remove volatile part of header */
 	VALGRIND_REMOVE_PMEM_MAPPING(&pbp->addr,
@@ -322,7 +322,6 @@ pmemblk_runtime_init(PMEMblkpool *pbp, size_t bsize, int rdonly, int is_pmem)
 	 * created here, so no need to worry about byte-order.
 	 */
 	pbp->rdonly = rdonly;
-	pbp->is_pmem = is_pmem;
 	pbp->data = (char *)pbp->addr +
 			roundup(sizeof(*pbp), BLK_FORMAT_DATA_ALIGN);
 	ASSERT(((char *)pbp->addr + pbp->size) >= (char *)pbp->data);
@@ -340,7 +339,7 @@ pmemblk_runtime_init(PMEMblkpool *pbp, size_t bsize, int rdonly, int is_pmem)
 
 	/* things free by "goto err" if not NULL */
 	struct btt *bttp = NULL;
-	pthread_mutex_t *locks = NULL;
+	os_mutex_t *locks = NULL;
 
 	bttp = btt_init(pbp->datasize, (uint32_t)bsize, pbp->hdr.poolset_uuid,
 			(unsigned)ncpus * 2, pbp, &ns_cb);
@@ -358,13 +357,13 @@ pmemblk_runtime_init(PMEMblkpool *pbp, size_t bsize, int rdonly, int is_pmem)
 	}
 
 	for (unsigned i = 0; i < pbp->nlane; i++)
-		util_mutex_init(&locks[i], NULL);
+		util_mutex_init(&locks[i]);
 
 	pbp->locks = locks;
 
 #ifdef DEBUG
 	/* initialize debug lock */
-	util_mutex_init(&pbp->write_lock, NULL);
+	util_mutex_init(&pbp->write_lock);
 #endif
 
 	/*
@@ -373,18 +372,16 @@ pmemblk_runtime_init(PMEMblkpool *pbp, size_t bsize, int rdonly, int is_pmem)
 	 * The prototype PMFS doesn't allow this when large pages are in
 	 * use. It is not considered an error if this fails.
 	 */
-	util_range_none(pbp->addr, sizeof(struct pool_hdr));
+	RANGE_NONE(pbp->addr, sizeof(struct pool_hdr), pbp->is_dev_dax);
 
 	/* the data area should be kept read-only for debug version */
-	RANGE_RO(pbp->data, pbp->datasize);
+	RANGE_RO(pbp->data, pbp->datasize, pbp->is_dev_dax);
 
 	return 0;
 
 err:
 	LOG(4, "error clean up");
 	int oerrno = errno;
-	if (locks)
-		Free((void *)locks);
 	if (bttp)
 		btt_fini(bttp);
 	errno = oerrno;
@@ -392,11 +389,13 @@ err:
 }
 
 /*
- * pmemblk_create -- create a block memory pool
+ * pmemblk_createU -- create a block memory pool
  */
+#ifndef _WIN32
+static inline
+#endif
 PMEMblkpool *
-pmemblk_create(const char *path, size_t bsize, size_t poolsize,
-		mode_t mode)
+pmemblk_createU(const char *path, size_t bsize, size_t poolsize, mode_t mode)
 {
 	LOG(3, "path %s bsize %zu poolsize %zu mode %o",
 			path, bsize, poolsize, mode);
@@ -419,7 +418,8 @@ pmemblk_create(const char *path, size_t bsize, size_t poolsize,
 	if (util_pool_create(&set, path, poolsize, PMEMBLK_MIN_POOL,
 			BLK_HDR_SIG, BLK_FORMAT_MAJOR,
 			BLK_FORMAT_COMPAT, BLK_FORMAT_INCOMPAT,
-			BLK_FORMAT_RO_COMPAT) != 0) {
+			BLK_FORMAT_RO_COMPAT, NULL,
+			REPLICAS_DISABLED) != 0) {
 		LOG(2, "cannot create pool or pool set");
 		return NULL;
 	}
@@ -435,21 +435,18 @@ pmemblk_create(const char *path, size_t bsize, size_t poolsize,
 
 	pbp->addr = pbp;
 	pbp->size = rep->repsize;
+	pbp->set = set;
+	pbp->is_pmem = rep->is_pmem;
+	pbp->is_dev_dax = rep->part[0].is_dev_dax;
 
-	if (set->nreplicas > 1) {
-		errno = ENOTSUP;
-		ERR("!replicas not supported");
-		goto err;
-	}
+	/* is_dev_dax implies is_pmem */
+	ASSERT(!pbp->is_dev_dax || pbp->is_pmem);
 
 	/* create pool descriptor */
-	if (pmemblk_descr_create(pbp, (uint32_t)bsize, set->zeroed) != 0) {
-		LOG(2, "descriptor creation failed");
-		goto err;
-	}
+	blk_descr_create(pbp, (uint32_t)bsize, set->zeroed);
 
 	/* initialize runtime parts */
-	if (pmemblk_runtime_init(pbp, bsize, 0, rep->is_pmem) != 0) {
+	if (blk_runtime_init(pbp, bsize, 0) != 0) {
 		ERR("pool initialization failed");
 		goto err;
 	}
@@ -459,22 +456,47 @@ pmemblk_create(const char *path, size_t bsize, size_t poolsize,
 
 	util_poolset_fdclose(set);
 
-	util_poolset_free(set);
-
 	LOG(3, "pbp %p", pbp);
 	return pbp;
 
 err:
 	LOG(4, "error clean up");
 	int oerrno = errno;
-	util_poolset_close(set, 1);
+	util_poolset_close(set, DELETE_CREATED_PARTS);
 	errno = oerrno;
 	return NULL;
 }
 
+#ifndef _WIN32
+/*
+ * pmemblk_create -- create a block memory pool
+ */
+PMEMblkpool *
+pmemblk_create(const char *path, size_t bsize, size_t poolsize, mode_t mode)
+{
+	return pmemblk_createU(path, bsize, poolsize, mode);
+}
+#else
+/*
+ * pmemblk_createW -- create a block memory pool
+ */
+PMEMblkpool *
+pmemblk_createW(const wchar_t *path, size_t bsize, size_t poolsize,
+	mode_t mode)
+{
+	char *upath = util_toUTF8(path);
+	if (upath == NULL)
+		return NULL;
+
+	PMEMblkpool *ret = pmemblk_createU(upath, bsize, poolsize, mode);
+
+	util_free_UTF8(upath);
+	return ret;
+}
+#endif
 
 /*
- * pmemblk_open_common -- (internal) open a block memory pool
+ * blk_open_common -- (internal) open a block memory pool
  *
  * This routine does all the work, but takes a cow flag so internal
  * calls can map a read-only pool if required.
@@ -483,7 +505,7 @@ err:
  * will supply the block size).
  */
 static PMEMblkpool *
-pmemblk_open_common(const char *path, size_t bsize, int cow)
+blk_open_common(const char *path, size_t bsize, int cow)
 {
 	LOG(3, "path %s bsize %zu cow %d", path, bsize, cow);
 
@@ -492,7 +514,7 @@ pmemblk_open_common(const char *path, size_t bsize, int cow)
 	if (util_pool_open(&set, path, cow, PMEMBLK_MIN_POOL,
 			BLK_HDR_SIG, BLK_FORMAT_MAJOR,
 			BLK_FORMAT_COMPAT, BLK_FORMAT_INCOMPAT,
-			BLK_FORMAT_RO_COMPAT) != 0) {
+			BLK_FORMAT_RO_COMPAT, NULL) != 0) {
 		LOG(2, "cannot open pool or pool set");
 		return NULL;
 	}
@@ -508,6 +530,12 @@ pmemblk_open_common(const char *path, size_t bsize, int cow)
 
 	pbp->addr = pbp;
 	pbp->size = rep->repsize;
+	pbp->set = set;
+	pbp->is_pmem = rep->is_pmem;
+	pbp->is_dev_dax = rep->part[0].is_dev_dax;
+
+	/* is_dev_dax implies is_pmem */
+	ASSERT(!pbp->is_dev_dax || pbp->is_pmem);
 
 	if (set->nreplicas > 1) {
 		errno = ENOTSUP;
@@ -516,20 +544,18 @@ pmemblk_open_common(const char *path, size_t bsize, int cow)
 	}
 
 	/* validate pool descriptor */
-	if (pmemblk_descr_check(pbp, &bsize) != 0) {
+	if (blk_descr_check(pbp, &bsize) != 0) {
 		LOG(2, "descriptor check failed");
 		goto err;
 	}
 
 	/* initialize runtime parts */
-	if (pmemblk_runtime_init(pbp, bsize, set->rdonly, rep->is_pmem) != 0) {
+	if (blk_runtime_init(pbp, bsize, set->rdonly) != 0) {
 		ERR("pool initialization failed");
 		goto err;
 	}
 
 	util_poolset_fdclose(set);
-
-	util_poolset_free(set);
 
 	LOG(3, "pbp %p", pbp);
 	return pbp;
@@ -537,21 +563,52 @@ pmemblk_open_common(const char *path, size_t bsize, int cow)
 err:
 	LOG(4, "error clean up");
 	int oerrno = errno;
-	util_poolset_close(set, 0);
+	util_poolset_close(set, DO_NOT_DELETE_PARTS);
 	errno = oerrno;
 	return NULL;
 }
 
+/*
+ * pmemblk_openU -- open a block memory pool
+ */
+#ifndef _WIN32
+static inline
+#endif
+PMEMblkpool *
+pmemblk_openU(const char *path, size_t bsize)
+{
+	LOG(3, "path %s bsize %zu", path, bsize);
+
+	return blk_open_common(path, bsize, 0);
+}
+
+#ifndef _WIN32
 /*
  * pmemblk_open -- open a block memory pool
  */
 PMEMblkpool *
 pmemblk_open(const char *path, size_t bsize)
 {
-	LOG(3, "path %s bsize %zu", path, bsize);
-
-	return pmemblk_open_common(path, bsize, 0);
+	return pmemblk_openU(path, bsize);
 }
+#else
+/*
+ * pmemblk_openW -- open a block memory pool
+ */
+PMEMblkpool *
+pmemblk_openW(const wchar_t *path, size_t bsize)
+{
+	char *upath = util_toUTF8(path);
+	if (upath == NULL)
+		return NULL;
+
+	PMEMblkpool *ret = pmemblk_openU(upath, bsize);
+
+	util_free_UTF8(upath);
+	return ret;
+}
+#endif
+
 
 /*
  * pmemblk_close -- close a block memory pool
@@ -564,17 +621,16 @@ pmemblk_close(PMEMblkpool *pbp)
 	btt_fini(pbp->bttp);
 	if (pbp->locks) {
 		for (unsigned i = 0; i < pbp->nlane; i++)
-			pthread_mutex_destroy(&pbp->locks[i]);
+			os_mutex_destroy(&pbp->locks[i]);
 		Free((void *)pbp->locks);
 	}
 
 #ifdef DEBUG
 	/* destroy debug lock */
-	pthread_mutex_destroy(&pbp->write_lock);
+	os_mutex_destroy(&pbp->write_lock);
 #endif
 
-	VALGRIND_REMOVE_PMEM_MAPPING(pbp->addr, pbp->size);
-	util_unmap(pbp->addr, pbp->size);
+	util_poolset_close(pbp->set, DO_NOT_DELETE_PARTS);
 }
 
 /*
@@ -718,17 +774,20 @@ pmemblk_set_error(PMEMblkpool *pbp, long long blockno)
 }
 
 /*
- * pmemblk_check -- block memory pool consistency check
+ * pmemblk_checkU -- block memory pool consistency check
  */
+#ifndef _WIN32
+static inline
+#endif
 int
-pmemblk_check(const char *path, size_t bsize)
+pmemblk_checkU(const char *path, size_t bsize)
 {
 	LOG(3, "path \"%s\" bsize %zu", path, bsize);
 
 	/* map the pool read-only */
-	PMEMblkpool *pbp = pmemblk_open_common(path, bsize, 1);
+	PMEMblkpool *pbp = blk_open_common(path, bsize, 1);
 	if (pbp == NULL)
-		return -1;	/* errno set by pmemblk_open_common() */
+		return -1;	/* errno set by blk_open_common() */
 
 	int retval = btt_check(pbp->bttp);
 	int oerrno = errno;
@@ -737,6 +796,33 @@ pmemblk_check(const char *path, size_t bsize)
 
 	return retval;
 }
+
+#ifndef _WIN32
+/*
+ * pmemblk_check -- block memory pool consistency check
+ */
+int
+pmemblk_check(const char *path, size_t bsize)
+{
+	return pmemblk_checkU(path, bsize);
+}
+#else
+/*
+ * pmemblk_checkW -- block memory pool consistency check
+ */
+int
+pmemblk_checkW(const wchar_t *path, size_t bsize)
+{
+	char *upath = util_toUTF8(path);
+	if (upath == NULL)
+		return -1;
+
+	int ret = pmemblk_checkU(upath, bsize);
+
+	util_free_UTF8(upath);
+	return ret;
+}
+#endif
 
 
 #ifdef _MSC_VER

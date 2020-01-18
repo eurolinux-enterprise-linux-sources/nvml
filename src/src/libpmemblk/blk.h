@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,7 +34,10 @@
  * blk.h -- internal definitions for libpmem blk module
  */
 
-#include <pthread.h>
+#include <stddef.h>
+
+#include "os_thread.h"
+#include "pool_hdr.h"
 
 #define PMEMBLK_LOG_PREFIX "libpmemblk"
 #define PMEMBLK_LOG_LEVEL_VAR "PMEMBLK_LOG_LEVEL"
@@ -67,11 +70,14 @@ struct pmemblk {
 	struct btt *bttp;		/* btt handle */
 	unsigned nlane;			/* number of lanes */
 	unsigned next_lane;		/* used to rotate through lanes */
-	pthread_mutex_t *locks;		/* one per lane */
+	os_mutex_t *locks;		/* one per lane */
+	int is_dev_dax;			/* true if mapped on device dax */
+
+	struct pool_set *set;		/* pool set info */
 
 #ifdef DEBUG
 	/* held during read/write mprotected sections */
-	pthread_mutex_t write_lock;
+	os_mutex_t write_lock;
 #endif
 };
 

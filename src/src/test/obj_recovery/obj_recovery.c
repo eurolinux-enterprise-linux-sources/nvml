@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,6 +34,12 @@
  * obj_recovery.c -- unit test for pool recovery
  */
 #include "unittest.h"
+#if defined(USE_VG_PMEMCHECK) || defined(USE_VALGRIND)
+#include <valgrind/pmemcheck.h>
+#define VALGRIND_PMEMCHECK_END_TX VALGRIND_PMC_END_TX
+#else
+#define VALGRIND_PMEMCHECK_END_TX
+#endif
 
 POBJ_LAYOUT_BEGIN(recovery);
 POBJ_LAYOUT_ROOT(recovery, struct root);
@@ -93,17 +99,17 @@ main(int argc, char *argv[])
 
 	TOID(struct root) root = POBJ_ROOT(pop, struct root);
 
-	int lock_type = TX_LOCK_NONE;
+	int lock_type = TX_PARAM_NONE;
 	void *lock = NULL;
 
 	if (argv[2][0] == 'y') {
-		lock_type = TX_LOCK_MUTEX;
+		lock_type = TX_PARAM_MUTEX;
 		lock = &D_RW(root)->lock;
 	}
 
 	if (type == TEST_SET) {
 		if (!exists) {
-			TX_BEGIN_LOCK(pop, lock_type, lock) {
+			TX_BEGIN_PARAM(pop, lock_type, lock) {
 				TX_ADD(root);
 
 				TOID(struct foo) f = TX_NEW(struct foo);
@@ -111,10 +117,27 @@ main(int argc, char *argv[])
 				D_RW(f)->bar = BAR_VALUE;
 			} TX_END
 
-			TX_BEGIN_LOCK(pop, lock_type, lock) {
+			TX_BEGIN_PARAM(pop, lock_type, lock) {
 				TX_ADD_FIELD(D_RW(root)->foo, bar);
 
 				D_RW(D_RW(root)->foo)->bar = BAR_VALUE * 2;
+
+				/*
+				 * Even though flushes are not required inside
+				 * of a transaction, this is done here to
+				 * suppress irrelevant pmemcheck issues, because
+				 * we exit the program before the data is
+				 * flushed, while preserving any real ones.
+				 */
+				pmemobj_persist(pop,
+					&D_RW(D_RW(root)->foo)->bar,
+					sizeof(int));
+				/*
+				 * We also need to cleanup the transaction state
+				 * of pmemcheck.
+				 */
+				VALGRIND_PMEMCHECK_END_TX;
+
 				exit(0); /* simulate a crash */
 			} TX_END
 		} else {
@@ -122,10 +145,14 @@ main(int argc, char *argv[])
 		}
 	} else if (type == TEST_NEW) {
 		if (!exists) {
-			TX_BEGIN_LOCK(pop, lock_type, lock) {
+			TX_BEGIN_PARAM(pop, lock_type, lock) {
 				TOID(struct foo) f = TX_NEW(struct foo);
 				TX_SET(root, foo, f);
-				D_RW(f)->bar = BAR_VALUE;
+				pmemobj_persist(pop,
+					&D_RW(root)->foo,
+					sizeof(PMEMoid));
+				VALGRIND_PMEMCHECK_END_TX;
+
 				exit(0); /* simulate a crash */
 			} TX_END
 
@@ -134,7 +161,7 @@ main(int argc, char *argv[])
 		}
 	} else { /* TEST_FREE */
 		if (!exists) {
-			TX_BEGIN_LOCK(pop, lock_type, lock) {
+			TX_BEGIN_PARAM(pop, lock_type, lock) {
 				TX_ADD(root);
 
 				TOID(struct foo) f = TX_NEW(struct foo);
@@ -142,10 +169,15 @@ main(int argc, char *argv[])
 				D_RW(f)->bar = BAR_VALUE;
 			} TX_END
 
-			TX_BEGIN_LOCK(pop, lock_type, lock) {
+			TX_BEGIN_PARAM(pop, lock_type, lock) {
 				TX_ADD(root);
 				TX_FREE(D_RW(root)->foo);
 				D_RW(root)->foo = TOID_NULL(struct foo);
+				pmemobj_persist(pop,
+					&D_RW(root)->foo,
+					sizeof(PMEMoid));
+				VALGRIND_PMEMCHECK_END_TX;
+
 				exit(0); /* simulate a crash */
 			} TX_END
 

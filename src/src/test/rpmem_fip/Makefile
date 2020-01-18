@@ -1,5 +1,5 @@
 #
-# Copyright 2016, Intel Corporation
+# Copyright 2016-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -33,42 +33,43 @@
 #
 # src/test/rpmem_fip/Makefile -- build rpmem_fip test
 #
+
 include ../../common.inc
 
 vpath %.c ../../librpmem/
 vpath %.c ../../rpmem_common/
 vpath %.c ../../tools/rpmemd
-vpath %.c ../../common/
 
-HAS_LIBFABRIC=$(call check_package, libfabric)
-
-ifeq ($(HAS_LIBFABRIC), y)
+ifeq ($(BUILD_RPMEM), y)
+SCP_TO_REMOTE_NODES = y
 TARGET = rpmem_fip
 OBJS = rpmem_fip_test.o\
-       rpmem_fip_sock.o\
+       rpmem_fip_oob.o\
        rpmem_fip.o\
        rpmemd_fip.o\
        rpmem_util.o\
+       rpmem_ssh.o\
+       rpmem_cmd.o\
        rpmem_common.o\
        rpmem_fip_common.o\
        rpmemd_fip_worker.o\
+       rpmemd_util.o\
        rpmemd_obc.o\
-       rpmemd_log.o\
-       out.o util.o util_linux.o
+       rpmemd_log.o
 
-out.o: CFLAGS += -DDEBUG -DSRCVERSION=\"utversion\"
 endif
 
+LIBPMEMCOMMON=y
 LIBPMEM=y
 
 include ../Makefile.inc
 
-ifeq ($(HAS_LIBFABRIC), y)
+ifeq ($(BUILD_RPMEM), y)
 LIBS += $(shell $(PKG_CONFIG) --libs libfabric)
 CFLAGS += $(shell $(PKG_CONFIG) --cflags libfabric)
 CFLAGS += -DDEBUG
+CFLAGS += -DRPMEMC_LOG_RPMEM
 INCS += -I../../librpmem/
 INCS += -I../../rpmem_common/
 INCS += -I../../tools/rpmemd
-INCS += -I../../common
 endif

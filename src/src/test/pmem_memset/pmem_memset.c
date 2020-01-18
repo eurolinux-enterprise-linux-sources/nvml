@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,6 +37,8 @@
  */
 
 #include "unittest.h"
+#include "util_pmem.h"
+#include "file.h"
 
 int
 main(int argc, char *argv[])
@@ -61,10 +63,11 @@ main(int argc, char *argv[])
 	int dest_off = atoi(argv[2]);
 	size_t bytes = strtoul(argv[3], NULL, 0);
 
-	char buf[bytes];
+	char *buf = MALLOC(bytes);
 
 	memset(dest, 0, bytes);
-	dest1 = malloc(bytes);
+	util_persist_auto(util_fd_is_device_dax(fd), dest, bytes);
+	dest1 = MALLOC(bytes);
 	memset(dest1, 0, bytes);
 
 	/*
@@ -101,8 +104,10 @@ main(int argc, char *argv[])
 				argv[1], bytes / 2);
 	}
 
-	pmem_unmap(dest, mapped_len);
+	UT_ASSERTeq(pmem_unmap(dest, mapped_len), 0);
 
+	FREE(dest1);
+	FREE(buf);
 	CLOSE(fd);
 
 	DONE(NULL);

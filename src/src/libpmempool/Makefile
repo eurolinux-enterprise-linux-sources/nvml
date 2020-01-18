@@ -1,4 +1,4 @@
-# Copyright 2016, Intel Corporation
+# Copyright 2016-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -39,21 +39,56 @@ LIBRARY_VERSION = 0.0
 INCS += -I$(TOP)/src/libpmemlog
 INCS += -I$(TOP)/src/libpmemblk
 INCS += -I$(TOP)/src/libpmemobj
+INCS += -I$(TOP)/src/rpmem_common
+INCS += -I$(TOP)/src/librpmem
 
-SOURCE = libpmempool.c check.c check_util.c check_backup.c check_pool_hdr.c\
-	check_log_blk.c check_btt_info.c check_btt_map_flog.c check_write.c\
-	pool.c $(COMMON)/out.c $(COMMON)/util.c $(COMMON)/util_linux.c\
-	$(COMMON)/set.c $(COMMON)/set_linux.c
+vpath %.c ../librpmem
+
+SOURCE =\
+	$(COMMON)/file.c\
+	$(COMMON)/file_linux.c\
+	$(COMMON)/mmap.c\
+	$(COMMON)/mmap_linux.c\
+	$(COMMON)/pool_hdr.c\
+	$(COMMON)/pool_hdr_linux.c\
+	$(COMMON)/os_linux.c\
+	$(COMMON)/os_thread_linux.c\
+	$(COMMON)/out.c\
+	$(COMMON)/set.c\
+	$(COMMON)/util.c\
+	$(COMMON)/uuid.c\
+	$(COMMON)/uuid_linux.c\
+	$(COMMON)/util_linux.c\
+	libpmempool.c\
+	check.c\
+	check_backup.c\
+	check_btt_info.c\
+	check_btt_map_flog.c\
+	check_log_blk.c\
+	check_pool_hdr.c\
+	check_util.c\
+	check_write.c\
+	pool.c\
+	replica.c\
+	$(RPMEM_COMMON)/rpmem_common.c\
+	rpmem_ssh.c\
+	rpmem_cmd.c\
+	rpmem_util.c\
+	sync.c\
+	transform.c\
+	rm.c
 
 LIBPMEMBLK_PRIV_FUNCS=btt_info_set btt_arena_datasize btt_flog_size\
 	btt_map_size btt_flog_get_valid map_entry_is_initial btt_info_convert2h\
 	btt_info_convert2le btt_flog_convert2h btt_flog_convert2le
 
-LIBPMEMLOG_PRIV_FUNCS=pmemlog_convert2h pmemlog_convert2le
+LIBPMEMLOG_PRIV_FUNCS=log_convert2h log_convert2le
 
 include ../Makefile.inc
 
-LIBS += -lpmem
+LIBS += -lpmem -ldl
+CFLAGS += -DUSE_LIBDL
+CFLAGS += -DUSE_RPMEM
 
 pmemblk_priv_funcs.o: $(PMEMBLK_PRIV_OBJ)
 	$(OBJCOPY) --localize-hidden $(addprefix -G, $(LIBPMEMBLK_PRIV_FUNCS)) \

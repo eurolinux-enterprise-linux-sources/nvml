@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,7 +43,7 @@
 
 #define PREFIX	"prefix"
 
-FILE *syslog_fh;
+static FILE *syslog_fh;
 
 /*
  * openlog -- mock for openlog function which logs its usage
@@ -145,11 +145,11 @@ test_all_log_messages(void)
 
 #define USAGE() do {\
 	UT_ERR("usage: %s fatal|log|assert "\
-		"stdout|file|syslog <file>", argv[0]);\
+		"stderr|file|syslog <file>", argv[0]);\
 } while (0)
 
 enum test_log_type {
-	TEST_STDOUT,
+	TEST_STDERR,
 	TEST_FILE,
 	TEST_SYSLOG,
 };
@@ -181,8 +181,8 @@ main(int argc, char *argv[])
 	}
 
 	enum test_log_type type;
-	if (strcmp(log_type, "stdout") == 0) {
-		type = TEST_STDOUT;
+	if (strcmp(log_type, "stderr") == 0) {
+		type = TEST_STDERR;
 	} else if (strcmp(log_type, "file") == 0) {
 		type = TEST_FILE;
 	} else if (strcmp(log_type, "syslog") == 0) {
@@ -192,37 +192,32 @@ main(int argc, char *argv[])
 		return 1;
 	}
 
-	int fd_stdout = -1;
-	FILE *stdout_fh = NULL;
+	int fd_stderr = -1;
+	FILE *stderr_fh = NULL;
 	switch (type) {
-	case TEST_STDOUT:
+	case TEST_STDERR:
 		/*
 		 * Duplicate stdout file descriptor in order to preserve
 		 * the file list after redirecting the stdout to a file.
 		 */
-		fd_stdout = dup(1);
-		UT_ASSERTne(fd_stdout, -1);
-		close(1);
-		stdout_fh = fopen(file, "a");
-		UT_ASSERTne(stdout_fh, NULL);
+		fd_stderr = dup(2);
+		UT_ASSERTne(fd_stderr, -1);
+		os_close(2);
+		stderr_fh = os_fopen(file, "a");
+		UT_ASSERTne(stderr_fh, NULL);
 		break;
 	case TEST_SYSLOG:
-		syslog_fh = fopen(file, "a");
+		syslog_fh = os_fopen(file, "a");
 		UT_ASSERTne(syslog_fh, NULL);
 		break;
 	default:
 		break;
 	}
 
-	/*
-	 * Check an invalid configuration
-	 */
 	int ret;
-	ret = rpmemd_log_init("rpmemd_log", file, 1);
-	UT_ASSERTne(ret, 0);
 
 	switch (type) {
-	case TEST_STDOUT:
+	case TEST_STDERR:
 		ret = rpmemd_log_init("rpmemd_log", NULL, 0);
 		UT_ASSERTeq(ret, 0);
 		break;
@@ -250,11 +245,11 @@ main(int argc, char *argv[])
 	rpmemd_log_close();
 
 	switch (type) {
-	case TEST_STDOUT:
+	case TEST_STDERR:
 		/* restore the original stdout file descriptor */
-		fclose(stdout_fh);
-		UT_ASSERTeq(dup2(fd_stdout, 1), 1);
-		close(fd_stdout);
+		fclose(stderr_fh);
+		UT_ASSERTeq(dup2(fd_stderr, 2), 2);
+		os_close(fd_stderr);
 		break;
 	case TEST_SYSLOG:
 		fclose(syslog_fh);

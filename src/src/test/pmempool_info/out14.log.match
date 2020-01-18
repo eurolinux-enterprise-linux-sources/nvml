@@ -1,3 +1,8 @@
+Part file:
+path                     : $(nW)file.pool
+type                     : regular file
+size                     : $(nW)
+
 POOL Header:
 Signature                : PMEMOBJ
 Major                    : $(*)
@@ -18,7 +23,7 @@ Machine                  : $(*)
 Checksum                 : $(*) [OK]
 
 PMEM OBJ Header:
-Layout                   : pmempool
+Layout                   : pmempool$(*)
 Lanes offset             : $(*)
 Number of lanes          : $(*)
 Heap offset              : $(*)
@@ -26,7 +31,7 @@ Heap size                : $(*)
 Checksum                 : $(*) [OK]
 Root offset              : $(*)
 
-Lane:
+Lane 0:
 
  Lane section             : allocator
   Redo log entries         : 10
@@ -114,13 +119,14 @@ Lane:
 
    Object                   : 0
    Offset                   : $(*)
-
-    OOB Header:
-    Undo offset              : $(*)
-    Type Number              : $(*)
   Undo Log - free          : 0 elements
   Undo Log - set           : 0 elements
   Undo Log - set cache     : 0 elements
+
+Part file:
+path                     : $(nW)file.pool
+type                     : regular file
+size                     : $(nW)
 
 POOL Header:
 Signature                : PMEMOBJ
@@ -142,7 +148,7 @@ Machine                  : $(*)
 Checksum                 : $(*) [OK]
 
 PMEM OBJ Header:
-Layout                   : pmempool
+Layout                   : pmempool$(*)
 Lanes offset             : $(*)
 Number of lanes          : $(*)
 Heap offset              : $(*)
@@ -150,7 +156,7 @@ Heap size                : $(*)
 Checksum                 : $(*) [OK]
 Root offset              : $(*)
 
-Lane:
+Lane 0:
 
  Lane section             : tx
   State                    : none
@@ -163,7 +169,12 @@ Lane:
    Offset                   : $(*)
 
    Tx range cache:
-    0000000000: Offset: 0x00000000003c2180 Size: 1
+    0000000000: Offset: $(*) Size: 1
+
+Part file:
+path                     : $(nW)file.pool
+type                     : regular file
+size                     : $(nW)
 
 POOL Header:
 Signature                : PMEMOBJ
@@ -185,7 +196,7 @@ Machine                  : $(*)
 Checksum                 : $(*) [OK]
 
 PMEM OBJ Header:
-Layout                   : pmempool
+Layout                   : pmempool$(*)
 Lanes offset             : $(*)
 Number of lanes          : $(*)
 Heap offset              : $(*)
@@ -193,22 +204,25 @@ Heap size                : $(*)
 Checksum                 : $(*) [OK]
 Root offset              : $(*)
 
-Lane:
+Lane 0:
 
  Lane section             : tx
   State                    : none
   Undo Log - alloc         : 0 elements
   Undo Log - free          : 0 elements
-  Undo Log - set           : 1 element
+  Undo Log - set           : 0 elements
+  Undo Log - set cache     : 1 element
 
    Object                   : 0
    Offset                   : $(*)
 
-   Tx range:
-    Offset                   : $(*)
-    Size                     : 1024
+   Tx range cache:
+    0000000000: Offset: $(*) Size: 1024
 
-  Undo Log - set cache     : 0 elements
+Part file:
+path                     : $(nW)file.pool
+type                     : regular file
+size                     : $(nW)
 
 POOL Header:
 Signature                : PMEMOBJ
@@ -230,7 +244,7 @@ Machine                  : $(*)
 Checksum                 : $(*) [OK]
 
 PMEM OBJ Header:
-Layout                   : pmempool
+Layout                   : pmempool$(*)
 Lanes offset             : $(*)
 Number of lanes          : $(*)
 Heap offset              : $(*)
@@ -238,7 +252,7 @@ Heap size                : $(*)
 Checksum                 : $(*) [OK]
 Root offset              : $(*)
 
-Lane:
+Lane 0:
 
  Lane section             : tx
   State                    : none
@@ -247,16 +261,8 @@ Lane:
 
    Object                   : 0
    Offset                   : $(*)
-
-    OOB Header:
-    Undo offset              : $(*)
-    Type Number              : 0x0000000000000001
   Undo Log - set           : 0 elements
   Undo Log - set cache     : 1 element
 
    Object                   : 0
    Offset                   : $(*)
-
-    OOB Header:
-    Undo offset              : $(*)
-    Type Number              : 0x0000000000000000

@@ -36,9 +36,9 @@
 
 //! [p_property_example]
 #include <fcntl.h>
-#include <libpmemobj/p.hpp>
-#include <libpmemobj/pool.hpp>
-#include <libpmemobj/transaction.hpp>
+#include <libpmemobj++/p.hpp>
+#include <libpmemobj++/pool.hpp>
+#include <libpmemobj++/transaction.hpp>
 
 using namespace nvml::obj;
 
@@ -65,8 +65,7 @@ p_property_example()
 	} proot;
 
 	// create a pmemobj pool
-	auto pop = pool<root>::create("poolfile", "layout", PMEMOBJ_MIN_POOL,
-				      S_IWUSR | S_IRUSR);
+	auto pop = pool<root>::create("poolfile", "layout", PMEMOBJ_MIN_POOL);
 
 	// typical usage schemes
 	transaction::exec_tx(pop, [&] {
@@ -84,10 +83,10 @@ p_property_example()
 
 //! [persistent_ptr_example]
 #include <fcntl.h>
-#include <libpmemobj/make_persistent.hpp>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
-#include <libpmemobj/transaction.hpp>
+#include <libpmemobj++/make_persistent.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
+#include <libpmemobj++/transaction.hpp>
 
 using namespace nvml::obj;
 
@@ -113,8 +112,7 @@ persistent_ptr_example()
 	} proot;
 
 	// create a pmemobj pool
-	auto pop = pool<root>::create("poolfile", "layout", PMEMOBJ_MIN_POOL,
-				      S_IWUSR | S_IRUSR);
+	auto pop = pool<root>::create("poolfile", "layout", PMEMOBJ_MIN_POOL);
 
 	// typical usage schemes
 	transaction::exec_tx(pop, [&] {

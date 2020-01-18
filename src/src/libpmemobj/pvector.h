@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,6 +38,13 @@
  * form a geometric sequence with common ratio of 2.
  */
 
+#ifndef LIBPMEMOBJ_PVECTOR_H
+#define LIBPMEMOBJ_PVECTOR_H 1
+
+#include <stdint.h>
+
+#include "libpmemobj.h"
+
 /*
  * The PVECTOR_INIT_SHIFT and PVECTOR_INIT_SIZE sets the initial
  * size of the vector. In other words, the shift defines from which term
@@ -69,7 +76,8 @@ struct pvector {
 
 typedef void (*entry_op_callback)(PMEMobjpool *pop, uint64_t *entry);
 
-struct pvector_context *pvector_init(PMEMobjpool *pop, struct pvector *vec);
+struct pvector_context *pvector_new(PMEMobjpool *pop, struct pvector *vec);
+void pvector_reinit(struct pvector_context *ctx);
 void pvector_delete(struct pvector_context *ctx);
 
 uint64_t *pvector_push_back(struct pvector_context *ctx);
@@ -82,3 +90,5 @@ uint64_t pvector_first(struct pvector_context *ctx);
 uint64_t pvector_last(struct pvector_context *ctx);
 uint64_t pvector_prev(struct pvector_context *ctx);
 uint64_t pvector_next(struct pvector_context *ctx);
+
+#endif

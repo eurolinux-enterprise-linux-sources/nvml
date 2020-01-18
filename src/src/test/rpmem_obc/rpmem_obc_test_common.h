@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -52,43 +52,46 @@
 #define RKEY		0xabababababababab
 #define RADDR		0x0101010101010101
 #define PORT		1234
-#define SIGNATURE	"<RPMEM>"
-#define MAJOR		1
-#define COMPAT_F	2
-#define INCOMPAT_F	3
-#define ROCOMPAT_F	4
-#define POOLSET_UUID	"POOLSET_UUID0123"
-#define UUID		"UUID0123456789AB"
-#define NEXT_UUID	"NEXT_UUID0123456"
-#define PREV_UUID	"PREV_UUID0123456"
-#define USER_FLAGS	"USER_FLAGS012345"
+
 #define POOL_ATTR_INIT {\
-	.signature = SIGNATURE,\
-	.major = MAJOR,\
-	.compat_features = COMPAT_F,\
-	.incompat_features = INCOMPAT_F,\
-	.ro_compat_features = ROCOMPAT_F,\
-	.poolset_uuid = POOLSET_UUID,\
-	.uuid = UUID,\
-	.next_uuid = NEXT_UUID,\
-	.prev_uuid = PREV_UUID,\
-	.user_flags = USER_FLAGS,\
+	.signature		= "<RPMEM>",\
+	.major			= 1,\
+	.compat_features	= 2,\
+	.incompat_features	= 3,\
+	.ro_compat_features	= 4,\
+	.poolset_uuid		= "POOLSET_UUID0123",\
+	.uuid			= "UUID0123456789AB",\
+	.next_uuid		= "NEXT_UUID0123456",\
+	.prev_uuid		= "PREV_UUID0123456",\
+	.user_flags		= "USER_FLAGS012345",\
+}
+
+#define POOL_ATTR_ALT {\
+	.signature		= "<ALT>",\
+	.major			= 5,\
+	.compat_features	= 6,\
+	.incompat_features	= 7,\
+	.ro_compat_features	= 8,\
+	.poolset_uuid		= "UUID_POOLSET_ALT",\
+	.uuid			= "ALT_UUIDCDEFFEDC",\
+	.next_uuid		= "456UUID_NEXT_ALT",\
+	.prev_uuid		= "UUID012_ALT_PREV",\
+	.user_flags		= "012345USER_FLAGS",\
 }
 
 static const struct rpmem_pool_attr POOL_ATTR = POOL_ATTR_INIT;
 
 struct server {
-	int fd;
-	int cfd;
+	int fd_in;
+	int fd_out;
 };
 
-struct server *srv_listen(unsigned short port);
-void srv_disconnect(struct server *s);
-void srv_stop(struct server *s);
-void srv_accept(struct server *s);
+void set_rpmem_cmd(const char *fmt, ...);
+
+struct server *srv_init(void);
+void srv_fini(struct server *s);
 void srv_recv(struct server *s, void *buff, size_t len);
 void srv_send(struct server *s, const void *buff, size_t len);
-unsigned short srv_get_port(const char *str_port);
 void srv_wait_disconnect(struct server *s);
 
 void client_connect_wait(struct rpmem_obc *rpc, char *target);
@@ -98,13 +101,7 @@ void client_connect_wait(struct rpmem_obc *rpc, char *target);
  * from the client's perspective, execute the test in a loop so
  * the moment when the connection is closed will be possibly different.
  */
-#define ECONNRESET_LOOP 1
-
-/*
- * Number of cases for ECONNRESET. Must be kept in sync with the
- * server_create_econnreset function.
- */
-#define ECONNRESET_COUNT 2
+#define ECONNRESET_LOOP 10
 
 void server_econnreset(struct server *s, const void *msg, size_t len);
 
@@ -113,11 +110,27 @@ TEST_CASE_DECLARE(client_connect);
 TEST_CASE_DECLARE(client_monitor);
 TEST_CASE_DECLARE(server_monitor);
 TEST_CASE_DECLARE(server_wait);
+
 TEST_CASE_DECLARE(client_create);
 TEST_CASE_DECLARE(server_create);
+TEST_CASE_DECLARE(server_create_econnreset);
+TEST_CASE_DECLARE(server_create_eproto);
+TEST_CASE_DECLARE(server_create_error);
+
 TEST_CASE_DECLARE(client_open);
 TEST_CASE_DECLARE(server_open);
+TEST_CASE_DECLARE(server_open_econnreset);
+TEST_CASE_DECLARE(server_open_eproto);
+TEST_CASE_DECLARE(server_open_error);
+
 TEST_CASE_DECLARE(client_close);
 TEST_CASE_DECLARE(server_close);
-TEST_CASE_DECLARE(client_remove);
-TEST_CASE_DECLARE(server_remove);
+TEST_CASE_DECLARE(server_close_econnreset);
+TEST_CASE_DECLARE(server_close_eproto);
+TEST_CASE_DECLARE(server_close_error);
+
+TEST_CASE_DECLARE(client_set_attr);
+TEST_CASE_DECLARE(server_set_attr);
+TEST_CASE_DECLARE(server_set_attr_econnreset);
+TEST_CASE_DECLARE(server_set_attr_eproto);
+TEST_CASE_DECLARE(server_set_attr_error);

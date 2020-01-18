@@ -1,4 +1,4 @@
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -35,8 +35,15 @@
 LIBRARY_NAME = vmmalloc
 LIBRARY_SO_VERSION = 1
 LIBRARY_VERSION = 0.0
-SOURCE = libvmmalloc.c $(COMMON)/util.c $(COMMON)/util_linux.c\
-	$(COMMON)/out.c
+SOURCE = libvmmalloc.c\
+	$(COMMON)/file_linux.c\
+	$(COMMON)/mmap.c\
+	$(COMMON)/mmap_linux.c\
+	$(COMMON)/out.c\
+	$(COMMON)/os_linux.c\
+	$(COMMON)/os_thread_linux.c\
+	$(COMMON)/util.c\
+	$(COMMON)/util_linux.c
 
 default: all
 

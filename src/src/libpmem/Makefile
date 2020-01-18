@@ -1,4 +1,4 @@
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -35,9 +35,21 @@
 LIBRARY_NAME = pmem
 LIBRARY_SO_VERSION = 1
 LIBRARY_VERSION = 0.0
-SOURCE = libpmem.c pmem.c pmem_linux.c $(COMMON)/util.c\
-	$(COMMON)/util_linux.c $(COMMON)/out.c $(COMMON)/cpu.c
+SOURCE =\
+	$(COMMON)/file.c\
+	$(COMMON)/file_linux.c\
+	$(COMMON)/os_linux.c\
+	$(COMMON)/os_thread_linux.c\
+	$(COMMON)/out.c\
+	$(COMMON)/util.c\
+	$(COMMON)/util_linux.c\
+	$(COMMON)/mmap.c\
+	$(COMMON)/mmap_linux.c\
+	libpmem.c\
+	cpu.c\
+	pmem.c\
+	pmem_linux.c
 
 include ../Makefile.inc
 
-CFLAGS += -DNO_LIBPTHREAD
+LIBS += -pthread

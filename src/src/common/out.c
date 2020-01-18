@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,10 +43,17 @@
 #include <limits.h>
 #include <string.h>
 #include <errno.h>
-#include <pthread.h>
 
 #include "out.h"
+#include "os.h"
+#include "os_thread.h"
 #include "valgrind_internal.h"
+#include "util.h"
+
+/* XXX - modify Linux makefiles to generate srcversion.h and remove #ifdef */
+#ifdef _WIN32
+#include "srcversion.h"
+#endif
 
 static char nvml_src_version[] = "SRCVERSION:" SRCVERSION;
 
@@ -56,18 +63,30 @@ static FILE *Out_fp;
 static unsigned Log_alignment;
 
 #ifndef NO_LIBPTHREAD
-
 #define MAXPRINT 8192	/* maximum expected log line */
+#else
+#define MAXPRINT 256	/* maximum expected log line for libpmem */
+#endif
 
-static pthread_once_t Last_errormsg_key_once = PTHREAD_ONCE_INIT;
-static pthread_key_t Last_errormsg_key;
+struct errormsg
+{
+	char msg[MAXPRINT];
+#ifdef _WIN32
+	wchar_t wmsg[MAXPRINT];
+#endif
+};
+
+#ifndef NO_LIBPTHREAD
+
+static os_once_t Last_errormsg_key_once = OS_ONCE_INIT;
+static os_tls_key_t Last_errormsg_key;
 
 static void
 _Last_errormsg_key_alloc(void)
 {
-	int pth_ret = pthread_key_create(&Last_errormsg_key, free);
+	int pth_ret = os_tls_key_create(&Last_errormsg_key, free);
 	if (pth_ret)
-		FATAL("!pthread_key_create");
+		FATAL("!os_thread_key_create");
 
 	VALGRIND_ANNOTATE_HAPPENS_BEFORE(&Last_errormsg_key_once);
 }
@@ -75,7 +94,7 @@ _Last_errormsg_key_alloc(void)
 static void
 Last_errormsg_key_alloc(void)
 {
-	pthread_once(&Last_errormsg_key_once, _Last_errormsg_key_alloc);
+	os_once(&Last_errormsg_key_once, _Last_errormsg_key_alloc);
 	/*
 	 * Workaround Helgrind's bug:
 	 * https://bugs.kde.org/show_bug.cgi?id=337735
@@ -84,29 +103,34 @@ Last_errormsg_key_alloc(void)
 }
 
 static inline void
-Last_errormsg_fini()
+Last_errormsg_fini(void)
 {
-	void *p = pthread_getspecific(Last_errormsg_key);
+	void *p = os_tls_get(Last_errormsg_key);
 	if (p) {
-		free(p);
-		(void) pthread_setspecific(Last_errormsg_key, NULL);
+		Free(p);
+		(void) os_tls_set(Last_errormsg_key, NULL);
 	}
 }
 
-static inline const char *
-Last_errormsg_get()
+static inline struct errormsg *
+Last_errormsg_get(void)
 {
 	Last_errormsg_key_alloc();
 
-	char *errormsg = pthread_getspecific(Last_errormsg_key);
+	struct errormsg *errormsg = os_tls_get(Last_errormsg_key);
 	if (errormsg == NULL) {
-		errormsg = malloc(MAXPRINT);
-		int ret = pthread_setspecific(Last_errormsg_key, errormsg);
+		errormsg = Malloc(sizeof(struct errormsg));
+		if (errormsg == NULL)
+			FATAL("!malloc");
+		/* make sure it contains empty string initially */
+		errormsg->msg[0] = '\0';
+		int ret = os_tls_set(Last_errormsg_key, errormsg);
 		if (ret)
-			FATAL("!pthread_setspecific");
+			FATAL("!os_tls_set");
 	}
 	return errormsg;
 }
+
 #else
 
 /*
@@ -118,24 +142,22 @@ Last_errormsg_get()
  * not be longer than about 90 chars (in case of pmem_check_version()).
  */
 
-#define MAXPRINT 256	/* maximum expected log line for libpmem */
-
-static __thread char Last_errormsg[MAXPRINT];
+static __thread struct errormsg Last_errormsg;
 
 static inline void
-Last_errormsg_key_alloc()
+Last_errormsg_key_alloc(void)
 {
 }
 
 static inline void
-Last_errormsg_fini()
+Last_errormsg_fini(void)
 {
 }
 
-static inline const char *
-Last_errormsg_get()
+static inline const struct errormsg *
+Last_errormsg_get(void)
 {
-	return Last_errormsg;
+	return &Last_errormsg.msg[0];
 }
 
 #endif /* NO_LIBPTHREAD */
@@ -160,7 +182,7 @@ getexecname(void)
 
 	if ((cc = readlink(procpath, namepath, PATH_MAX)) < 0)
 #else
-	if ((cc = GetModuleFileName(NULL, namepath, PATH_MAX)) == 0)
+	if ((cc = GetModuleFileNameA(NULL, namepath, PATH_MAX)) == 0)
 #endif
 		strcpy(namepath, "unknown");
 	else
@@ -193,34 +215,41 @@ out_init(const char *log_prefix, const char *log_level_var,
 	char *log_level;
 	char *log_file;
 
-	if ((log_level = getenv(log_level_var)) != NULL) {
+	if ((log_level = os_getenv(log_level_var)) != NULL) {
 		Log_level = atoi(log_level);
 		if (Log_level < 0) {
 			Log_level = 0;
 		}
 	}
 
-	if ((log_file = getenv(log_file_var)) != NULL) {
-		size_t cc = strlen(log_file);
+	if ((log_file = os_getenv(log_file_var)) != NULL &&
+				log_file[0] != '\0') {
 
 		/* reserve more than enough space for a PID + '\0' */
-		char *log_file_pid = alloca(cc + 30);
-
-		if (cc > 0 && log_file[cc - 1] == '-') {
-			snprintf(log_file_pid, cc + 30, "%s%d",
+		char log_file_pid[PATH_MAX];
+		size_t len = strlen(log_file);
+		if (len > 0 && log_file[len - 1] == '-') {
+			int ret = snprintf(log_file_pid, PATH_MAX, "%s%d",
 				log_file, getpid());
+			if (ret < 0 || ret >= PATH_MAX) {
+				ERR("!snprintf");
+				abort();
+			}
 			log_file = log_file_pid;
 		}
-		if ((Out_fp = fopen(log_file, "w")) == NULL) {
+
+		if ((Out_fp = os_fopen(log_file, "w")) == NULL) {
+			char buff[UTIL_MAX_ERR_MSG];
+			util_strerror(errno, buff, UTIL_MAX_ERR_MSG);
 			fprintf(stderr, "Error (%s): %s=%s: %s\n",
-					log_prefix, log_file_var,
-					log_file, strerror(errno));
+				log_prefix, log_file_var,
+				log_file, buff);
 			abort();
 		}
 	}
 #endif	/* DEBUG */
 
-	char *log_alignment = getenv("NVML_LOG_ALIGN");
+	char *log_alignment = os_getenv("NVML_LOG_ALIGN");
 	if (log_alignment) {
 		int align = atoi(log_alignment);
 		if (align > 0)
@@ -271,7 +300,7 @@ out_init(const char *log_prefix, const char *log_level_var,
  * This is called to close log file before process stop.
  */
 void
-out_fini()
+out_fini(void)
 {
 	if (Out_fp != NULL && Out_fp != stderr) {
 		fclose(Out_fp);
@@ -334,7 +363,7 @@ out_set_vsnprintf_func(int (*vsnprintf_func)(char *str, size_t size,
 /*
  * out_snprintf -- (internal) custom snprintf implementation
  */
-__attribute__((format(printf, 3, 4)))
+FORMAT_PRINTF(3, 4)
 static int
 out_snprintf(char *str, size_t size, const char *format, ...)
 {
@@ -360,10 +389,10 @@ out_common(const char *file, int line, const char *func, int level,
 	unsigned cc = 0;
 	int ret;
 	const char *sep = "";
-	const char *errstr = "";
+	char errstr[UTIL_MAX_ERR_MSG] = "";
 
 	if (file) {
-		char *f = strrchr(file, DIR_SEPARATOR);
+		char *f = strrchr(file, OS_DIR_SEPARATOR);
 		if (f)
 			file = f + 1;
 		ret = out_snprintf(&buf[cc], MAXPRINT - cc,
@@ -384,7 +413,7 @@ out_common(const char *file, int line, const char *func, int level,
 		if (*fmt == '!') {
 			fmt++;
 			sep = ": ";
-			errstr = strerror(errno);
+			util_strerror(errno, errstr, UTIL_MAX_ERR_MSG);
 		}
 		ret = Vsnprintf(&buf[cc], MAXPRINT - cc, fmt, ap);
 		if (ret < 0) {
@@ -413,7 +442,7 @@ out_error(const char *file, int line, const char *func,
 	unsigned cc = 0;
 	int ret;
 	const char *sep = "";
-	const char *errstr = "";
+	char errstr[UTIL_MAX_ERR_MSG] = "";
 
 	char *errormsg = (char *)out_get_errormsg();
 
@@ -421,7 +450,7 @@ out_error(const char *file, int line, const char *func,
 		if (*fmt == '!') {
 			fmt++;
 			sep = ": ";
-			errstr = strerror(errno);
+			util_strerror(errno, errstr, UTIL_MAX_ERR_MSG);
 		}
 		ret = Vsnprintf(&errormsg[cc], MAXPRINT, fmt, ap);
 		if (ret < 0) {
@@ -439,7 +468,7 @@ out_error(const char *file, int line, const char *func,
 		cc = 0;
 
 		if (file) {
-			char *f = strrchr(file, DIR_SEPARATOR);
+			char *f = strrchr(file, OS_DIR_SEPARATOR);
 			if (f)
 				file = f + 1;
 			ret = out_snprintf(&buf[cc], MAXPRINT,
@@ -508,7 +537,7 @@ out_log(const char *file, int line, const char *func, int level,
 	va_list ap;
 
 	if (Log_level < level)
-			return;
+		return;
 
 	va_start(ap, fmt);
 	out_common(file, line, func, level, "\n", fmt, ap);
@@ -554,5 +583,23 @@ out_err(const char *file, int line, const char *func,
 const char *
 out_get_errormsg(void)
 {
-	return Last_errormsg_get();
+	const struct errormsg *errormsg = Last_errormsg_get();
+	return &errormsg->msg[0];
 }
+
+#ifdef _WIN32
+/*
+ * out_get_errormsgW -- get the last error message in wchar_t
+ */
+const wchar_t *
+out_get_errormsgW(void)
+{
+	struct errormsg *errormsg = Last_errormsg_get();
+	const char *utf8 = &errormsg->msg[0];
+	wchar_t *utf16 = &errormsg->wmsg[0];
+	if (util_toUTF16_buff(utf8, utf16, sizeof(errormsg->wmsg)) != 0)
+		FATAL("!Failed to convert string");
+
+	return (const wchar_t *)utf16;
+}
+#endif

@@ -1,5 +1,5 @@
 #
-# Copyright 2016, Intel Corporation
+# Copyright 2016-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -33,19 +33,20 @@
 #
 # examples/librpmem/Makefile -- build the librpmem examples
 #
-HAS_LIBRABRIC=$(call check_package, libfabric)
+TOP := ../../..
+include $(TOP)/src/common.inc
 
-ifeq ($(HAS_LIBRABRIC), y)
-PROGS = basic
+ifeq ($(BUILD_RPMEM), y)
+PROGS = basic manpage
 
 LIBS = -lrpmem -pthread $(shell $(PKG_CONFIG) --libs libfabric)
 
 CFLAGS = $(shell $(PKG_CONFIG) --cflags libfabric)
 else
-$(info NOTE: Skipping librpmem because libfabric is missing \
--- see src/librpmem/README for details.)
+$(info NOTE: Skipping librpmem because $(BUILD_RPMEM_INFO))
 endif
 
 include ../Makefile.inc
 
 basic: basic.o
+manpage: manpage.o

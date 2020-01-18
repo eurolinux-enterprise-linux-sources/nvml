@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -53,7 +53,7 @@ pool_create(const char *path, size_t bsize, size_t poolsize, unsigned mode)
 	if (pbp == NULL)
 		UT_OUT("!%s: pmemblk_create", path);
 	else {
-		ut_util_stat_t stbuf;
+		os_stat_t stbuf;
 		STAT(path, &stbuf);
 
 		UT_OUT("%s: file size %zu usable blocks %zu mode 0%o",

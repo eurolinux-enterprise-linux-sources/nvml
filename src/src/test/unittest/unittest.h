@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -84,6 +84,13 @@
 #ifndef _UNITTEST_H
 #define _UNITTEST_H 1
 
+#include <libpmem.h>
+#include <libpmemblk.h>
+#include <libpmemlog.h>
+#include <libpmemobj.h>
+#include <libpmempool.h>
+#include <libvmem.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -107,32 +114,28 @@ extern "C" {
 #include <signal.h>
 #include <errno.h>
 #include <dirent.h>
-#include <pthread.h>
 
-#include <libpmem.h>
-#include <libpmemblk.h>
-#include <libpmemlog.h>
-#include <libpmemobj.h>
-#include <libpmempool.h>
-#include <libvmem.h>
+/* XXX: move OS abstraction layer out of common */
+#include "os.h"
+#include "os_thread.h"
+
+int ut_get_uuid_str(char *);
+#define UT_MAX_ERR_MSG 128
+#define UT_POOL_HDR_UUID_STR_LEN 37 /* uuid string length */
+#define UT_POOL_HDR_UUID_GEN_FILE "/proc/sys/kernel/random/uuid"
+
+/* XXX - fix this temp hack dup'ing util_strerror when we get mock for win */
+void ut_strerror(int errnum, char *buff, size_t bufflen);
 
 /* XXX - eliminate duplicated definitions in unittest.h and util.h */
-#ifndef _WIN32
-typedef struct stat ut_util_stat_t;
-#define ut_util_fstat	fstat
-#define ut_util_stat	stat
-#define ut_util_lseek	lseek
-#else
-typedef struct _stat64 ut_util_stat_t;
-#define ut_util_fstat	_fstat64
-static inline int ut_util_stat(const char *path,
-	ut_util_stat_t *st_bufp) {
-	int retVal = _stat64(path, st_bufp);
+#ifdef _WIN32
+static inline int ut_util_statW(const wchar_t *path,
+	os_stat_t *st_bufp) {
+	int retVal = _wstat64(path, st_bufp);
 	/* clear unused bits to avoid confusion */
 	st_bufp->st_mode &= 0600;
 	return retVal;
 }
-#define ut_util_lseek	_lseeki64
 #endif
 
 /*
@@ -141,6 +144,11 @@ static inline int ut_util_stat(const char *path,
 void ut_start(const char *file, int line, const char *func,
 	int argc, char * const argv[], const char *fmt, ...)
 	__attribute__((format(printf, 6, 7)));
+
+void ut_startW(const char *file, int line, const char *func,
+	int argc, wchar_t * const argv[], const char *fmt, ...)
+	__attribute__((format(printf, 6, 7)));
+
 void ut_done(const char *file, int line, const char *func,
 	const char *fmt, ...)
 	__attribute__((format(printf, 4, 5)))
@@ -157,11 +165,39 @@ void ut_err(const char *file, int line, const char *func,
 	__attribute__((format(printf, 4, 5)));
 
 /* indicate the start of the test */
+#ifndef _WIN32
 #define START(argc, argv, ...)\
     ut_start(__FILE__, __LINE__, __func__, argc, argv, __VA_ARGS__)
+#else
+#define START(argc, argv, ...)\
+	wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), &argc);\
+	for (int i = 0; i < argc; i++) {\
+		argv[i] = ut_toUTF8(wargv[i]);\
+		if (argv[i] == NULL) {\
+			for (i--; i >= 0; i--)\
+				free(argv[i]);\
+			UT_FATAL("Error during arguments conversion\n");\
+		}\
+	}\
+	ut_start(__FILE__, __LINE__, __func__, argc, argv, __VA_ARGS__)
+#endif
+
+/* indicate the start of the test */
+#define STARTW(argc, argv, ...)\
+    ut_startW(__FILE__, __LINE__, __func__, argc, argv, __VA_ARGS__)
 
 /* normal exit from test */
+#ifndef _WIN32
 #define DONE(...)\
+    ut_done(__FILE__, __LINE__, __func__, __VA_ARGS__)
+#else
+#define DONE(...)\
+	for (int i = argc; i > 0; i--)\
+		free(argv[i - 1]);\
+	ut_done(__FILE__, __LINE__, __func__, __VA_ARGS__)
+#endif
+
+#define DONEW(...)\
     ut_done(__FILE__, __LINE__, __func__, __VA_ARGS__)
 
 /* fatal error detected */
@@ -175,23 +211,6 @@ void ut_err(const char *file, int line, const char *func,
 /* error output */
 #define UT_ERR(...)\
     ut_err(__FILE__, __LINE__, __func__, __VA_ARGS__)
-
-
-#ifndef _MSC_VER
-#define UT_COMPILE_ERROR_ON(cond) ((void)sizeof(char[(cond) ? -1 : 1]))
-#ifndef __cplusplus
-#define UT_ASSERT_COMPILE_ERROR_ON(cond) UT_COMPILE_ERROR_ON(cond)
-#else
-/*
- * XXX - workaround for http://github.com/pmem/issues/issues/189
- */
-#define UT_ASSERT_COMPILE_ERROR_ON(cond)
-#endif
-#else
-#define UT_COMPILE_ERROR_ON(cond) C_ASSERT(!(cond))
-/* XXX - can't be done with C_ASSERT() unless we have __builtin_constant_p() */
-#define UT_ASSERT_COMPILE_ERROR_ON(cond)
-#endif
 
 /*
  * assertions...
@@ -218,6 +237,25 @@ void ut_err(const char *file, int line, const char *func,
 	((void)(((lhs) != (rhs)) || (ut_fatal(__FILE__, __LINE__, __func__,\
 	"assertion failure: %s (0x%llx) != %s (0x%llx)", #lhs,\
 	(unsigned long long)(lhs), #rhs, (unsigned long long)(rhs)), 0)))
+
+#if defined(__CHECKER__)
+#define UT_COMPILE_ERROR_ON(cond)
+#define UT_ASSERT_COMPILE_ERROR_ON(cond)
+#elif defined(_MSC_VER)
+#define UT_COMPILE_ERROR_ON(cond) C_ASSERT(!(cond))
+/* XXX - can't be done with C_ASSERT() unless we have __builtin_constant_p() */
+#define UT_ASSERT_COMPILE_ERROR_ON(cond) (void)(cond)
+#else
+#define UT_COMPILE_ERROR_ON(cond) ((void)sizeof(char[(cond) ? -1 : 1]))
+#ifndef __cplusplus
+#define UT_ASSERT_COMPILE_ERROR_ON(cond) UT_COMPILE_ERROR_ON(cond)
+#else /* __cplusplus */
+/*
+ * XXX - workaround for http://github.com/pmem/issues/issues/189
+ */
+#define UT_ASSERT_COMPILE_ERROR_ON(cond) UT_ASSERT_rt(!(cond))
+#endif /* __cplusplus */
+#endif /* _MSC_VER */
 
 /* assert a condition is true */
 #define UT_ASSERT(cnd)\
@@ -275,6 +313,7 @@ void *ut_malloc(const char *file, int line, const char *func, size_t size);
 void *ut_calloc(const char *file, int line, const char *func,
     size_t nmemb, size_t size);
 void ut_free(const char *file, int line, const char *func, void *ptr);
+void ut_aligned_free(const char *file, int line, const char *func, void *ptr);
 void *ut_realloc(const char *file, int line, const char *func,
     void *ptr, size_t size);
 char *ut_strdup(const char *file, int line, const char *func,
@@ -302,6 +341,9 @@ int ut_munmap_anon_aligned(const char *file, int line, const char *func,
 
 #define FREE(ptr)\
     ut_free(__FILE__, __LINE__, __func__, ptr)
+
+#define ALIGNED_FREE(ptr)\
+    ut_aligned_free(__FILE__, __LINE__, __func__, ptr)
 
 /* a realloc() that can't return NULL */
 #define REALLOC(ptr, size)\
@@ -335,6 +377,9 @@ int ut_munmap_anon_aligned(const char *file, int line, const char *func,
 int ut_open(const char *file, int line, const char *func, const char *path,
     int flags, ...);
 
+int ut_wopen(const char *file, int line, const char *func, const wchar_t *path,
+	int flags, ...);
+
 int ut_close(const char *file, int line, const char *func, int fd);
 
 int ut_unlink(const char *file, int line, const char *func, const char *path);
@@ -363,10 +408,13 @@ int ut_posix_fallocate(const char *file, int line, const char *func, int fd,
     off_t offset, off_t len);
 
 int ut_stat(const char *file, int line, const char *func, const char *path,
-    ut_util_stat_t *st_bufp);
+    os_stat_t *st_bufp);
+
+int ut_statW(const char *file, int line, const char *func, const wchar_t *path,
+	os_stat_t *st_bufp);
 
 int ut_fstat(const char *file, int line, const char *func, int fd,
-    ut_util_stat_t *st_bufp);
+    os_stat_t *st_bufp);
 
 int ut_flock(const char *file, int line, const char *func, int fd, int op);
 
@@ -376,10 +424,10 @@ void *ut_mmap(const char *file, int line, const char *func, void *addr,
 int ut_munmap(const char *file, int line, const char *func, void *addr,
     size_t length);
 
-#ifndef _WIN32
 int ut_mprotect(const char *file, int line, const char *func, void *addr,
     size_t len, int prot);
 
+#ifndef _WIN32
 int ut_symlink(const char *file, int line, const char *func,
     const char *oldpath, const char *newpath);
 
@@ -432,6 +480,10 @@ int ut_closedir(const char *file, int line, const char *func, DIR *dirp);
 #define OPEN(path, ...)\
     ut_open(__FILE__, __LINE__, __func__, path, __VA_ARGS__)
 
+/* a _wopen() that can't return < 0 */
+#define WOPEN(path, ...)\
+    ut_wopen(__FILE__, __LINE__, __func__, path, __VA_ARGS__)
+
 /* a close() that can't return -1 */
 #define CLOSE(fd)\
     ut_close(__FILE__, __LINE__, __func__, fd)
@@ -470,7 +522,7 @@ int ut_closedir(const char *file, int line, const char *func, DIR *dirp);
  * pass in a 0 for the argument.
  */
 #define FCNTL(fd, cmd, num, ...)\
-	ut_fcntl(__FILE__, __LINE__, __func__, fd, cmd, num, __VA_ARGS__)
+    ut_fcntl(__FILE__, __LINE__, __func__, fd, cmd, num, __VA_ARGS__)
 #endif
 
 #define POSIX_FALLOCATE(fd, off, len)\
@@ -490,14 +542,15 @@ int ut_closedir(const char *file, int line, const char *func, DIR *dirp);
 #define MUNMAP(addr, length)\
     ut_munmap(__FILE__, __LINE__, __func__, addr, length);
 
-#ifndef _WIN32
 /* a mprotect() that can't return -1 */
 #define MPROTECT(addr, len, prot)\
     ut_mprotect(__FILE__, __LINE__, __func__, addr, len, prot);
-#endif
 
 #define STAT(path, st_bufp)\
     ut_stat(__FILE__, __LINE__, __func__, path, st_bufp)
+
+#define STATW(path, st_bufp)\
+    ut_statW(__FILE__, __LINE__, __func__, path, st_bufp)
 
 #ifndef _WIN32
 #define SYMLINK(oldpath, newpath)\
@@ -525,7 +578,7 @@ int ut_closedir(const char *file, int line, const char *func, DIR *dirp);
 
 #define PSELECT(nfds, rfds, wfds, efds, tv, sigmask)\
     ut_pselect(__FILE__, __LINE__, __func__, nfds, rfds, wfds, efds,\
-	tv, sigmask)
+    tv, sigmask)
 
 #define MKNOD(pathname, mode, dev)\
     ut_mknod(__FILE__, __LINE__, __func__, pathname, mode, dev)
@@ -549,13 +602,24 @@ int ut_closedir(const char *file, int line, const char *func, DIR *dirp);
 
 #define CLOSEDIR(dirp)\
     ut_closedir(__FILE__, __LINE__, __func__, dirp)
+#define ut_jmp_buf_t sigjmp_buf
+#define ut_siglongjmp(b) siglongjmp(b, 1)
+#define ut_sigsetjmp(b) sigsetjmp(b, 1)
+#else
+#define ut_jmp_buf_t jmp_buf
+#define ut_siglongjmp(b) longjmp(b, 1)
+#define ut_sigsetjmp(b) setjmp(b)
+static DWORD ErrMode;
+static BOOL Suppressed = FALSE;
+static UINT AbortBehave;
 #endif
-
+void ut_suppress_errmsg(void);
+void ut_unsuppress_errmsg(void);
 /*
  * signals...
  */
 int ut_sigaction(const char *file, int line, const char *func,
-		int signum, struct sigaction *act, struct sigaction *oldact);
+    int signum, struct sigaction *act, struct sigaction *oldact);
 
 /* a sigaction() that can't return an error */
 #define SIGACTION(signum, act, oldact)\
@@ -564,30 +628,63 @@ int ut_sigaction(const char *file, int line, const char *func,
 /*
  * pthreads...
  */
-int ut_pthread_create(const char *file, int line, const char *func,
-    pthread_t *__restrict thread,
-    const pthread_attr_t *__restrict attr,
+int ut_thread_create(const char *file, int line, const char *func,
+    os_thread_t *__restrict thread,
+    const os_thread_attr_t *__restrict attr,
     void *(*start_routine)(void *), void *__restrict arg);
-int ut_pthread_join(const char *file, int line, const char *func,
-    pthread_t thread, void **value_ptr);
+int ut_thread_join(const char *file, int line, const char *func,
+    os_thread_t thread, void **value_ptr);
 
-/* a pthread_create() that can't return an error */
+/* a os_thread_create() that can't return an error */
 #define PTHREAD_CREATE(thread, attr, start_routine, arg)\
-    ut_pthread_create(__FILE__, __LINE__, __func__,\
+    ut_thread_create(__FILE__, __LINE__, __func__,\
     thread, attr, start_routine, arg)
 
-/* a pthread_join() that can't return an error */
+/* a os_thread_join() that can't return an error */
 #define PTHREAD_JOIN(thread, value_ptr)\
-    ut_pthread_join(__FILE__, __LINE__, __func__, thread, value_ptr)
+    ut_thread_join(__FILE__, __LINE__, __func__, thread, value_ptr)
+
+/*
+ * processes...
+ */
+#ifdef _WIN32
+intptr_t ut_spawnv(int argc, const char **argv, ...);
+#endif
 
 /*
  * mocks...
+ *
+ * NOTE: On Linux, function mocking is implemented using wrapper functions.
+ * See "--wrap" option of the GNU linker.
+ * There is no such feature in VC++, so on Windows we do the mocking at
+ * compile time, by redefining symbol names:
+ * - all the references to <symbol> are replaced with <__wrap_symbol>
+ *   in all the compilation units, except the one where the <symbol> is
+ *   defined and the test source file
+ * - the original definition of <symbol> is replaced with <__real_symbol>
+ * - a wrapper function <__wrap_symbol> must be defined in the test program
+ *   (it may still call the original function via <__real_symbol>)
+ * Such solution seems to be sufficient for the purpose of our tests, even
+ * though it has some limitations.  I.e. it does no work well with malloc/free,
+ * so to wrap the system memory allocator functions, we use the built-in
+ * feature of all the NVML libraries, allowing to override default memory
+ * allocator with the custom one.
  */
+#ifndef _WIN32
 #define _FUNC_REAL_DECL(name, ret_type, ...)\
 	ret_type __real_##name(__VA_ARGS__) __attribute__((unused));
+#else
+#define _FUNC_REAL_DECL(name, ret_type, ...)\
+	ret_type name(__VA_ARGS__);
+#endif
 
+#ifndef _WIN32
 #define _FUNC_REAL(name)\
 	__real_##name
+#else
+#define _FUNC_REAL(name)\
+	name
+#endif
 
 #define RCOUNTER(name)\
 	_rcounter##name
@@ -597,7 +694,7 @@ int ut_pthread_join(const char *file, int line, const char *func,
 
 #define FUNC_MOCK(name, ret_type, ...)\
 	_FUNC_REAL_DECL(name, ret_type, ##__VA_ARGS__)\
-	static int RCOUNTER(name);\
+	static unsigned RCOUNTER(name);\
 	ret_type __wrap_##name(__VA_ARGS__);\
 	ret_type __wrap_##name(__VA_ARGS__) {\
 		switch (__sync_fetch_and_add(&RCOUNTER(name), 1)) {
@@ -625,17 +722,26 @@ int ut_pthread_join(const char *file, int line, const char *func,
 		FUNC_MOCK_RUN_RET_DEFAULT(ret);\
 	FUNC_MOCK_END
 
+#define FUNC_MOCK_RET_ALWAYS_VOID(name, ...)\
+	FUNC_MOCK(name, void, __VA_ARGS__)\
+		default: return;\
+	FUNC_MOCK_END
+
 extern unsigned long Ut_pagesize;
+extern unsigned long long Ut_mmap_align;
+extern os_mutex_t Sigactions_lock;
 
 void ut_dump_backtrace(void);
 void ut_sighandler(int);
 void ut_register_sighandlers(void);
 
 uint16_t ut_checksum(uint8_t *addr, size_t len);
+char *ut_toUTF8(const wchar_t *wstr);
+wchar_t *ut_toUTF16(const char *wstr);
 
 struct test_case {
 	const char *name;
-	void (*func)(const struct test_case *tc, int argc, char *argv[]);
+	int (*func)(const struct test_case *tc, int argc, char *argv[]);
 };
 
 /*
@@ -659,18 +765,21 @@ TEST_CASE_PROCESS(int argc, char *argv[],
 	if (argc < 2)
 		UT_FATAL("usage: %s <test case> [<args>]", argv[0]);
 
-	char *str_test = argv[1];
-	const int args_off = 2;
+	for (int i = 1; i < argc; i++) {
+		char *str_test = argv[i];
+		const int args_off = i + 1;
 
-	const struct test_case *tc = get_tc(str_test, test_cases, ntests);
-	if (!tc)
-		UT_FATAL("unknown test case -- '%s'", str_test);
+		const struct test_case *tc = get_tc(str_test,
+				test_cases, ntests);
+		if (!tc)
+			UT_FATAL("unknown test case -- '%s'", str_test);
 
-	tc->func(tc, argc - args_off, &argv[args_off]);
+		i += tc->func(tc, argc - args_off, &argv[args_off]);
+	}
 }
 
 #define TEST_CASE_DECLARE(_name)\
-void \
+int \
 _name(const struct test_case *tc, int argc, char *argv[])
 
 #define TEST_CASE(_name)\
@@ -679,6 +788,28 @@ _name(const struct test_case *tc, int argc, char *argv[])
 	.func = _name,\
 }
 
+#define STR(x) #x
+
+#define ASSERT_ALIGNED_BEGIN(type) do {\
+size_t off = 0;\
+const char *last = "(none)";\
+type t;
+
+#define ASSERT_ALIGNED_FIELD(type, field) do {\
+if (offsetof(type, field) != off)\
+	UT_FATAL("%s: padding, missing field or fields not in order between "\
+		"'%s' and '%s' -- offset %lu, real offset %lu",\
+		STR(type), last, STR(field), off, offsetof(type, field));\
+off += sizeof(t.field);\
+last = STR(field);\
+} while (0)
+
+#define ASSERT_ALIGNED_CHECK(type)\
+if (off != sizeof(type))\
+	UT_FATAL("%s: missing field or padding after '%s': "\
+		"sizeof(%s) = %lu, fields size = %lu",\
+		STR(type), last, STR(type), sizeof(type), off);\
+} while (0)
 
 #ifdef __cplusplus
 }

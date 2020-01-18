@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,10 +37,10 @@
 #ifndef PANACONDA_HPP
 #define PANACONDA_HPP
 
-#include <libpmemobj/make_persistent_array.hpp>
-#include <libpmemobj/p.hpp>
-#include <libpmemobj/pool.hpp>
-#include <libpmemobj/transaction.hpp>
+#include <libpmemobj++/make_persistent_array.hpp>
+#include <libpmemobj++/p.hpp>
+#include <libpmemobj++/pool.hpp>
+#include <libpmemobj++/transaction.hpp>
 
 #include "list.hpp"
 
@@ -211,10 +211,10 @@ class game {
 public:
 	game(struct parameters *par);
 	~game();
-	int init(void);
+	void init(void);
 	void init_colors(void);
 	void process_step(void);
-	int process_key(const int lastkey);
+	void process_key(const int lastkey);
 	inline bool is_stopped(void);
 	void process_delay(void);
 	void clear_screen(void);

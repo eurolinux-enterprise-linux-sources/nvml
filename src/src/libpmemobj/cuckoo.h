@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,6 +34,11 @@
  * cuckoo.h -- internal definitions for cuckoo hash table
  */
 
+#ifndef LIBPMEMOBJ_CUCKOO_H
+#define LIBPMEMOBJ_CUCKOO_H 1
+
+#include <stdint.h>
+
 struct cuckoo;
 
 struct cuckoo *cuckoo_new(void);
@@ -42,3 +47,6 @@ void cuckoo_delete(struct cuckoo *c);
 int cuckoo_insert(struct cuckoo *c, uint64_t key, void *value);
 void *cuckoo_remove(struct cuckoo *c, uint64_t key);
 void *cuckoo_get(struct cuckoo *c, uint64_t key);
+size_t cuckoo_get_size(struct cuckoo *c);
+
+#endif

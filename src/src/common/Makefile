@@ -1,4 +1,4 @@
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -32,5 +32,23 @@
 # src/common/Makefile -- Makefile for common
 #
 
-TOP := $(dir $(lastword $(MAKEFILE_LIST)))../..
-include $(TOP)/src/common.inc
+LIBRARY_NAME = pmemcommon
+SOURCE =\
+	file.c\
+	file_linux.c\
+	mmap.c\
+	mmap_linux.c\
+	os_linux.c\
+	os_thread_linux.c\
+	out.c\
+	pool_hdr.c\
+	pool_hdr_linux.c\
+	set.c\
+	util.c\
+	uuid.c\
+	uuid_linux.c\
+	util_linux.c
+
+include ../Makefile.inc
+
+CFLAGS += -DUSE_LIBDL

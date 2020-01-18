@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -56,8 +56,10 @@ main(int argc, char *argv[])
 		return 1;
 	}
 
-	char buf[MAX_BUF_LEN];
-	if (scanf("%9s", buf) == EOF) {
+	char buf[MAX_BUF_LEN] = {0};
+	int num = scanf("%9s", buf);
+
+	if (num == EOF) {
 		fprintf(stderr, "EOF\n");
 		return 1;
 	}

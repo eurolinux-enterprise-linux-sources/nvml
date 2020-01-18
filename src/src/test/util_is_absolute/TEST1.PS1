@@ -1,5 +1,5 @@
 #
-# Copyright 2016, Intel Corporation
+# Copyright 2016-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -42,27 +42,26 @@ Param(
     )
 $Env:UNITTEST_NAME = "util_is_absolute\TEST1"
 $Env:UNITTEST_NUM = "1"
-# XXX:  bash has a few calls to tools that we don't have on
-# windows (yet) that set PMEM_IS_PMEM and NON_PMEM_IS_PMEM based
-# on their output
-$Env:PMEM_IS_PMEM = $true
-$Env:NON_PMEM_IS_PMEM = $true
+
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
+
+require_test_type medium
 
 require_fs_type none
 
 setup
 
-expect_normal_exit ..\..\x64\debug\util_is_absolute$Env:EXESUFFIX `
+expect_normal_exit $Env:EXE_DIR\util_is_absolute$Env:EXESUFFIX `
     C:\foo\bar `
     \foo\bar `
     foo\bar `
-    D:/foo/bar `
+    D:\foo\bar `
     /foo/bar `
     e: `
     E:\
 
-# check will print the appropriate pass/fail message
 check
+
+pass

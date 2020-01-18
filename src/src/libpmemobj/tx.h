@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,6 +34,20 @@
  * tx.h -- internal definitions for transactions
  */
 
+#ifndef LIBPMEMOBJ_INTERNAL_TX_H
+#define LIBPMEMOBJ_INTERNAL_TX_H 1
+
+#include <stdint.h>
+#include "pvector.h"
+
+#define TX_DEFAULT_RANGE_CACHE_SIZE (1 << 15)
+#define TX_DEFAULT_RANGE_CACHE_THRESHOLD (1 << 12)
+
+#define TX_RANGE_MASK (8ULL - 1)
+#define TX_RANGE_MASK_LEGACY (32ULL - 1)
+
+#define TX_ALIGN_SIZE(s, amask) (((s) + (amask)) & ~(amask))
+
 enum tx_state {
 	TX_STATE_NONE = 0,
 	TX_STATE_COMMITTED = 1,
@@ -45,13 +59,7 @@ struct tx_range {
 	uint8_t data[];
 };
 
-struct tx_range_cache {
-	struct { /* compatible with struct tx_range */
-		uint64_t offset;
-		uint64_t size;
-		uint8_t data[MAX_CACHED_RANGE_SIZE];
-	} range[MAX_CACHED_RANGES];
-};
+struct tx_range_cache;
 
 enum undo_types {
 	UNDO_ALLOC,
@@ -66,3 +74,18 @@ struct lane_tx_layout {
 	uint64_t state;
 	struct pvector undo_log[MAX_UNDO_TYPES];
 };
+
+struct tx_parameters;
+
+/*
+ * Returns the current transaction's pool handle, NULL if not within
+ * a transaction.
+ */
+PMEMobjpool *tx_get_pop(void);
+
+void tx_ctl_register(PMEMobjpool *pop);
+
+struct tx_parameters *tx_params_new(void);
+void tx_params_delete(struct tx_parameters *tx_params);
+
+#endif

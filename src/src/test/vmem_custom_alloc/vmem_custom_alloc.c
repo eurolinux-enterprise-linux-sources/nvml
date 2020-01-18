@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -55,6 +55,18 @@ static void *
 malloc_null(size_t size)
 {
 	++custom_alloc_calls;
+#ifdef _WIN32
+	/*
+	 * Because Windows version requires UTF-16 string conversion
+	 * which requires three malloc calls to succeed due to long path
+	 * support
+	 */
+	if (custom_alloc_calls < 4) {
+		custom_allocs++;
+		return malloc(size);
+	}
+#endif
+
 	return NULL;
 }
 

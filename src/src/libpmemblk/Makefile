@@ -1,4 +1,4 @@
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -35,8 +35,24 @@
 LIBRARY_NAME = pmemblk
 LIBRARY_SO_VERSION = 1
 LIBRARY_VERSION = 0.0
-SOURCE = libpmemblk.c blk.c btt.c $(COMMON)/util.c $(COMMON)/util_linux.c\
-	$(COMMON)/set.c $(COMMON)/set_linux.c $(COMMON)/out.c
+SOURCE =\
+	$(COMMON)/file.c\
+	$(COMMON)/file_linux.c\
+	$(COMMON)/mmap.c\
+	$(COMMON)/mmap_linux.c\
+	$(COMMON)/os_linux.c\
+	$(COMMON)/os_thread_linux.c\
+	$(COMMON)/out.c\
+	$(COMMON)/pool_hdr.c\
+	$(COMMON)/pool_hdr_linux.c\
+	$(COMMON)/set.c\
+	$(COMMON)/util.c\
+	$(COMMON)/uuid.c\
+	$(COMMON)/uuid_linux.c\
+	$(COMMON)/util_linux.c\
+	blk.c\
+	btt.c\
+	libpmemblk.c
 
 include ../Makefile.inc
 

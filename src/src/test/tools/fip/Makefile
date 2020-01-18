@@ -1,5 +1,4 @@
-
-# Copyright 2016, Intel Corporation
+# Copyright 2016-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -36,23 +35,23 @@ TOP = ../../../..
 include $(TOP)/src/common.inc
 
 vpath %.c $(TOP)/src/rpmem_common/
+vpath %.c $(TOP)/src/common/
 
-HAS_LIBFABRIC=$(call check_package, libfabric)
-ifeq ($(HAS_LIBFABRIC),y)
+ifeq ($(BUILD_RPMEM),y)
+SCP_TO_REMOTE_NODES = y
 TARGET = fip
 
-OBJS = fip.o rpmem_fip_common.o rpmem_common.o
+OBJS = fip.o rpmem_fip_common.o rpmem_common.o util.o os_linux.o
 
 else
-$(info NOTE: Skipping fip because libfabric is missing \
--- see src/test/tools/fip/README for details.)
+$(info NOTE: Skipping fip because $(BUILD_RPMEM_INFO))
 endif
 
 include $(TOP)/src/tools/Makefile.inc
 
-ifeq ($(HAS_LIBFABRIC),y)
+ifeq ($(BUILD_RPMEM),y)
 CFLAGS += -I$(TOP)/src/rpmem_common
+CFLAGS += -I$(TOP)/src/common
 CFLAGS += $(shell $(PKG_CONFIG) --cflags libfabric)
 LIBS += $(shell $(PKG_CONFIG) --libs libfabric)
 endif
-

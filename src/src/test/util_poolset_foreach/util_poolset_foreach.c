@@ -37,7 +37,8 @@
  */
 
 #include "unittest.h"
-#include "util.h"
+#include "set.h"
+#include "pmemcommon.h"
 #include <errno.h>
 
 #define LOG_PREFIX "ut"
@@ -46,21 +47,21 @@
 #define MAJOR_VERSION 1
 #define MINOR_VERSION 0
 
-/*
- * Declaration of out_init and out_fini functions because it is not
- * possible to include both unittest.h and out.h headers due to
- * redeclaration of some macros.
- */
-void out_init(const char *log_prefix, const char *log_level_var,
-		const char *log_file_var, int major_version,
-		int minor_version);
-void out_fini(void);
-
 static int
-cb(const char *name, void *arg)
+cb(struct part_file *pf, void *arg)
 {
-	char *set_name = (char *)arg;
-	UT_OUT("%s: %s", set_name, name);
+	if (pf->is_remote) {
+		/* remote replica */
+		const char *node_addr = pf->node_addr;
+		const char *pool_desc = pf->pool_desc;
+		char *set_name = (char *)arg;
+		UT_OUT("%s: %s %s", set_name, node_addr, pool_desc);
+	} else {
+		const char *name = pf->path;
+		char *set_name = (char *)arg;
+		UT_OUT("%s: %s", set_name, name);
+	}
+
 	return 0;
 }
 
@@ -69,9 +70,8 @@ main(int argc, char *argv[])
 {
 	START(argc, argv, "util_poolset_foreach");
 
-	out_init(LOG_PREFIX, LOG_LEVEL_VAR, LOG_FILE_VAR,
+	common_init(LOG_PREFIX, LOG_LEVEL_VAR, LOG_FILE_VAR,
 			MAJOR_VERSION, MINOR_VERSION);
-	util_init();
 
 	if (argc < 2)
 		UT_FATAL("usage: %s file...",
@@ -83,7 +83,7 @@ main(int argc, char *argv[])
 
 		UT_OUT("util_poolset_foreach_part(%s): %d", fname, ret);
 	}
-	out_fini();
+	common_fini();
 
 	DONE(NULL);
 }

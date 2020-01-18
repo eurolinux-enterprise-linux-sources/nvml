@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,10 +39,6 @@
 #endif
 
 #include "unittest.h"
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <signal.h>
 
 #ifdef USE_LIBUNWIND
 
@@ -102,12 +98,21 @@ ut_dump_backtrace(void)
 		Dl_info dlinfo;
 		const char *fname = "?";
 
+		uintptr_t in_object_offset = 0;
+
 		if (dladdr(ptr, &dlinfo) && dlinfo.dli_fname &&
-				*dlinfo.dli_fname)
+				*dlinfo.dli_fname) {
 			fname = dlinfo.dli_fname;
 
-		UT_ERR("%u: %s (%s%s+0x%lx) [%p]", i++, fname, procname,
-				ret == -UNW_ENOMEM ? "..." : "", off, ptr);
+			uintptr_t base = (uintptr_t)dlinfo.dli_fbase;
+			if ((uintptr_t)ptr >= base)
+				in_object_offset = (uintptr_t)ptr - base;
+		}
+
+		UT_ERR("%u: %s (%s%s+0x%lx) [%p] [0x%" PRIxPTR "]",
+			i++, fname, procname,
+			ret == -UNW_ENOMEM ? "..." : "", off, ptr,
+			in_object_offset);
 
 		ret = unw_step(&cursor);
 		if (ret < 0)
@@ -164,7 +169,7 @@ ut_dump_backtrace(void)
 	SymInitialize(proc_hndl, NULL, TRUE);
 
 	nptrs = CaptureStackBackTrace(0, SIZE, buffer, NULL);
-	symbol = calloc(sizeof(SYMBOL_INFO) + MAX_SYM_NAME * sizeof(CHAR), 1);
+	symbol = CALLOC(sizeof(SYMBOL_INFO) + MAX_SYM_NAME * sizeof(CHAR), 1);
 	symbol->MaxNameLen = MAX_SYM_NAME - 1;
 	symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
 
@@ -177,7 +182,7 @@ ut_dump_backtrace(void)
 		}
 	}
 
-	free(symbol);
+	FREE(symbol);
 }
 
 #endif /* _WIN32 */
@@ -201,7 +206,7 @@ ut_sighandler(int sig)
  * ut_register_sighandlers -- register signal handlers for various fatal signals
  */
 void
-ut_register_sighandlers()
+ut_register_sighandlers(void)
 {
 	signal(SIGSEGV, ut_sighandler);
 	signal(SIGABRT, ut_sighandler);

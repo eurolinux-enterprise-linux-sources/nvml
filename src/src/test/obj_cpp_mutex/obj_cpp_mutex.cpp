@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,9 +36,9 @@
 
 #include "unittest.h"
 
-#include <libpmemobj/mutex.hpp>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
+#include <libpmemobj++/mutex.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
 
 #include <mutex>
 #include <thread>
@@ -103,6 +103,26 @@ trylock_test(nvobj::persistent_ptr<struct root> proot)
 }
 
 /*
+ * mutex_zero_test -- (internal) test the zeroing constructor
+ */
+void
+mutex_zero_test(nvobj::pool<struct root> &pop)
+{
+	PMEMoid raw_mutex;
+
+	pmemobj_alloc(pop.get_handle(), &raw_mutex, sizeof(PMEMmutex), 1,
+		      [](PMEMobjpool *pop, void *ptr, void *arg) -> int {
+			      PMEMmutex *mtx = static_cast<PMEMmutex *>(ptr);
+			      pmemobj_memset_persist(pop, mtx, 1, sizeof(*mtx));
+			      return 0;
+		      },
+		      NULL);
+
+	nvobj::mutex *placed_mtx = new (pmemobj_direct(raw_mutex)) nvobj::mutex;
+	std::unique_lock<nvobj::mutex> lck(*placed_mtx);
+}
+
+/*
  * mutex_test -- (internal) launch worker threads to test the pmutex
  */
 template <typename Worker>
@@ -140,6 +160,8 @@ main(int argc, char *argv[])
 		UT_FATAL("!pool::create: %s %s", pe.what(), path);
 	}
 
+	mutex_zero_test(pop);
+
 	mutex_test(pop, increment_pint);
 	UT_ASSERTeq(pop.get_root()->counter, num_threads * num_ops);
 
@@ -155,5 +177,5 @@ main(int argc, char *argv[])
 
 	pop.close();
 
-	DONE(NULL);
+	DONE(nullptr);
 }

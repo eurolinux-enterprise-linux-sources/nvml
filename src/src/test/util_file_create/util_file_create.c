@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,7 +38,7 @@
 
 #include "unittest.h"
 
-#include "util.h"
+#include "file.h"
 
 int
 main(int argc, char *argv[])
@@ -62,7 +62,7 @@ main(int argc, char *argv[])
 			UT_OUT("!%s: util_file_create", fname);
 		else {
 			UT_OUT("%s: created", fname);
-			close(fd);
+			os_close(fd);
 		}
 	}
 

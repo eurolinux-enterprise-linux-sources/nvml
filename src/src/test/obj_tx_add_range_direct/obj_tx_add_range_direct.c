@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,11 +36,9 @@
 #include <string.h>
 #include <stddef.h>
 
+#include "tx.h"
 #include "unittest.h"
-#include "libpmemobj.h"
 #include "util.h"
-#include "lane.h"
-#include "obj.h"
 #include "valgrind_internal.h"
 
 #define LAYOUT_NAME "tx_add_range_direct"
@@ -94,7 +92,7 @@ do_tx_add_range_alloc_commit(PMEMobjpool *pop)
 		TOID_ASSIGN(obj, do_tx_zalloc(pop, TYPE_OBJ));
 		UT_ASSERT(!TOID_IS_NULL(obj));
 
-		char *ptr = pmemobj_direct(obj.oid);
+		char *ptr = (char *)pmemobj_direct(obj.oid);
 		ret = pmemobj_tx_add_range_direct(ptr + VALUE_OFF,
 				VALUE_SIZE);
 		UT_ASSERTeq(ret, 0);
@@ -131,7 +129,7 @@ do_tx_add_range_alloc_abort(PMEMobjpool *pop)
 		TOID_ASSIGN(obj, do_tx_zalloc(pop, TYPE_OBJ_ABORT));
 		UT_ASSERT(!TOID_IS_NULL(obj));
 
-		char *ptr = pmemobj_direct(obj.oid);
+		char *ptr = (char *)pmemobj_direct(obj.oid);
 		ret = pmemobj_tx_add_range_direct(ptr + VALUE_OFF,
 				VALUE_SIZE);
 		UT_ASSERTeq(ret, 0);
@@ -168,7 +166,7 @@ do_tx_add_range_twice_commit(PMEMobjpool *pop)
 	UT_ASSERT(!TOID_IS_NULL(obj));
 
 	TX_BEGIN(pop) {
-		char *ptr = pmemobj_direct(obj.oid);
+		char *ptr = (char *)pmemobj_direct(obj.oid);
 		ret = pmemobj_tx_add_range_direct(ptr + VALUE_OFF,
 				VALUE_SIZE);
 		UT_ASSERTeq(ret, 0);
@@ -201,7 +199,7 @@ do_tx_add_range_twice_abort(PMEMobjpool *pop)
 	UT_ASSERT(!TOID_IS_NULL(obj));
 
 	TX_BEGIN(pop) {
-		char *ptr = pmemobj_direct(obj.oid);
+		char *ptr = (char *)pmemobj_direct(obj.oid);
 		ret = pmemobj_tx_add_range_direct(ptr + VALUE_OFF,
 				VALUE_SIZE);
 		UT_ASSERTeq(ret, 0);
@@ -236,7 +234,7 @@ do_tx_add_range_abort_after_nested(PMEMobjpool *pop)
 	TOID_ASSIGN(obj2, do_tx_zalloc(pop, TYPE_OBJ));
 
 	TX_BEGIN(pop) {
-		char *ptr1 = pmemobj_direct(obj1.oid);
+		char *ptr1 = (char *)pmemobj_direct(obj1.oid);
 		ret = pmemobj_tx_add_range_direct(ptr1 + VALUE_OFF,
 				VALUE_SIZE);
 		UT_ASSERTeq(ret, 0);
@@ -244,7 +242,7 @@ do_tx_add_range_abort_after_nested(PMEMobjpool *pop)
 		D_RW(obj1)->value = TEST_VALUE_1;
 
 		TX_BEGIN(pop) {
-			char *ptr2 = pmemobj_direct(obj2.oid);
+			char *ptr2 = (char *)pmemobj_direct(obj2.oid);
 			ret = pmemobj_tx_add_range_direct(ptr2 + DATA_OFF,
 					DATA_SIZE);
 			UT_ASSERTeq(ret, 0);
@@ -281,7 +279,7 @@ do_tx_add_range_abort_nested(PMEMobjpool *pop)
 	TOID_ASSIGN(obj2, do_tx_zalloc(pop, TYPE_OBJ));
 
 	TX_BEGIN(pop) {
-		char *ptr1 = pmemobj_direct(obj1.oid);
+		char *ptr1 = (char *)pmemobj_direct(obj1.oid);
 		ret = pmemobj_tx_add_range_direct(ptr1 + VALUE_OFF,
 				VALUE_SIZE);
 		UT_ASSERTeq(ret, 0);
@@ -289,7 +287,7 @@ do_tx_add_range_abort_nested(PMEMobjpool *pop)
 		D_RW(obj1)->value = TEST_VALUE_1;
 
 		TX_BEGIN(pop) {
-			char *ptr2 = pmemobj_direct(obj2.oid);
+			char *ptr2 = (char *)pmemobj_direct(obj2.oid);
 			ret = pmemobj_tx_add_range_direct(ptr2 + DATA_OFF,
 					DATA_SIZE);
 			UT_ASSERTeq(ret, 0);
@@ -325,7 +323,7 @@ do_tx_add_range_commit_nested(PMEMobjpool *pop)
 	TOID_ASSIGN(obj2, do_tx_zalloc(pop, TYPE_OBJ));
 
 	TX_BEGIN(pop) {
-		char *ptr1 = pmemobj_direct(obj1.oid);
+		char *ptr1 = (char *)pmemobj_direct(obj1.oid);
 		ret = pmemobj_tx_add_range_direct(ptr1 + VALUE_OFF,
 				VALUE_SIZE);
 		UT_ASSERTeq(ret, 0);
@@ -333,7 +331,7 @@ do_tx_add_range_commit_nested(PMEMobjpool *pop)
 		D_RW(obj1)->value = TEST_VALUE_1;
 
 		TX_BEGIN(pop) {
-			char *ptr2 = pmemobj_direct(obj2.oid);
+			char *ptr2 = (char *)pmemobj_direct(obj2.oid);
 			ret = pmemobj_tx_add_range_direct(ptr2 + DATA_OFF,
 					DATA_SIZE);
 			UT_ASSERTeq(ret, 0);
@@ -365,7 +363,7 @@ do_tx_add_range_abort(PMEMobjpool *pop)
 	TOID_ASSIGN(obj, do_tx_zalloc(pop, TYPE_OBJ));
 
 	TX_BEGIN(pop) {
-		char *ptr = pmemobj_direct(obj.oid);
+		char *ptr = (char *)pmemobj_direct(obj.oid);
 		ret = pmemobj_tx_add_range_direct(ptr + VALUE_OFF,
 				VALUE_SIZE);
 		UT_ASSERTeq(ret, 0);
@@ -391,12 +389,37 @@ do_tx_add_range_commit(PMEMobjpool *pop)
 	TOID_ASSIGN(obj, do_tx_zalloc(pop, TYPE_OBJ));
 
 	TX_BEGIN(pop) {
-		char *ptr = pmemobj_direct(obj.oid);
+		char *ptr = (char *)pmemobj_direct(obj.oid);
 		ret = pmemobj_tx_add_range_direct(ptr + VALUE_OFF,
 				VALUE_SIZE);
 		UT_ASSERTeq(ret, 0);
 
 		D_RW(obj)->value = TEST_VALUE_1;
+	} TX_ONABORT {
+		UT_ASSERT(0);
+	} TX_END
+
+	UT_ASSERTeq(D_RO(obj)->value, TEST_VALUE_1);
+}
+
+/*
+ * do_tx_xadd_range_commit -- call xadd_range_direct and commit tx
+ */
+static void
+do_tx_xadd_range_commit(PMEMobjpool *pop)
+{
+	int ret;
+	TOID(struct object) obj;
+	TOID_ASSIGN(obj, do_tx_zalloc(pop, TYPE_OBJ));
+
+	TX_BEGIN(pop) {
+		char *ptr = (char *)pmemobj_direct(obj.oid);
+		ret = pmemobj_tx_xadd_range_direct(ptr + VALUE_OFF,
+				VALUE_SIZE, POBJ_XADD_NO_FLUSH);
+		UT_ASSERTeq(ret, 0);
+
+		D_RW(obj)->value = TEST_VALUE_1;
+		/* let pmemcheck find we didn't flush it */
 	} TX_ONABORT {
 		UT_ASSERT(0);
 	} TX_END
@@ -469,6 +492,8 @@ test_add_direct_macros(PMEMobjpool *pop)
 	UT_ASSERTeq(D_RO(obj)->value, TEST_VALUE_1);
 }
 
+#define MAX_CACHED_RANGES 100
+
 /*
  * test_tx_corruption_bug -- test whether tx_adds for small objects from one
  * transaction does NOT leak to the next transaction
@@ -510,6 +535,77 @@ test_tx_corruption_bug(PMEMobjpool *pop)
 	pmemobj_free(&obj.oid);
 }
 
+static void
+do_tx_add_range_too_large(PMEMobjpool *pop)
+{
+	TOID(struct object) obj;
+	TOID_ASSIGN(obj, do_tx_zalloc(pop, TYPE_OBJ));
+
+	TX_BEGIN(pop) {
+		pmemobj_tx_add_range_direct(pmemobj_direct(obj.oid),
+			PMEMOBJ_MAX_ALLOC_SIZE + 1);
+	} TX_ONCOMMIT {
+		UT_ASSERT(0);
+	} TX_END
+
+	UT_ASSERTne(errno, 0);
+}
+
+static void
+do_tx_add_range_lots_of_small_snapshots(PMEMobjpool *pop)
+{
+	size_t s = TX_DEFAULT_RANGE_CACHE_SIZE * 2;
+	size_t snapshot_s = 8;
+	PMEMoid obj;
+	int ret = pmemobj_alloc(pop, &obj, s, 0, NULL, NULL);
+	UT_ASSERTeq(ret, 0);
+
+	TX_BEGIN(pop) {
+		for (size_t n = 0; n < s; n += snapshot_s) {
+			void *addr = (void *)((size_t)pmemobj_direct(obj) + n);
+			pmemobj_tx_add_range_direct(addr, snapshot_s);
+		}
+	} TX_ONABORT {
+		UT_ASSERT(0);
+	} TX_END
+
+	UT_ASSERTeq(errno, 0);
+}
+
+static void
+do_tx_add_cache_overflowing_range(PMEMobjpool *pop)
+{
+	/*
+	 * This test adds snapshot to the cache, but in way that results in
+	 * one of the add_range being split into two caches.
+	 */
+	size_t s = TX_DEFAULT_RANGE_CACHE_SIZE * 2;
+	size_t snapshot_s = TX_DEFAULT_RANGE_CACHE_THRESHOLD - 8;
+	PMEMoid obj;
+	int ret = pmemobj_zalloc(pop, &obj, s, 0);
+	UT_ASSERTeq(ret, 0);
+
+	TX_BEGIN(pop) {
+		size_t n = 0;
+		while (n != s) {
+			if (n + snapshot_s > s)
+				snapshot_s = s - n;
+			void *addr = (void *)((size_t)pmemobj_direct(obj) + n);
+			pmemobj_tx_add_range_direct(addr, snapshot_s);
+			memset(addr, 0xc, snapshot_s);
+			n += snapshot_s;
+		}
+		pmemobj_tx_abort(0);
+	} TX_ONCOMMIT {
+		UT_ASSERT(0);
+	} TX_END
+
+	UT_ASSERT(util_is_zeroed(pmemobj_direct(obj), s));
+
+	UT_ASSERTne(errno, 0);
+	pmemobj_free(&obj);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -520,7 +616,7 @@ main(int argc, char *argv[])
 		UT_FATAL("usage: %s [file]", argv[0]);
 
 	PMEMobjpool *pop;
-	if ((pop = pmemobj_create(argv[1], LAYOUT_NAME, PMEMOBJ_MIN_POOL,
+	if ((pop = pmemobj_create(argv[1], LAYOUT_NAME, PMEMOBJ_MIN_POOL * 4,
 			S_IWUSR | S_IRUSR)) == NULL)
 		UT_FATAL("!pmemobj_create");
 
@@ -547,6 +643,14 @@ main(int argc, char *argv[])
 	test_add_direct_macros(pop);
 	VALGRIND_WRITE_STATS;
 	test_tx_corruption_bug(pop);
+	VALGRIND_WRITE_STATS;
+	do_tx_add_range_too_large(pop);
+	VALGRIND_WRITE_STATS;
+	do_tx_add_range_lots_of_small_snapshots(pop);
+	VALGRIND_WRITE_STATS;
+	do_tx_add_cache_overflowing_range(pop);
+	VALGRIND_WRITE_STATS;
+	do_tx_xadd_range_commit(pop);
 
 	pmemobj_close(pop);
 

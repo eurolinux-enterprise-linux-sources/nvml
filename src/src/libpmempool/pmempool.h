@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,8 +38,6 @@
 #define PMEMPOOL_LOG_LEVEL_VAR "PMEMPOOL_LOG_LEVEL"
 #define PMEMPOOL_LOG_FILE_VAR "PMEMPOOL_LOG_FILE"
 
-extern unsigned long long Pagesize;
-
 enum check_result {
 	CHECK_RESULT_CONSISTENT,
 	CHECK_RESULT_NOT_CONSISTENT,
@@ -52,9 +50,9 @@ enum check_result {
 };
 
 /*
- * pmempool_check -- context and arguments for check command
+ * pmempool_check_ctx -- context and arguments for check command
  */
-struct pmempool_check {
+struct pmempool_check_ctx {
 	struct pmempool_check_args args;
 	char *path;
 	char *backup_path;

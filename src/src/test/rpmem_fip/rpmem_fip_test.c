@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,7 +39,7 @@
 #include <arpa/inet.h>
 
 #include "unittest.h"
-#include "out.h"
+#include "pmemcommon.h"
 
 #include "librpmem.h"
 #include "rpmem.h"
@@ -47,10 +47,12 @@
 #include "rpmem_common.h"
 #include "rpmem_util.h"
 #include "rpmem_fip_common.h"
-#include "rpmem_fip_sock.h"
+#include "rpmem_fip_oob.h"
 #include "rpmemd_fip.h"
 #include "rpmemd_log.h"
+#include "rpmemd_util.h"
 #include "rpmem_fip.h"
+#include "os.h"
 
 #define SIZE_PER_LANE	64
 #define COUNT_PER_LANE	32
@@ -181,35 +183,32 @@ client_persist_thread(void *arg)
 /*
  * client_init -- test case for client initialization
  */
-void
+int
 client_init(const struct test_case *tc, int argc, char *argv[])
 {
-	if (argc != 2)
-		UT_FATAL("usage: %s <addr>[:<port>] <provider>", tc->name);
+	if (argc < 3)
+		UT_FATAL("usage: %s <target> <provider> <persist method>",
+				tc->name);
 
 	char *target = argv[0];
 	char *prov_name = argv[1];
+	char *persist_method = argv[2];
 
-	char *node;
-	char *service;
+	set_rpmem_cmd("server_init %s", persist_method);
+
 	char fip_service[NI_MAXSERV];
 
-	int ret;
-
-	ret = rpmem_target_split(target, NULL, &node, &service);
-	UT_ASSERTeq(ret, 0);
-	UT_ASSERTne(node, NULL);
-	UT_ASSERTne(service, NULL);
+	struct rpmem_target_info *info;
+	info = rpmem_target_parse(target);
+	UT_ASSERTne(info, NULL);
 
 	unsigned nlanes;
-	enum rpmem_provider provider = get_provider(node,
+	enum rpmem_provider provider = get_provider(info->node,
 			prov_name, &nlanes);
 
-	int fd;
+	client_t *client;
 	struct rpmem_resp_attr resp;
-	struct sockaddr_in addr_in;
-	fd = client_exchange(node, service, NLANES, provider,
-			&resp, &addr_in);
+	client = client_exchange(info, NLANES, provider, &resp);
 
 	struct rpmem_fip_attr attr = {
 		.provider = provider,
@@ -225,37 +224,35 @@ client_init(const struct test_case *tc, int argc, char *argv[])
 	UT_ASSERT(sret > 0);
 
 	struct rpmem_fip *fip;
-	fip = rpmem_fip_init(node, fip_service, &attr, &nlanes);
+	fip = rpmem_fip_init(info->node, fip_service, &attr, &nlanes);
 	UT_ASSERTne(fip, NULL);
 
-	client_close(fd);
+	client_close_begin(client);
+	client_close_end(client);
 
 	rpmem_fip_fini(fip);
+	rpmem_target_free(info);
 
-	FREE(node);
-	FREE(service);
+	return 3;
 }
 
 /*
  * server_init -- test case for server initialization
  */
-void
+int
 server_init(const struct test_case *tc, int argc, char *argv[])
 {
-	if (argc != 3)
-		UT_FATAL("usage: %s <addr> <port> <persist method>", tc->name);
+	if (argc < 1)
+		UT_FATAL("usage: %s <persist method>", tc->name);
 
-	char *node = argv[0];
-	char *service = argv[1];
+	enum rpmem_persist_method persist_method = get_persist_method(argv[0]);
 
-	enum rpmem_persist_method persist_method = get_persist_method(argv[2]);
-
-	int fd;
 	unsigned nlanes;
 	enum rpmem_provider provider;
-	struct sockaddr_in addr_in;
-	fd = server_exchange_begin(node, service, &nlanes,
-			&provider, &addr_in);
+	char *addr = NULL;
+	int ret;
+	server_exchange_begin(&nlanes, &provider, &addr);
+	UT_ASSERTne(addr, NULL);
 
 	struct rpmemd_fip_attr attr = {
 		.addr = rpool,
@@ -263,57 +260,61 @@ server_init(const struct test_case *tc, int argc, char *argv[])
 		.nlanes = nlanes,
 		.provider = provider,
 		.persist_method = persist_method,
-		.persist = pmem_persist,
 		.nthreads = NTHREADS,
 	};
+
+	ret = rpmemd_apply_pm_policy(&attr.persist_method, &attr.persist,
+			1 /* is pmem */);
+	UT_ASSERTeq(ret, 0);
 
 	struct rpmem_resp_attr resp;
 	struct rpmemd_fip *fip;
 	enum rpmem_err err;
 
-	const char *addr = inet_ntoa(addr_in.sin_addr);
 	fip = rpmemd_fip_init(addr, NULL, &attr, &resp, &err);
 	UT_ASSERTne(fip, NULL);
 
-	server_exchange_end(fd, resp);
-	server_close_begin(fd);
-	server_close_end(fd);
+	server_exchange_end(resp);
+	server_close_begin();
+	server_close_end();
 
 	rpmemd_fip_fini(fip);
+
+	FREE(addr);
+
+	return 1;
 }
 
 /*
  * client_connect -- test case for establishing connection - client side
  */
-void
+int
 client_connect(const struct test_case *tc, int argc, char *argv[])
 {
-	if (argc != 2)
-		UT_FATAL("usage: %s <addr>[:<port>] <provider>", tc->name);
+	if (argc < 3)
+		UT_FATAL("usage: %s <target> <provider> <persist method>",
+				tc->name);
 
 	char *target = argv[0];
 	char *prov_name = argv[1];
+	char *persist_method = argv[2];
 
-	char *node;
-	char *service;
+	set_rpmem_cmd("server_connect %s", persist_method);
+
 	char fip_service[NI_MAXSERV];
-
+	struct rpmem_target_info *info;
 	int ret;
 
-	ret = rpmem_target_split(target, NULL, &node, &service);
-	UT_ASSERTeq(ret, 0);
-	UT_ASSERTne(node, NULL);
-	UT_ASSERTne(service, NULL);
+	info = rpmem_target_parse(target);
+	UT_ASSERTne(info, NULL);
 
 	unsigned nlanes;
-	enum rpmem_provider provider = get_provider(node,
+	enum rpmem_provider provider = get_provider(info->node,
 			prov_name, &nlanes);
 
-	int fd;
+	client_t *client;
 	struct rpmem_resp_attr resp;
-	struct sockaddr_in addr_in;
-	fd = client_exchange(node, service, NLANES, provider,
-			&resp, &addr_in);
+	client = client_exchange(info, NLANES, provider, &resp);
 
 	struct rpmem_fip_attr attr = {
 		.provider = provider,
@@ -329,42 +330,41 @@ client_connect(const struct test_case *tc, int argc, char *argv[])
 	UT_ASSERT(sret > 0);
 
 	struct rpmem_fip *fip;
-	fip = rpmem_fip_init(node, fip_service, &attr, &nlanes);
+	fip = rpmem_fip_init(info->node, fip_service, &attr, &nlanes);
 	UT_ASSERTne(fip, NULL);
 
 	ret = rpmem_fip_connect(fip);
 	UT_ASSERTeq(ret, 0);
 
-	client_close(fd);
+	client_close_begin(client);
 
 	ret = rpmem_fip_close(fip);
 	UT_ASSERTeq(ret, 0);
 
-	rpmem_fip_fini(fip);
+	client_close_end(client);
 
-	FREE(node);
-	FREE(service);
+	rpmem_fip_fini(fip);
+	rpmem_target_free(info);
+
+	return 3;
 }
 
 /*
  * server_connect -- test case for establishing connection - server side
  */
-void
+int
 server_connect(const struct test_case *tc, int argc, char *argv[])
 {
-	if (argc != 3)
-		UT_FATAL("usage: %s <addr> <port> <persist method>", tc->name);
+	if (argc < 1)
+		UT_FATAL("usage: %s <persist method>", tc->name);
 
-	char *node = argv[0];
-	char *service = argv[1];
-	enum rpmem_persist_method persist_method = get_persist_method(argv[2]);
+	enum rpmem_persist_method persist_method = get_persist_method(argv[0]);
 
-	int fd;
 	unsigned nlanes;
 	enum rpmem_provider provider;
-	struct sockaddr_in addr_in;
-	fd = server_exchange_begin(node, service, &nlanes,
-			&provider, &addr_in);
+	char *addr = NULL;
+	server_exchange_begin(&nlanes, &provider, &addr);
+	UT_ASSERTne(addr, NULL);
 
 	struct rpmemd_fip_attr attr = {
 		.addr = rpool,
@@ -372,7 +372,6 @@ server_connect(const struct test_case *tc, int argc, char *argv[])
 		.nlanes = nlanes,
 		.provider = provider,
 		.persist_method = persist_method,
-		.persist = pmem_persist,
 		.nthreads = NTHREADS,
 	};
 
@@ -381,17 +380,20 @@ server_connect(const struct test_case *tc, int argc, char *argv[])
 	struct rpmemd_fip *fip;
 	enum rpmem_err err;
 
-	const char *addr = inet_ntoa(addr_in.sin_addr);
+	ret = rpmemd_apply_pm_policy(&attr.persist_method, &attr.persist,
+			1 /* is pmem */);
+	UT_ASSERTeq(ret, 0);
+
 	fip = rpmemd_fip_init(addr, NULL, &attr, &resp, &err);
 	UT_ASSERTne(fip, NULL);
 
-	server_exchange_end(fd, resp);
+	server_exchange_end(resp);
 
-	ret = rpmemd_fip_accept(fip);
+	ret = rpmemd_fip_accept(fip, -1);
 	UT_ASSERTeq(ret, 0);
 
-	server_close_begin(fd);
-	server_close_end(fd);
+	server_close_begin();
+	server_close_end();
 
 	ret = rpmemd_fip_wait_close(fip, -1);
 	UT_ASSERTeq(ret, 0);
@@ -400,29 +402,30 @@ server_connect(const struct test_case *tc, int argc, char *argv[])
 	UT_ASSERTeq(ret, 0);
 
 	rpmemd_fip_fini(fip);
+
+	FREE(addr);
+
+	return 1;
 }
 
 /*
  * server_process -- test case for processing data on server side
  */
-void
+int
 server_process(const struct test_case *tc, int argc, char *argv[])
 {
-	if (argc != 3)
-		UT_FATAL("usage: %s <addr> <port> <persist method>", tc->name);
+	if (argc < 1)
+		UT_FATAL("usage: %s <persist method>", tc->name);
 
-	char *node = argv[0];
-	char *service = argv[1];
-	enum rpmem_persist_method persist_method = get_persist_method(argv[2]);
+	enum rpmem_persist_method persist_method = get_persist_method(argv[0]);
 
 	set_pool_data(rpool, 1);
 
-	int fd;
 	unsigned nlanes;
 	enum rpmem_provider provider;
-	struct sockaddr_in addr_in;
-	fd = server_exchange_begin(node, service, &nlanes,
-			&provider, &addr_in);
+	char *addr = NULL;
+	server_exchange_begin(&nlanes, &provider, &addr);
+	UT_ASSERTne(addr, NULL);
 
 	struct rpmemd_fip_attr attr = {
 		.addr = rpool,
@@ -430,7 +433,6 @@ server_process(const struct test_case *tc, int argc, char *argv[])
 		.nlanes = nlanes,
 		.provider = provider,
 		.persist_method = persist_method,
-		.persist = pmem_persist,
 		.nthreads = NTHREADS,
 	};
 
@@ -439,23 +441,26 @@ server_process(const struct test_case *tc, int argc, char *argv[])
 	struct rpmemd_fip *fip;
 	enum rpmem_err err;
 
-	const char *addr = inet_ntoa(addr_in.sin_addr);
+	ret = rpmemd_apply_pm_policy(&attr.persist_method, &attr.persist,
+			1 /* is pmem */);
+	UT_ASSERTeq(ret, 0);
+
 	fip = rpmemd_fip_init(addr, NULL, &attr, &resp, &err);
 	UT_ASSERTne(fip, NULL);
 
-	server_exchange_end(fd, resp);
+	server_exchange_end(resp);
 
-	ret = rpmemd_fip_accept(fip);
+	ret = rpmemd_fip_accept(fip, -1);
 	UT_ASSERTeq(ret, 0);
 
 	ret = rpmemd_fip_process_start(fip);
 
-	server_close_begin(fd);
+	server_close_begin();
 
 	ret = rpmemd_fip_process_stop(fip);
 	UT_ASSERTeq(ret, 0);
 
-	server_close_end(fd);
+	server_close_end();
 
 	ret = rpmemd_fip_wait_close(fip, -1);
 	UT_ASSERTeq(ret, 0);
@@ -464,42 +469,46 @@ server_process(const struct test_case *tc, int argc, char *argv[])
 	UT_ASSERTeq(ret, 0);
 
 	rpmemd_fip_fini(fip);
+
+	FREE(addr);
+
+	return 1;
 }
 
 /*
  * client_persist -- test case for single-threaded persist operation
  */
-void
+int
 client_persist(const struct test_case *tc, int argc, char *argv[])
 {
-	if (argc != 2)
-		UT_FATAL("usage: %s <addr>[:<port>] <provider>", tc->name);
+	if (argc < 3)
+		UT_FATAL("usage: %s <target> <provider> <persist method>",
+				tc->name);
 
 	char *target = argv[0];
 	char *prov_name = argv[1];
+	char *persist_method = argv[2];
 
-	char *node;
-	char *service;
+	set_rpmem_cmd("server_process %s", persist_method);
+
 	char fip_service[NI_MAXSERV];
+	struct rpmem_target_info *info;
+
+	info = rpmem_target_parse(target);
+	UT_ASSERTne(info, NULL);
 
 	int ret;
-
-	ret = rpmem_target_split(target, NULL, &node, &service);
-	UT_ASSERTeq(ret, 0);
-	UT_ASSERTne(node, NULL);
-	UT_ASSERTne(service, NULL);
 
 	set_pool_data(lpool, 1);
 	set_pool_data(rpool, 1);
 
 	unsigned nlanes;
-	enum rpmem_provider provider = get_provider(node,
+	enum rpmem_provider provider = get_provider(info->node,
 			prov_name, &nlanes);
 
-	int fd;
+	client_t *client;
 	struct rpmem_resp_attr resp;
-	struct sockaddr_in addr_in;
-	fd = client_exchange(node, service, NLANES, provider, &resp, &addr_in);
+	client = client_exchange(info, NLANES, provider, &resp);
 
 	struct rpmem_fip_attr attr = {
 		.provider = provider,
@@ -515,13 +524,10 @@ client_persist(const struct test_case *tc, int argc, char *argv[])
 	UT_ASSERT(sret > 0);
 
 	struct rpmem_fip *fip;
-	fip = rpmem_fip_init(node, fip_service, &attr, &nlanes);
+	fip = rpmem_fip_init(info->node, fip_service, &attr, &nlanes);
 	UT_ASSERTne(fip, NULL);
 
 	ret = rpmem_fip_connect(fip);
-	UT_ASSERTeq(ret, 0);
-
-	ret = rpmem_fip_process_start(fip);
 	UT_ASSERTeq(ret, 0);
 
 	struct persist_arg arg = {
@@ -531,61 +537,59 @@ client_persist(const struct test_case *tc, int argc, char *argv[])
 
 	client_persist_thread(&arg);
 
-	ret = rpmem_fip_read(fip, rpool, POOL_SIZE, 0);
+	ret = rpmem_fip_read(fip, rpool, POOL_SIZE, 0, 0);
 	UT_ASSERTeq(ret, 0);
 
-	ret = rpmem_fip_process_stop(fip);
-	UT_ASSERTeq(ret, 0);
-
-	client_close(fd);
+	client_close_begin(client);
 
 	ret = rpmem_fip_close(fip);
 	UT_ASSERTeq(ret, 0);
+
+	client_close_end(client);
 
 	rpmem_fip_fini(fip);
 
 	ret = memcmp(rpool, lpool, POOL_SIZE);
 	UT_ASSERTeq(ret, 0);
 
-	FREE(node);
-	FREE(service);
+	rpmem_target_free(info);
+
+	return 3;
 }
 
 /*
  * client_persist_mt -- test case for multi-threaded persist operation
  */
-void
+int
 client_persist_mt(const struct test_case *tc, int argc, char *argv[])
 {
-	if (argc != 2)
-		UT_FATAL("usage: %s <addr>[:<port>] <provider>", tc->name);
+	if (argc < 3)
+		UT_FATAL("usage: %s <target> <provider> <persist method>",
+				tc->name);
 
 	char *target = argv[0];
 	char *prov_name = argv[1];
+	char *persist_method = argv[2];
 
-	char *node;
-	char *service;
+	set_rpmem_cmd("server_process %s", persist_method);
+
 	char fip_service[NI_MAXSERV];
-
+	struct rpmem_target_info *info;
 	int ret;
 
-	ret = rpmem_target_split(target, NULL, &node, &service);
-	UT_ASSERTeq(ret, 0);
-	UT_ASSERTne(node, NULL);
-	UT_ASSERTne(service, NULL);
+	info = rpmem_target_parse(target);
+	UT_ASSERTne(info, NULL);
 
 	set_pool_data(lpool, 1);
 	set_pool_data(rpool, 1);
 
 	unsigned nlanes;
-	enum rpmem_provider provider = get_provider(node,
+	enum rpmem_provider provider = get_provider(info->node,
 			prov_name, &nlanes);
 
-	int fd;
+	client_t *client;
 	struct rpmem_resp_attr resp;
-	struct sockaddr_in addr_in;
-	fd = client_exchange(node, service, NLANES, provider,
-			&resp, &addr_in);
+	client = client_exchange(info, NLANES, provider, &resp);
 
 	struct rpmem_fip_attr attr = {
 		.provider = provider,
@@ -601,16 +605,13 @@ client_persist_mt(const struct test_case *tc, int argc, char *argv[])
 	UT_ASSERT(sret > 0);
 
 	struct rpmem_fip *fip;
-	fip = rpmem_fip_init(node, fip_service, &attr, &nlanes);
+	fip = rpmem_fip_init(info->node, fip_service, &attr, &nlanes);
 	UT_ASSERTne(fip, NULL);
 
 	ret = rpmem_fip_connect(fip);
 	UT_ASSERTeq(ret, 0);
 
-	ret = rpmem_fip_process_start(fip);
-	UT_ASSERTeq(ret, 0);
-
-	pthread_t *persist_thread = MALLOC(resp.nlanes * sizeof(pthread_t));
+	os_thread_t *persist_thread = MALLOC(resp.nlanes * sizeof(os_thread_t));
 	struct persist_arg *args = MALLOC(resp.nlanes *
 			sizeof(struct persist_arg));
 
@@ -624,16 +625,15 @@ client_persist_mt(const struct test_case *tc, int argc, char *argv[])
 	for (unsigned i = 0; i < nlanes; i++)
 		PTHREAD_JOIN(persist_thread[i], NULL);
 
-	ret = rpmem_fip_read(fip, rpool, POOL_SIZE, 0);
+	ret = rpmem_fip_read(fip, rpool, POOL_SIZE, 0, 0);
 	UT_ASSERTeq(ret, 0);
 
-	ret = rpmem_fip_process_stop(fip);
-	UT_ASSERTeq(ret, 0);
-
-	client_close(fd);
+	client_close_begin(client);
 
 	ret = rpmem_fip_close(fip);
 	UT_ASSERTeq(ret, 0);
+
+	client_close_end(client);
 
 	rpmem_fip_fini(fip);
 
@@ -643,45 +643,44 @@ client_persist_mt(const struct test_case *tc, int argc, char *argv[])
 	ret = memcmp(rpool, lpool, POOL_SIZE);
 	UT_ASSERTeq(ret, 0);
 
-	FREE(node);
-	FREE(service);
+	rpmem_target_free(info);
+
+	return 3;
 }
 
 /*
  * client_read -- test case for read operation
  */
-void
+int
 client_read(const struct test_case *tc, int argc, char *argv[])
 {
-	if (argc != 2)
-		UT_FATAL("usage: %s <addr>[:<port>] <provider>", tc->name);
+	if (argc < 3)
+		UT_FATAL("usage: %s <target> <provider> <persist method>",
+				tc->name);
 
 	char *target = argv[0];
 	char *prov_name = argv[1];
+	char *persist_method = argv[2];
 
-	char *node;
-	char *service;
+	set_rpmem_cmd("server_process %s", persist_method);
+
 	char fip_service[NI_MAXSERV];
-
+	struct rpmem_target_info *info;
 	int ret;
 
-	ret = rpmem_target_split(target, NULL, &node, &service);
-	UT_ASSERTeq(ret, 0);
-	UT_ASSERTne(node, NULL);
-	UT_ASSERTne(service, NULL);
+	info = rpmem_target_parse(target);
+	UT_ASSERTne(info, NULL);
 
 	set_pool_data(lpool, 0);
 	set_pool_data(rpool, 1);
 
 	unsigned nlanes;
-	enum rpmem_provider provider = get_provider(node,
+	enum rpmem_provider provider = get_provider(info->node,
 			prov_name, &nlanes);
 
-	int fd;
+	client_t *client;
 	struct rpmem_resp_attr resp;
-	struct sockaddr_in addr_in;
-	fd = client_exchange(node, service, NLANES, provider,
-			&resp, &addr_in);
+	client = client_exchange(info, NLANES, provider, &resp);
 
 	struct rpmem_fip_attr attr = {
 		.provider = provider,
@@ -697,33 +696,30 @@ client_read(const struct test_case *tc, int argc, char *argv[])
 	UT_ASSERT(sret > 0);
 
 	struct rpmem_fip *fip;
-	fip = rpmem_fip_init(node, fip_service, &attr, &nlanes);
+	fip = rpmem_fip_init(info->node, fip_service, &attr, &nlanes);
 	UT_ASSERTne(fip, NULL);
 
 	ret = rpmem_fip_connect(fip);
 	UT_ASSERTeq(ret, 0);
 
-	ret = rpmem_fip_process_start(fip);
+	ret = rpmem_fip_read(fip, lpool, POOL_SIZE, 0, 0);
 	UT_ASSERTeq(ret, 0);
 
-	ret = rpmem_fip_read(fip, lpool, POOL_SIZE, 0);
-	UT_ASSERTeq(ret, 0);
-
-	ret = rpmem_fip_process_stop(fip);
-	UT_ASSERTeq(ret, 0);
-
-	client_close(fd);
+	client_close_begin(client);
 
 	ret = rpmem_fip_close(fip);
 	UT_ASSERTeq(ret, 0);
+
+	client_close_end(client);
 
 	rpmem_fip_fini(fip);
 
 	ret = memcmp(rpool, lpool, POOL_SIZE);
 	UT_ASSERTeq(ret, 0);
 
-	FREE(node);
-	FREE(service);
+	rpmem_target_free(info);
+
+	return 3;
 }
 
 /*
@@ -746,17 +742,19 @@ int
 main(int argc, char *argv[])
 {
 	/* workaround for left-opened files by libfabric */
-	rpmem_fip_probe_get(NULL, NULL);
+	rpmem_fip_probe_get("localhost", NULL);
 	START(argc, argv, "rpmem_obc");
-	out_init("rpmem_fip",
+	common_init("rpmem_fip",
 		"RPMEM_LOG_LEVEL",
 		"RPMEM_LOG_FILE", 0, 0);
-	rpmemd_log_init("rpmemd", getenv("RPMEMD_LOG_FILE"), 0);
+	rpmem_util_cmds_init();
+	rpmemd_log_init("rpmemd", os_getenv("RPMEMD_LOG_FILE"), 0);
 	rpmemd_log_level = rpmemd_log_level_from_str(
-			getenv("RPMEMD_LOG_LEVEL"));
+			os_getenv("RPMEMD_LOG_LEVEL"));
 	TEST_CASE_PROCESS(argc, argv, test_cases, NTESTS);
 
-	out_fini();
+	common_fini();
 	rpmemd_log_close();
+	rpmem_util_cmds_fini();
 	DONE(NULL);
 }

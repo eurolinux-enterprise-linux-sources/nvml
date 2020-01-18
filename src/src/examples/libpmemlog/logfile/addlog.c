@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,13 +38,13 @@
  *	addlog /path/to/pm-aware/file "first line of entry" "second line"
  */
 
+#include <ex_common.h>
 #include <sys/stat.h>
 #include <stdio.h>
 #include <fcntl.h>
 #include <time.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <libpmemlog.h>
 
 #include "logentry.h"
@@ -66,7 +66,9 @@ main(int argc, char *argv[])
 	const char *path = argv[1];
 
 	/* create the log in the given file, or open it if already created */
-	if ((plp = pmemlog_create(path, 0, S_IWUSR | S_IRUSR)) == NULL &&
+	plp = pmemlog_create(path, 0, CREATE_MODE_RW);
+
+	if (plp == NULL &&
 	    (plp = pmemlog_open(path)) == NULL) {
 		perror(path);
 		exit(1);
@@ -82,7 +84,7 @@ main(int argc, char *argv[])
 	 * appended to the string).  Allocate 1 additional entry for the
 	 * header that gets prepended to the entry.
 	 */
-	iovcnt = (argc - 2) * 2 + 1;
+	iovcnt = (argc - 2) * 2 + 2;
 	if ((iovp = malloc(sizeof(*iovp) * iovcnt)) == NULL) {
 		perror("malloc");
 		exit(1);
@@ -112,6 +114,18 @@ main(int argc, char *argv[])
 		header.len += 1;
 		next_iovp++;
 	}
+
+	/*
+	 * pad with NULs (at least one) to align next entry to sizeof(long long)
+	 * bytes
+	 */
+	int a = sizeof(long long);
+	int len_to_round = 1 + (a - (header.len + 1) % a) % a;
+	char *buf[sizeof(long long)] = {0};
+	next_iovp->iov_base = buf;
+	next_iovp->iov_len = len_to_round;
+	header.len += len_to_round;
+	next_iovp++;
 
 	/* atomically add it all to the log */
 	if (pmemlog_appendv(plp, iovp, iovcnt) < 0) {

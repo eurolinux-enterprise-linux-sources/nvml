@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,8 +39,7 @@
 
 #include "libpmemlog.h"
 
-#include "util.h"
-#include "out.h"
+#include "pmemcommon.h"
 #include "log.h"
 
 /*
@@ -52,11 +51,10 @@ ATTR_CONSTRUCTOR
 void
 libpmemlog_init(void)
 {
-	out_init(PMEMLOG_LOG_PREFIX, PMEMLOG_LOG_LEVEL_VAR,
+	common_init(PMEMLOG_LOG_PREFIX, PMEMLOG_LOG_LEVEL_VAR,
 			PMEMLOG_LOG_FILE_VAR, PMEMLOG_MAJOR_VERSION,
 			PMEMLOG_MINOR_VERSION);
 	LOG(3, NULL);
-	util_init();
 }
 
 /*
@@ -69,14 +67,17 @@ void
 libpmemlog_fini(void)
 {
 	LOG(3, NULL);
-	out_fini();
+	common_fini();
 }
 
 /*
- * pmemlog_check_version -- see if lib meets application version requirements
+ * pmemlog_check_versionU -- see if lib meets application version requirements
  */
+#ifndef _WIN32
+static inline
+#endif
 const char *
-pmemlog_check_version(unsigned major_required, unsigned minor_required)
+pmemlog_check_versionU(unsigned major_required, unsigned minor_required)
 {
 	LOG(3, "major_required %u minor_required %u",
 			major_required, minor_required);
@@ -96,6 +97,29 @@ pmemlog_check_version(unsigned major_required, unsigned minor_required)
 	return NULL;
 }
 
+#ifndef _WIN32
+/*
+ * pmemlog_check_version -- see if lib meets application version requirements
+ */
+const char *
+pmemlog_check_version(unsigned major_required, unsigned minor_required)
+{
+	return pmemlog_check_versionU(major_required, minor_required);
+}
+#else
+/*
+ * pmemlog_check_versionW -- see if lib meets application version requirements
+ */
+const wchar_t *
+pmemlog_check_versionW(unsigned major_required, unsigned minor_required)
+{
+	if (pmemlog_check_versionU(major_required, minor_required) != NULL)
+		return out_get_errormsgW();
+	else
+		return NULL;
+}
+#endif
+
 /*
  * pmemlog_set_funcs -- allow overriding libpmemlog's call to malloc, etc.
  */
@@ -112,10 +136,34 @@ pmemlog_set_funcs(
 }
 
 /*
+ * pmemlog_errormsgU -- return last error message
+ */
+#ifndef _WIN32
+static inline
+#endif
+const char *
+pmemlog_errormsgU(void)
+{
+	return out_get_errormsg();
+}
+
+#ifndef _WIN32
+/*
  * pmemlog_errormsg -- return last error message
  */
 const char *
 pmemlog_errormsg(void)
 {
-	return out_get_errormsg();
+	return pmemlog_errormsgU();
 }
+#else
+/*
+ * pmemlog_errormsgW -- return last error message as wchar_t
+ */
+const wchar_t *
+pmemlog_errormsgW(void)
+{
+	return out_get_errormsgW();
+}
+
+#endif

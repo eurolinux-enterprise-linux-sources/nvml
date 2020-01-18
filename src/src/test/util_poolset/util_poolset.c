@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,8 +37,10 @@
  */
 
 #include "unittest.h"
-#include "util.h"
+#include "pmemcommon.h"
+#include "set.h"
 #include <errno.h>
+#include "mocks.h"
 
 #define LOG_PREFIX "ut"
 #define LOG_LEVEL_VAR "TEST_LOG_LEVEL"
@@ -52,21 +54,10 @@ off_t Fallocate_len = -1;
 size_t Is_pmem_len = 0;
 
 /*
- * Declaration of out_init and out_fini functions because it is not
- * possible to include both unittest.h and out.h headers due to
- * redeclaration of some macros.
- */
-void out_init(const char *log_prefix, const char *log_level_var,
-		const char *log_file_var, int major_version,
-		int minor_version);
-void out_fini(void);
-
-
-/*
  * poolset_info -- (internal) dumps poolset info and checks its integrity
  *
  * Performs the following checks:
- * - part_size[i] == rounddown(file_size - pool_hdr_size, Pagesize)
+ * - part_size[i] == rounddown(file_size - pool_hdr_size, Mmap_align)
  * - replica_size == sum(part_size)
  * - pool_size == min(replica_size)
  */
@@ -84,25 +75,26 @@ poolset_info(const char *fname, struct pool_set *set, int o)
 
 	size_t poolsize = SIZE_MAX;
 
-	for (int r = 0; r < set->nreplicas; r++) {
+	for (unsigned r = 0; r < set->nreplicas; r++) {
 		struct pool_replica *rep = set->replica[r];
 		size_t repsize = 0;
 
 		UT_OUT("  replica[%d]: nparts %d repsize %zu is_pmem %d",
 			r, rep->nparts, rep->repsize, rep->is_pmem);
 
-		for (int i = 0; i < rep->nparts; i++) {
+		for (unsigned i = 0; i < rep->nparts; i++) {
 			struct pool_set_part *part = &rep->part[i];
 			UT_OUT("    part[%d] path %s filesize %zu size %zu",
 				i, part->path, part->filesize, part->size);
-			size_t partsize = (part->filesize & ~(Ut_pagesize - 1));
+			size_t partsize =
+				(part->filesize & ~(Ut_mmap_align - 1));
 			repsize += partsize;
 			if (i > 0)
 				UT_ASSERTeq(part->size,
-					partsize - POOL_HDR_SIZE);
+					partsize - Ut_mmap_align);
 		}
 
-		repsize -= (rep->nparts - 1) * POOL_HDR_SIZE;
+		repsize -= (rep->nparts - 1) * Ut_mmap_align;
 		UT_ASSERTeq(rep->repsize, repsize);
 		UT_ASSERTeq(rep->part[0].size, repsize);
 
@@ -154,12 +146,11 @@ main(int argc, char *argv[])
 {
 	START(argc, argv, "util_poolset");
 
-	out_init(LOG_PREFIX, LOG_LEVEL_VAR, LOG_FILE_VAR,
+	common_init(LOG_PREFIX, LOG_LEVEL_VAR, LOG_FILE_VAR,
 			MAJOR_VERSION, MINOR_VERSION);
-	util_init();
 
-	if (argc < 5)
-		UT_FATAL("usage: %s cmd minlen hdrsize [mockopts] setfile ...",
+	if (argc < 4)
+		UT_FATAL("usage: %s cmd minlen [mockopts] setfile ...",
 			argv[0]);
 
 	char *fname;
@@ -175,29 +166,35 @@ main(int argc, char *argv[])
 		switch (argv[1][0]) {
 		case 'c':
 			ret = util_pool_create(&set, fname, 0, minsize,
-				SIG, 1, 0, 0, 0);
+				SIG, 1, 0, 0, 0, NULL, REPLICAS_ENABLED);
 			if (ret == -1)
 				UT_OUT("!%s: util_pool_create", fname);
 			else {
+				/*
+				 * XXX: On Windows pool files are created with
+				 * R/W permissions, so no need for chmod().
+				 */
+#ifndef _WIN32
 				util_poolset_chmod(set, S_IWUSR | S_IRUSR);
+#endif
 				poolset_info(fname, set, 0);
-				util_poolset_close(set, 0); /* do not delete */
+				util_poolset_close(set, DO_NOT_DELETE_PARTS);
 			}
 			break;
 		case 'o':
 			ret = util_pool_open(&set, fname, 0 /* rdonly */,
-				minsize, SIG, 1, 0, 0, 0);
+				minsize, SIG, 1, 0, 0, 0, NULL);
 			if (ret == -1)
 				UT_OUT("!%s: util_pool_open", fname);
 			else {
 				poolset_info(fname, set, 1);
-				util_poolset_close(set, 0); /* do not delete */
+				util_poolset_close(set, DO_NOT_DELETE_PARTS);
 			}
 			break;
 		}
 	}
 
-	out_fini();
+	common_fini();
 
 	DONE(NULL);
 }

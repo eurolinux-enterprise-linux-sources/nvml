@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,8 +38,8 @@
 
 #include <endian.h>
 #include "unittest.h"
-
 #include "util.h"
+#include <inttypes.h>
 
 /*
  * fletcher64 -- compute a Fletcher64 checksum
@@ -76,14 +76,14 @@ main(int argc, char *argv[])
 	for (int arg = 1; arg < argc; arg++) {
 		int fd = OPEN(argv[arg], O_RDONLY);
 
-		struct stat stbuf;
+		os_stat_t stbuf;
 		FSTAT(fd, &stbuf);
 
 		void *addr =
-			MMAP(0, stbuf.st_size, PROT_READ|PROT_WRITE,
+			MMAP(NULL, stbuf.st_size, PROT_READ|PROT_WRITE,
 					MAP_PRIVATE, fd, 0);
 
-		close(fd);
+		CLOSE(fd);
 
 		uint64_t *ptr = addr;
 
@@ -131,12 +131,13 @@ main(int argc, char *argv[])
 			 * verify the checksum matched the gold version
 			 */
 			UT_ASSERTeq(csum, gold_csum);
-
-			UT_OUT("%s:%lu 0x%lx", argv[arg],
+			UT_OUT("%s:%" PRIu64 " 0x%" PRIx64, argv[arg],
 				(char *)ptr - (char *)addr, csum);
 
 			ptr++;
 		}
+
+		MUNMAP(addr, stbuf.st_size);
 	}
 
 	DONE(NULL);

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,7 +38,9 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <stdlib.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <string.h>
 #include <libpmemlog.h>
 
@@ -48,7 +50,7 @@
 /*
  * printit -- log processing callback for use with pmemlog_walk()
  */
-int
+static int
 printit(const void *buf, size_t len, void *arg)
 {
 	fwrite(buf, len, 1, stdout);

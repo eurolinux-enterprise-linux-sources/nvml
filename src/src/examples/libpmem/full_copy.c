@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,7 +44,11 @@
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
+#ifndef _WIN32
 #include <unistd.h>
+#else
+#include <io.h>
+#endif
 #include <string.h>
 #include <libpmem.h>
 
@@ -54,7 +58,7 @@
 /*
  * do_copy_to_pmem -- copy to pmem, postponing drain step until the end
  */
-void
+static void
 do_copy_to_pmem(char *pmemaddr, int srcfd, off_t len)
 {
 	char buf[BUF_LEN];
@@ -78,7 +82,7 @@ do_copy_to_pmem(char *pmemaddr, int srcfd, off_t len)
 /*
  * do_copy_to_non_pmem -- copy to a non-pmem memory mapped file
  */
-void
+static void
 do_copy_to_non_pmem(char *addr, int srcfd, off_t len)
 {
 	char *startaddr = addr;

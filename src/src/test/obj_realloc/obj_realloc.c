@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,24 +37,20 @@
 #include <string.h>
 
 #include "unittest.h"
-#include "libpmemobj.h"
-#include "redo.h"
-#include "memops.h"
-#include "pmalloc.h"
-#include "heap_layout.h"
-#include "memblock.h"
-#include "heap.h"
-#include "util.h"
-#include "lane.h"
-#include "list.h"
-#include "obj.h"
 
-#define MIN_ALLOC_SIZE	MIN_RUN_SIZE
-#define MAX_ALLOC_SIZE	CHUNKSIZE
-#define ALLOC_CLASS_MUL	RUN_UNIT_MAX
-#define MAX_ALLOC_MUL	RUN_UNIT_MAX
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include "heap.h"
+#include "alloc_class.h"
+#include "obj.h"
+#include "util.h"
+#ifdef __cplusplus
+}
+#endif
+
+#define MAX_ALLOC_MUL	8
 #define MAX_ALLOC_CLASS	5
-#define ALLOC_HDR	(OBJ_OOB_SIZE + sizeof(struct allocation_header))
 
 POBJ_LAYOUT_BEGIN(realloc);
 POBJ_LAYOUT_ROOT(realloc, struct root);
@@ -71,7 +67,7 @@ struct root {
 	char data[CHUNKSIZE - sizeof(TOID(struct object))];
 };
 
-static size_t sizes[MAX_ALLOC_CLASS];
+static struct alloc_class_collection *alloc_classes;
 
 /*
  * test_alloc -- test allocation using realloc
@@ -152,7 +148,7 @@ test_realloc(PMEMobjpool *pop, size_t size_from, size_t size_to,
 	} else if (check_integrity) {
 		check_size = size_to >= usable_size_from ?
 				usable_size_from : size_to;
-		checksum = fill_buffer((void *)D_RW(D_RW(root)->obj),
+		checksum = fill_buffer((unsigned char *)D_RW(D_RW(root)->obj),
 				check_size);
 	}
 
@@ -166,13 +162,19 @@ test_realloc(PMEMobjpool *pop, size_t size_from, size_t size_to,
 
 	UT_ASSERTeq(ret, 0);
 	UT_ASSERT(!TOID_IS_NULL(D_RO(root)->obj));
-	UT_ASSERT(pmemobj_alloc_usable_size(D_RO(root)->obj.oid) >= size_to);
+	size_t usable_size_to =
+			pmemobj_alloc_usable_size(D_RO(root)->obj.oid);
+
+	UT_ASSERT(usable_size_to >= size_to);
+	if (size_to < size_from) {
+		UT_ASSERT(usable_size_to <= usable_size_from);
+	}
 
 	if (zrealloc) {
 		UT_ASSERT(util_is_zeroed(D_RO(D_RO(root)->obj), size_to));
 	} else if (check_integrity) {
 		uint16_t checksum2 = ut_checksum(
-				(void *)D_RW(D_RW(root)->obj), check_size);
+				(uint8_t *)D_RW(D_RW(root)->obj), check_size);
 		if (checksum2 != checksum)
 			UT_ASSERTinfo(0, "memory corruption");
 	}
@@ -188,25 +190,36 @@ static void
 test_realloc_sizes(PMEMobjpool *pop, unsigned type_from,
 		unsigned type_to, int zrealloc, int size_diff)
 {
-	for (int i = 0; i < MAX_ALLOC_CLASS; i++) {
-		size_t size_from = sizes[i] - ALLOC_HDR - size_diff;
+	for (uint8_t i = 0; i < MAX_ALLOCATION_CLASSES; ++i) {
+		struct alloc_class *c = alloc_class_by_id(alloc_classes, i);
+		if (c == NULL)
+			continue;
+
+		size_t header_size = header_type_to_size[c->header_type];
+		size_t size_from = c->unit_size - header_size - size_diff;
 
 		for (int j = 2; j <= MAX_ALLOC_MUL; j++) {
-			size_t inc_size_to = sizes[i] * j - ALLOC_HDR;
+			size_t inc_size_to = c->unit_size * j - header_size;
 			test_realloc(pop, size_from, inc_size_to,
 				type_from, type_to, zrealloc);
 
-			size_t dec_size_to = sizes[i] / j;
-			if (dec_size_to <= ALLOC_HDR)
-				dec_size_to = ALLOC_HDR;
+			size_t dec_size_to = c->unit_size / j;
+			if (dec_size_to <= header_size)
+				dec_size_to = header_size;
 			else
-				dec_size_to -= ALLOC_HDR;
+				dec_size_to -= header_size;
 
 			test_realloc(pop, size_from, dec_size_to,
 				type_from, type_to, zrealloc);
 
 			for (int k = 0; k < MAX_ALLOC_CLASS; k++) {
-				size_t prev_size = sizes[k] - ALLOC_HDR;
+				struct alloc_class *ck = alloc_class_by_id(
+					alloc_classes, k);
+				if (c == NULL)
+					continue;
+				size_t header_sizek =
+					header_type_to_size[c->header_type];
+				size_t prev_size = ck->unit_size - header_sizek;
 
 				test_realloc(pop, size_from, prev_size,
 					type_from, type_to, zrealloc);
@@ -233,12 +246,7 @@ main(int argc, char *argv[])
 	if (argc >= 3)
 		check_integrity = atoi(argv[2]);
 
-	/* initialize sizes */
-	for (int i = 0; i < MAX_ALLOC_CLASS - 1; i++)
-		sizes[i] = i == 0 ? MIN_ALLOC_SIZE :
-			sizes[i - 1] * ALLOC_CLASS_MUL;
-	sizes[MAX_ALLOC_CLASS - 1] = MAX_ALLOC_SIZE;
-
+	alloc_classes = alloc_class_collection_new();
 
 	/* test alloc and free */
 	test_alloc(pop, 16);
@@ -255,6 +263,7 @@ main(int argc, char *argv[])
 	test_realloc_sizes(pop, 0, 1, 1, 8);
 	test_realloc_sizes(pop, 0, 1, 1, 0);
 
+	alloc_class_collection_delete(alloc_classes);
 
 	pmemobj_close(pop);
 

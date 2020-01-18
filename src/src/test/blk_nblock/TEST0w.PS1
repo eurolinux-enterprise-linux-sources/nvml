@@ -1,5 +1,6 @@
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2015-2017, Intel Corporation
+# Copyright (c) 2016, Microsoft Corporation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -39,17 +40,15 @@ Param(
     [alias("d")]
     $DIR = ""
     )
-$Env:UNITTEST_NAME = "blk_nblock\TEST0w"
+$Env:UNITTEST_NAME = "blk_nblock/TEST0w"
 $Env:UNITTEST_NUM = "0w"
-# XXX:  bash has a few calls to tools that we don't have on
-# windows (yet) that set PMEM_IS_PMEM and NON_PMEM_IS_PMEM based
-# on their output
-$Env:PMEM_IS_PMEM = $true
-$Env:NON_PMEM_IS_PMEM = $true
+
 
 # standard unit test setup
 
 . ..\unittest\unittest.ps1
+
+require_test_type medium
 
 require_fs_type any
 
@@ -69,13 +68,13 @@ setup
 # sparse Windows still won't let you overcommit
 #
 
-create_holey_file 2 $DIR\testfile1
-create_holey_file 2048 $DIR\testfile2.512
-create_holey_file 2048 $DIR\testfile2.520
-create_holey_file 2048 $DIR\testfile2.528
-create_holey_file 2048 $DIR\testfile2.4096
-create_holey_file 2048 $DIR\testfile2.4160
-create_holey_file 2048 $DIR\testfile2.4224
+create_holey_file 2M $DIR\testfile1
+create_holey_file 2048M $DIR\testfile2.512
+create_holey_file 2048M $DIR\testfile2.520
+create_holey_file 2048M $DIR\testfile2.528
+create_holey_file 2048M $DIR\testfile2.4096
+create_holey_file 2048M $DIR\testfile2.4160
+create_holey_file 2048M $DIR\testfile2.4224
 
 #
 # Larger file coverage is provided on the linux side
@@ -83,8 +82,8 @@ create_holey_file 2048 $DIR\testfile2.4224
 # with Windows
 #
 
-# MINIMUM POOL SIZE = 16MB + 8KB
-$MIN_POOL_SIZE = "16+8"
+# MINIMUM POOL SIZE = 16MB + 64KB
+$MIN_POOL_SIZE = ((16*1024*1024 + 64*1024).ToString() + "b")
 create_holey_file $MIN_POOL_SIZE $DIR\testfile7.512
 create_holey_file $MIN_POOL_SIZE $DIR\testfile7.520
 create_holey_file $MIN_POOL_SIZE $DIR\testfile7.528
@@ -95,7 +94,7 @@ create_holey_file $MIN_POOL_SIZE $DIR\testfile7.4224
 # should fail:
 #   512:$DIR\testfile1 (file is too small)
 #   4096:$DIR\testfile2.512 (bsize doesn't match pool)
-expect_normal_exit ..\..\x64\debug\blk_nblock$Env:EXESUFFIX `
+expect_normal_exit $Env:EXE_DIR\blk_nblock$Env:EXESUFFIX `
     512:$DIR\testfile1 `
     512:$DIR\testfile2.512 `
     4096:$DIR\testfile2.512 `
@@ -104,5 +103,6 @@ expect_normal_exit ..\..\x64\debug\blk_nblock$Env:EXESUFFIX `
     4096:$DIR\testfile2.4096 `
     4160:$DIR\testfile2.4160 `
 
-# check will print the appropriate pass/fail message
 check
+
+pass

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,11 +37,11 @@
 
 #include "unittest.h"
 
-#include <libpmemobj/p.hpp>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pext.hpp>
-#include <libpmemobj/pool.hpp>
-#include <libpmemobj/transaction.hpp>
+#include <libpmemobj++/p.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pext.hpp>
+#include <libpmemobj++/pool.hpp>
+#include <libpmemobj++/transaction.hpp>
 
 #include <cmath>
 #include <sstream>
@@ -149,11 +149,12 @@ arithmetic_test(nvobj::pool_base &pop)
 			r->foo_ptr->pint =
 				r->foo_ptr->pint + r->foo_ptr->puchar;
 			r->foo_ptr->pint = r->foo_ptr->pint + r->foo_ptr->pint;
-			r->foo_ptr->pint = r->foo_ptr->pllong + 8;
+			r->foo_ptr->pint =
+				static_cast<int>(r->foo_ptr->pllong + 8);
 			UT_ASSERTeq(r->foo_ptr->pint, 10);
 
 			/* for float assertions */
-			float epsilon = 0.001;
+			float epsilon = 0.001F;
 
 			/* subtraction */
 			r->bar_ptr->pdouble -= r->foo_ptr->puchar;
@@ -161,8 +162,8 @@ arithmetic_test(nvobj::pool_base &pop)
 			UT_ASSERT(std::fabs(r->bar_ptr->pdouble + 2) < epsilon);
 			UT_ASSERT(std::fabs(r->bar_ptr->pfloat) < epsilon);
 
-			r->bar_ptr->pfloat =
-				r->bar_ptr->pfloat - r->bar_ptr->pdouble;
+			r->bar_ptr->pfloat = static_cast<float>(
+				r->bar_ptr->pfloat - r->bar_ptr->pdouble);
 			r->bar_ptr->pdouble =
 				r->bar_ptr->pdouble - r->bar_ptr->pfloat;
 			UT_ASSERT(std::fabs(r->bar_ptr->pfloat - 2) < epsilon);
@@ -171,14 +172,15 @@ arithmetic_test(nvobj::pool_base &pop)
 			/* multiplication */
 			r->foo_ptr->puchar *= r->foo_ptr->puchar;
 			r->foo_ptr->puchar *= r->foo_ptr->pint;
-			r->foo_ptr->puchar *= r->foo_ptr->pllong;
+			r->foo_ptr->puchar *=
+				static_cast<unsigned char>(r->foo_ptr->pllong);
 			UT_ASSERTeq(r->foo_ptr->puchar, 180);
 
 			r->foo_ptr->pint =
 				r->foo_ptr->pint * r->foo_ptr->puchar;
 			r->foo_ptr->pint = r->foo_ptr->pint * r->foo_ptr->pint;
-			r->foo_ptr->pint =
-				r->foo_ptr->pllong * r->foo_ptr->pint;
+			r->foo_ptr->pint = static_cast<int>(r->foo_ptr->pllong *
+							    r->foo_ptr->pint);
 			/* no assertions needed at this point */
 
 			/* division */
@@ -186,8 +188,8 @@ arithmetic_test(nvobj::pool_base &pop)
 			r->bar_ptr->pfloat /= r->foo_ptr->pllong;
 			/* no assertions needed at this point */
 
-			r->bar_ptr->pfloat =
-				r->bar_ptr->pfloat / r->bar_ptr->pdouble;
+			r->bar_ptr->pfloat = static_cast<float>(
+				r->bar_ptr->pfloat / r->bar_ptr->pdouble);
 			r->bar_ptr->pdouble =
 				r->bar_ptr->pdouble / r->bar_ptr->pfloat;
 			/* no assertions needed at this point */
@@ -238,7 +240,8 @@ bitwise_test(nvobj::pool_base &pop)
 			r->foo_ptr->pint =
 				r->foo_ptr->pint | r->foo_ptr->puchar;
 			r->foo_ptr->pint = r->foo_ptr->pint | r->foo_ptr->pint;
-			r->foo_ptr->pint = r->foo_ptr->pllong | 0xF;
+			r->foo_ptr->pint =
+				static_cast<int>(r->foo_ptr->pllong | 0xF);
 			UT_ASSERTeq(r->foo_ptr->pint, 15);
 
 			/* AND */
@@ -262,25 +265,28 @@ bitwise_test(nvobj::pool_base &pop)
 			r->foo_ptr->pint =
 				r->foo_ptr->pint ^ r->foo_ptr->puchar;
 			r->foo_ptr->pint = r->foo_ptr->pint ^ r->foo_ptr->pint;
-			r->foo_ptr->pint = r->foo_ptr->pllong ^ 8;
+			r->foo_ptr->pint =
+				static_cast<int>(r->foo_ptr->pllong ^ 8);
 			UT_ASSERTeq(r->foo_ptr->pint, 10);
 
 			/* RSHIFT */
 			r->foo_ptr->puchar = 255;
 			r->foo_ptr->puchar >>= 1;
 			r->foo_ptr->puchar >>= r->foo_ptr->pllong;
-			r->foo_ptr->puchar = r->foo_ptr->pllong >> 2;
-			r->foo_ptr->puchar =
-				r->foo_ptr->pllong >> r->foo_ptr->pllong;
+			r->foo_ptr->puchar = static_cast<unsigned char>(
+				r->foo_ptr->pllong >> 2);
+			r->foo_ptr->puchar = static_cast<unsigned char>(
+				r->foo_ptr->pllong >> r->foo_ptr->pllong);
 			UT_ASSERTeq(r->foo_ptr->puchar, 0);
 
 			/* LSHIFT */
 			r->foo_ptr->puchar = 1;
 			r->foo_ptr->puchar <<= 1;
 			r->foo_ptr->puchar <<= r->foo_ptr->pllong;
-			r->foo_ptr->puchar = r->foo_ptr->pllong << 2;
-			r->foo_ptr->puchar = r->foo_ptr->pllong
-				<< r->foo_ptr->pllong;
+			r->foo_ptr->puchar = static_cast<unsigned char>(
+				r->foo_ptr->pllong << 2);
+			r->foo_ptr->puchar = static_cast<unsigned char>(
+				r->foo_ptr->pllong << r->foo_ptr->pllong);
 			UT_ASSERTeq(r->foo_ptr->puchar, 8);
 
 			/* COMPLEMENT */
@@ -323,6 +329,44 @@ stream_test(nvobj::pool_base &pop)
 
 	cleanup_foobar(pop);
 }
+
+/*
+ * swap_test -- (internal) perform basic swap tests on p<>
+ */
+void
+swap_test(nvobj::pool_base &pop)
+{
+	struct _bar {
+		nvobj::p<int> value;
+	};
+
+	nvobj::persistent_ptr<_bar> swap_one;
+	nvobj::persistent_ptr<_bar> swap_two;
+	try {
+		nvobj::transaction::exec_tx(pop, [&] {
+			swap_one = pmemobj_tx_alloc(sizeof(_bar), 0);
+			swap_two = pmemobj_tx_alloc(sizeof(_bar), 0);
+		});
+
+		nvobj::transaction::exec_tx(pop, [&] {
+			swap_one->value = 1;
+			swap_two->value = 2;
+
+			swap(swap_one->value, swap_two->value);
+			UT_ASSERTeq(swap_one->value, 2);
+			UT_ASSERTeq(swap_two->value, 1);
+
+			swap(swap_two->value, swap_one->value);
+			UT_ASSERTeq(swap_one->value, 1);
+			UT_ASSERTeq(swap_two->value, 2);
+
+			pmemobj_tx_free(swap_one.raw());
+			pmemobj_tx_free(swap_two.raw());
+		});
+	} catch (...) {
+		UT_ASSERT(0);
+	}
+}
 }
 
 int
@@ -347,8 +391,9 @@ main(int argc, char *argv[])
 	arithmetic_test(pop);
 	bitwise_test(pop);
 	stream_test(pop);
+	swap_test(pop);
 
 	pop.close();
 
-	DONE(NULL);
+	DONE(nullptr);
 }

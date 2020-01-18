@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,17 +35,18 @@
  */
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <errno.h>
 
 #include <librpmem.h>
 
 #define POOL_SIZE	(32 * 1024 * 1024)
-#define NLANES		4
+#define NLANES		64
 #define SET_POOLSET_UUID 1
 #define SET_UUID 2
 #define SET_NEXT 3
 #define SET_PREV 4
-
-unsigned char pool[POOL_SIZE];
 
 /*
  * default_attr -- fill pool attributes to default values
@@ -65,15 +66,25 @@ default_attr(struct rpmem_pool_attr *attr)
 int
 main(int argc, char *argv[])
 {
+	int ret = 0;
+
 	if (argc < 4) {
-		fprintf(stderr, "usage: %s [create|remove|open]"
+		fprintf(stderr, "usage: %s [create|open|remove]"
 			" <target> <pool_set> [options]\n", argv[0]);
 		return 1;
 	}
+
 	char *op = argv[1];
 	char *target = argv[2];
 	char *pool_set = argv[3];
 	unsigned nlanes = NLANES;
+	void *pool;
+	size_t align = (size_t)sysconf(_SC_PAGESIZE);
+	errno = posix_memalign(&pool, align, POOL_SIZE);
+	if (errno) {
+		perror("posix_memalign");
+		return -1;
+	}
 
 	if (strcmp(op, "create") == 0) {
 		struct rpmem_pool_attr pool_attr;
@@ -85,15 +96,20 @@ main(int argc, char *argv[])
 		if (!rpp) {
 			fprintf(stderr, "rpmem_create: %s\n",
 					rpmem_errormsg());
-			return 1;
+			ret = 1;
+			goto end;
 		}
 
-		int ret = rpmem_close(rpp);
+		ret = rpmem_persist(rpp, 0, POOL_SIZE, 0);
+		if (ret)
+			fprintf(stderr, "rpmem_persist: %s\n",
+					rpmem_errormsg());
+
+		ret = rpmem_close(rpp);
 		if (ret)
 			fprintf(stderr, "rpmem_close: %s\n",
 					rpmem_errormsg());
 
-		return ret;
 	} else if (strcmp(op, "open") == 0) {
 		struct rpmem_pool_attr def_attr;
 		default_attr(&def_attr);
@@ -104,29 +120,34 @@ main(int argc, char *argv[])
 		if (!rpp) {
 			fprintf(stderr, "rpmem_open: %s\n",
 					rpmem_errormsg());
-			return 1;
+			ret = 1;
+			goto end;
 		}
 
 		if (memcmp(&def_attr, &pool_attr, sizeof(def_attr))) {
 			fprintf(stderr, "remote pool not consistent\n");
 		}
 
-		int ret = rpmem_close(rpp);
+		ret = rpmem_persist(rpp, 0, POOL_SIZE, 0);
+		if (ret)
+			fprintf(stderr, "rpmem_persist: %s\n",
+					rpmem_errormsg());
+
+		ret = rpmem_close(rpp);
 		if (ret)
 			fprintf(stderr, "rpmem_close: %s\n",
 					rpmem_errormsg());
-
-		return ret;
 	} else if (strcmp(op, "remove") == 0) {
-		int ret = rpmem_remove(target, pool_set);
-
+		ret = rpmem_remove(target, pool_set, 0);
 		if (ret)
-			fprintf(stderr, "rpmem_remove: %s\n",
+			fprintf(stderr, "removing pool failed: %s\n",
 					rpmem_errormsg());
-
-		return ret;
 	} else {
 		fprintf(stderr, "unsupported operation -- '%s'\n", op);
-		return 1;
+		ret = 1;
 	}
+
+end:
+	free(pool);
+	return ret;
 }

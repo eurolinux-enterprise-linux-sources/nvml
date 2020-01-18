@@ -1,7 +1,7 @@
 /*
  * Copyright 2016, FUJITSU TECHNOLOGY SOLUTIONS GMBH
  * Copyright 2012, Armon Dadgar. All rights reserved.
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -184,13 +184,10 @@ art_tree_destroy(VMEM *vmp, art_tree *t)
  * Returns the size of the ART tree.
  */
 
-#ifndef BROKEN_GCC_C99_INLINE
-extern inline uint64_t art_size(art_tree * t);
-#endif
-
 static art_node **
 find_child(art_node *n, unsigned char c)
 {
+	__m128i cmp;
 	int i, mask, bitfield;
 	union {
 		art_node4 *p1;
@@ -198,6 +195,7 @@ find_child(art_node *n, unsigned char c)
 		art_node48 *p3;
 		art_node256 *p4;
 	} p;
+
 	switch (n->type) {
 	case NODE4:
 		p.p1 = (art_node4 *)n;
@@ -207,8 +205,6 @@ find_child(art_node *n, unsigned char c)
 		}
 		break;
 
-	{
-	__m128i cmp;
 	case NODE16:
 		p.p2 = (art_node16 *)n;
 
@@ -228,7 +224,6 @@ find_child(art_node *n, unsigned char c)
 		if (bitfield)
 			return &p.p2->children[__builtin_ctz(bitfield)];
 		break;
-	}
 
 	case NODE48:
 		p.p3 = (art_node48 *)n;

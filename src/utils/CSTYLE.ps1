@@ -1,5 +1,5 @@
 #
-# Copyright 2016, Intel Corporation
+# Copyright 2016-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -42,19 +42,24 @@ $checkdir = $rootdir
 # XXX - *.cpp/*.hpp files not supported yet
 $include = @( "*.c", "*.h" )
 
-# exclude external files not following NVML coding style
-$exclude = @( "queue.h" )
-
 If ( Get-Command -Name perl -ErrorAction SilentlyContinue ) {
-	Get-ChildItem -Path $checkdir -Recurse -Include $include -Exclude $exclude | `
-			? { $_.FullName -notlike "*jemalloc*" } | `
-	% {
-		echo $_.FullName
+	Get-ChildItem -Path $checkdir -Recurse -Include $include | `
+    Where-Object { $_.FullName -notlike "*jemalloc*" } | `
+    ForEach-Object {
+        $IGNORE = $_.DirectoryName + "\.cstyleignore"
+        if(Test-Path $IGNORE) {
+            if((Select-String $_.Name $IGNORE)) {
+                return
+            }
+        }
+        $_
+    } | ForEach-Object {
+		Write-Output $_.FullName
 		& perl $cstyle $_.FullName
 		if ($LASTEXITCODE -ne 0) {
-			Exit $LASTEXITCODE
-		}
-	}
+            Exit $LASTEXITCODE
+        }
+    }
 } else {
-	echo "Cannot execute cstyle - perl is missing"
+	Write-Output "Cannot execute cstyle - perl is missing"
 }

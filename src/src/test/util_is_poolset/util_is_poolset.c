@@ -37,7 +37,8 @@
  */
 
 #include "unittest.h"
-#include "util.h"
+#include "set.h"
+#include "pmemcommon.h"
 #include <errno.h>
 
 #define LOG_PREFIX "ut"
@@ -46,24 +47,13 @@
 #define MAJOR_VERSION 1
 #define MINOR_VERSION 0
 
-/*
- * Declaration of out_init and out_fini functions because it is not
- * possible to include both unittest.h and out.h headers due to
- * redeclaration of some macros.
- */
-void out_init(const char *log_prefix, const char *log_level_var,
-		const char *log_file_var, int major_version,
-		int minor_version);
-void out_fini(void);
-
 int
 main(int argc, char *argv[])
 {
 	START(argc, argv, "util_is_poolset");
 
-	out_init(LOG_PREFIX, LOG_LEVEL_VAR, LOG_FILE_VAR,
+	common_init(LOG_PREFIX, LOG_LEVEL_VAR, LOG_FILE_VAR,
 			MAJOR_VERSION, MINOR_VERSION);
-	util_init();
 
 	if (argc < 2)
 		UT_FATAL("usage: %s file...",
@@ -71,11 +61,11 @@ main(int argc, char *argv[])
 
 	for (int i = 1; i < argc; i++) {
 		char *fname = argv[i];
-		int is_poolset = util_is_poolset(fname);
+		int is_poolset = util_is_poolset_file(fname);
 
 		UT_OUT("util_is_poolset(%s): %d", fname, is_poolset);
 	}
-	out_fini();
+	common_fini();
 
 	DONE(NULL);
 }

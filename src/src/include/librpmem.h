@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,9 +31,10 @@
  */
 
 /*
- * librpmem.h -- definitions of librpmem entry points
+ * librpmem.h -- definitions of librpmem entry points (EXPERIMENTAL)
  *
- * XXX
+ * This library provides low-level support for remote access to persistent
+ * memory utilizing RDMA-capable RNICs.
  *
  * See librpmem(3) for details.
  */
@@ -75,12 +76,19 @@ RPMEMpool *rpmem_open(const char *target, const char *pool_set_name,
 		void *pool_addr, size_t pool_size, unsigned *nlanes,
 		struct rpmem_pool_attr *open_attr);
 
-int rpmem_remove(const char *target, const char *pool_set_name);
+int rpmem_set_attr(RPMEMpool *rpp, const struct rpmem_pool_attr *attr);
+
 int rpmem_close(RPMEMpool *rpp);
 
 int rpmem_persist(RPMEMpool *rpp, size_t offset, size_t length,
 		unsigned lane);
-int rpmem_read(RPMEMpool *rpp, void *buff, size_t offset, size_t length);
+int rpmem_read(RPMEMpool *rpp, void *buff, size_t offset, size_t length,
+		unsigned lane);
+
+#define RPMEM_REMOVE_FORCE 0x1
+#define RPMEM_REMOVE_POOL_SET 0x2
+
+int rpmem_remove(const char *target, const char *pool_set, int flags);
 
 /*
  * RPMEM_MAJOR_VERSION and RPMEM_MINOR_VERSION provide the current version of
@@ -89,7 +97,7 @@ int rpmem_read(RPMEMpool *rpp, void *buff, size_t offset, size_t length);
  * at compile-time by passing these defines to rpmem_check_version().
  */
 #define RPMEM_MAJOR_VERSION 1
-#define RPMEM_MINOR_VERSION 0
+#define RPMEM_MINOR_VERSION 1
 const char *rpmem_check_version(unsigned major_required,
 		unsigned minor_required);
 
@@ -97,6 +105,8 @@ const char *rpmem_errormsg(void);
 
 /* minimum size of a pool */
 #define RPMEM_MIN_POOL ((size_t)(1024 * 8)) /* 8 KB */
+/* minimum size of a part file */
+#define RPMEM_MIN_PART ((size_t)(1024 * 8)) /* 8 KB */
 
 #ifdef __cplusplus
 }

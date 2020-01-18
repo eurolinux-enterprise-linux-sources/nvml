@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -48,7 +48,7 @@ ut_open(const char *file, int line, const char *func, const char *path,
 
 	va_start(ap, flags);
 	mode = va_arg(ap, int);
-	int retval = open(path, flags, mode);
+	int retval = os_open(path, flags, mode);
 	va_end(ap);
 
 	if (retval < 0)
@@ -57,13 +57,36 @@ ut_open(const char *file, int line, const char *func, const char *path,
 	return retval;
 }
 
+#ifdef _WIN32
+/*
+ * ut_wopen -- a _wopen that cannot return < 0
+ */
+int
+ut_wopen(const char *file, int line, const char *func, const wchar_t *path,
+    int flags, ...)
+{
+	va_list ap;
+	int mode;
+
+	va_start(ap, flags);
+	mode = va_arg(ap, int);
+	int retval = _wopen(path, flags, mode);
+	va_end(ap);
+
+	if (retval < 0)
+		ut_fatal(file, line, func, "!wopen: %s", ut_toUTF8(path));
+
+	return retval;
+}
+#endif
+
 /*
  * ut_close -- a close that cannot return -1
  */
 int
 ut_close(const char *file, int line, const char *func, int fd)
 {
-	int retval = close(fd);
+	int retval = os_close(fd);
 
 	if (retval != 0)
 		ut_fatal(file, line, func, "!close: %d", fd);
@@ -77,7 +100,7 @@ ut_close(const char *file, int line, const char *func, int fd)
 int
 ut_unlink(const char *file, int line, const char *func, const char *path)
 {
-	int retval = unlink(path);
+	int retval = os_unlink(path);
 
 	if (retval != 0)
 		ut_fatal(file, line, func, "!unlink: %s", path);
@@ -92,7 +115,7 @@ int
 ut_posix_fallocate(const char *file, int line, const char *func, int fd,
     off_t offset, off_t len)
 {
-	int retval = posix_fallocate(fd, offset, len);
+	int retval = os_posix_fallocate(fd, offset, len);
 
 	if (retval != 0) {
 		errno = retval;
@@ -111,7 +134,7 @@ int
 ut_access(const char *file, int line, const char *func, const char *path,
     int mode)
 {
-	int retval = access(path, mode);
+	int retval = os_access(path, mode);
 
 	if (retval != 0)
 		ut_fatal(file, line, func, "!access: %s: %d", path, mode);
@@ -193,7 +216,7 @@ off_t
 ut_lseek(const char *file, int line, const char *func, int fd,
     off_t offset, int whence)
 {
-	off_t retval = ut_util_lseek(fd, offset, whence);
+	off_t retval = os_lseek(fd, offset, whence);
 
 	if (retval == -1)
 		ut_fatal(file, line, func, "!lseek: %d", fd);
@@ -204,7 +227,7 @@ ut_lseek(const char *file, int line, const char *func, int fd,
 #ifndef _WIN32
 int
 ut_fcntl(const char *file, int line, const char *func, int fd,
-	int cmd, int num, ...)
+    int cmd, int num, ...)
 {
 
 	int retval;
@@ -234,12 +257,17 @@ ut_fcntl(const char *file, int line, const char *func, int fd,
  */
 int
 ut_fstat(const char *file, int line, const char *func, int fd,
-    ut_util_stat_t *st_bufp)
+    os_stat_t *st_bufp)
 {
-	int retval = ut_util_fstat(fd, st_bufp);
+	int retval = os_fstat(fd, st_bufp);
 
 	if (retval < 0)
 		ut_fatal(file, line, func, "!fstat: %d", fd);
+
+#ifdef _WIN32
+	/* clear unused bits to avoid confusion */
+	st_bufp->st_mode &= 0600;
+#endif
 
 	return retval;
 }
@@ -250,7 +278,7 @@ ut_fstat(const char *file, int line, const char *func, int fd,
 int
 ut_flock(const char *file, int line, const char *func, int fd, int op)
 {
-	int retval = flock(fd, op);
+	int retval = os_flock(fd, op);
 
 	if (retval != 0)
 		ut_fatal(file, line, func, "!flock: %d", fd);
@@ -263,16 +291,41 @@ ut_flock(const char *file, int line, const char *func, int fd, int op)
  */
 int
 ut_stat(const char *file, int line, const char *func, const char *path,
-    ut_util_stat_t *st_bufp)
+    os_stat_t *st_bufp)
 {
-	int retval = ut_util_stat(path, st_bufp);
+	int retval = os_stat(path, st_bufp);
 
 	if (retval < 0)
 		ut_fatal(file, line, func, "!stat: %s", path);
 
+#ifdef _WIN32
+	/* clear unused bits to avoid confusion */
+	st_bufp->st_mode &= 0600;
+#endif
+
 	return retval;
 }
+#ifdef _WIN32
+/*
+ * ut_statW -- a stat that cannot return -1
+ */
+int
+ut_statW(const char *file, int line, const char *func, const wchar_t *path,
+    os_stat_t *st_bufp)
+{
+	int retval = ut_util_statW(path, st_bufp);
 
+	if (retval < 0)
+		ut_fatal(file, line, func, "!stat: %S", path);
+
+#ifdef _WIN32
+	/* clear unused bits to avoid confusion */
+	st_bufp->st_mode &= 0600;
+#endif
+
+	return retval;
+}
+#endif
 /*
  * ut_mmap -- a mmap call that cannot return MAP_FAILED
  */
@@ -307,7 +360,6 @@ ut_munmap(const char *file, int line, const char *func, void *addr,
 	return retval;
 }
 
-#ifndef _WIN32
 /*
  * ut_mprotect -- a mprotect call that cannot return -1
  */
@@ -325,6 +377,7 @@ ut_mprotect(const char *file, int line, const char *func, void *addr,
 	return retval;
 }
 
+#ifndef _WIN32
 /*
  * ut_symlink -- a symlink that cannot return -1
  */
@@ -450,6 +503,8 @@ ut_truncate(const char *file, int line, const char *func, const char *path,
 	return retval;
 }
 
+#endif
+
 /*
  * ut_ftruncate -- a ftruncate that cannot return -1
  */
@@ -457,7 +512,7 @@ int
 ut_ftruncate(const char *file, int line, const char *func, int fd,
     off_t length)
 {
-	int retval = ftruncate(fd, length);
+	int retval = os_ftruncate(fd, length);
 
 	if (retval < 0)
 		ut_fatal(file, line, func, "!ftruncate: %d %llu",
@@ -465,7 +520,6 @@ ut_ftruncate(const char *file, int line, const char *func, int fd,
 
 	return retval;
 }
-#endif
 
 /*
  * ut_chmod -- a chmod that cannot return -1
@@ -474,7 +528,7 @@ int
 ut_chmod(const char *file, int line, const char *func, const char *path,
     mode_t mode)
 {
-	int retval = chmod(path, mode);
+	int retval = os_chmod(path, mode);
 
 	if (retval < 0)
 		ut_fatal(file, line, func, "!mode: %s %o", path, mode);

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,7 +36,6 @@
  */
 
 #include "unittest.h"
-
 #define LAYOUT "layout"
 
 static void
@@ -65,11 +64,13 @@ test_reopen(const char *path)
 	UNLINK(path);
 }
 
+#ifndef _WIN32
 static void
-test_open_in_different_process(const char *path, int sleep)
+test_open_in_different_process(int argc, char **argv, int sleep)
 {
 	pid_t pid = fork();
 	PMEMobjpool *pop;
+	char *path = argv[1];
 
 	if (pid < 0)
 		UT_FATAL("fork failed");
@@ -78,7 +79,7 @@ test_open_in_different_process(const char *path, int sleep)
 		/* child */
 		if (sleep)
 			usleep(sleep);
-		while (access(path, R_OK))
+		while (os_access(path, R_OK))
 			usleep(100 * 1000);
 
 		pop = pmemobj_open(path, LAYOUT);
@@ -92,7 +93,8 @@ test_open_in_different_process(const char *path, int sleep)
 		exit(0);
 	}
 
-	pop = pmemobj_create(path, LAYOUT, PMEMOBJ_MIN_POOL, S_IWUSR | S_IRUSR);
+	pop = pmemobj_create(path, LAYOUT, PMEMOBJ_MIN_POOL,
+		S_IWUSR | S_IRUSR);
 	if (!pop)
 		UT_FATAL("!create");
 
@@ -108,6 +110,35 @@ test_open_in_different_process(const char *path, int sleep)
 
 	UNLINK(path);
 }
+#else
+static void
+test_open_in_different_process(int argc, char **argv, int sleep)
+{
+	PMEMobjpool *pop;
+
+	if (sleep > 0)
+		return;
+
+	char *path = argv[1];
+
+	/* before starting the 2nd process, create a pool */
+	pop = pmemobj_create(path, LAYOUT, PMEMOBJ_MIN_POOL,
+		S_IWUSR | S_IRUSR);
+	if (!pop)
+		UT_FATAL("!create");
+
+	/*
+	 * "X" is pass as an additional param to the new process
+	 * created by ut_spawnv to distinguish second process on Windows
+	 */
+	uintptr_t result = ut_spawnv(argc, argv, "X", NULL);
+
+	if (result == -1)
+		UT_FATAL("Create new process failed error: %d", GetLastError());
+
+	pmemobj_close(pop);
+}
+#endif
 
 int
 main(int argc, char *argv[])
@@ -117,11 +148,24 @@ main(int argc, char *argv[])
 	if (argc < 2)
 		UT_FATAL("usage: %s path", argv[0]);
 
-	test_reopen(argv[1]);
+	if (argc == 2) {
+		test_reopen(argv[1]);
 
-	test_open_in_different_process(argv[1], 0);
-	for (int i = 1; i < 100000; i *= 2)
-		test_open_in_different_process(argv[1], i);
+		test_open_in_different_process(argc, argv, 0);
+		for (int i = 1; i < 100000; i *= 2)
+			test_open_in_different_process(argc, argv, i);
+	} else if (argc == 3) {
+		PMEMobjpool *pop;
+		/* 2nd arg used by windows for 2 process test */
+		pop = pmemobj_open(argv[1], LAYOUT);
+		if (pop)
+			UT_FATAL("pmemobj_open after create process should "
+				"not succeed");
+
+		if (errno != EWOULDBLOCK)
+			UT_FATAL("!pmemobj_open after create process failed "
+				"but for unexpected reason");
+	}
 
 	DONE(NULL);
 }

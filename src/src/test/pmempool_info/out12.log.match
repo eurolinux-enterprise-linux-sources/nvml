@@ -1,6 +1,11 @@
+Part file:
+path                     : $(nW)file.pool
+type                     : regular file
+size                     : $(nW)
+
 POOL Header:
 Signature                : PMEMOBJ
-Major                    : 2
+Major                    : $(*)
 Mandatory features       : $(*)
 Not mandatory features   : $(*)
 Forced RO                : $(*)
@@ -18,7 +23,7 @@ Machine                  : $(*)
 Checksum                 : $(*) [OK]
 
 PMEM OBJ Header:
-Layout                   : pmempool
+Layout                   : pmempool$(*)
 Lanes offset             : $(*)
 Number of lanes          : $(*)
 Heap offset              : $(*)
@@ -35,26 +40,22 @@ Chunk size               : $(*)
 Chunks per zone          : $(*)
 Checksum                 : $(*) [OK]
 
-Zone:
+Zone 0:
 Magic                    : $(*) [OK]
 Size idx                 : $(*)
  
  Chunk                    : 0
  Type                     : used
- Flags                    : 0x0 
- Size idx                 : 5
+ Flags                    : $(*)
+ Size idx                 : 13
 
   Object                   : $(*)
   Offset                   : $(*)
 
    Allocation Header:
-   Zone id                  : $(*)
-   Chunk id                 : $(*)
    Size                     : $(*)
-
-   OOB Header:
-   Undo offset              : $(*)
-   Type Number              : $(*)
+   Extra                    : $(*)
+   Flags                    : $(*)
  
  Chunk                    : $(*)
  Type                     : run
@@ -67,13 +68,9 @@ Size idx                 : $(*)
   Offset                   : $(*)
 
    Allocation Header:
-   Zone id                  : $(*)
-   Chunk id                 : $(*)
    Size                     : $(*)
-
-   OOB Header:
-   Undo offset              : $(*)
-   Type Number              : $(*)
+   Extra                    : $(*)
+   Flags                    : $(*)
  
  Chunk                    : $(*)
  Type                     : free
@@ -100,7 +97,7 @@ Heap:
 Number of zones          : 1
 Number of used zones     : 1 [100 %]
 
- Zone:
+ Zone 0:
  Number of chunks         : $(*)
   free                     : $(*)
   used                     : $(*)

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -41,9 +41,9 @@
 
 #include "unittest.h"
 
-#include <libpmemobj/p.hpp>
-#include <libpmemobj/persistent_ptr.hpp>
-#include <libpmemobj/pool.hpp>
+#include <libpmemobj++/p.hpp>
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
 
 namespace nvobj = nvml::obj;
 
@@ -288,5 +288,7 @@ main(int argc, char *argv[])
 	pool_test_memcpy(pop);
 	pool_test_memset(pop);
 
-	DONE(NULL);
+	pop.close();
+
+	DONE(nullptr);
 }

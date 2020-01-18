@@ -40,12 +40,14 @@ export UNITTEST_NUM=2
 # standard unit test setup
 . ../unittest/unittest.sh
 
+require_test_type medium
+
 require_fs_type any
 
 setup
 
-create_poolset $DIR/testset1 1G:$DIR/testfile11:x
-create_poolset $DIR/testset2 1G:$DIR/testfile21:x 1G:$DIR/testfile22:x
+create_poolset $DIR/testset1 64M:$DIR/testfile11:x
+create_poolset $DIR/testset2 64M:$DIR/testfile21:x 64M:$DIR/testfile22:x
 
 expect_normal_exit ./blk_nblock$EXESUFFIX\
 	512:$DIR/testset1\

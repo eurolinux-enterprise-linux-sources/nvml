@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,17 +31,18 @@
  */
 
 /*
- * redo.h -- internal definitions for redo log
+ * redo.h -- redo log public interface
  */
 
-/*
- * Finish flag at the least significant bit
- */
-#define REDO_FINISH_FLAG	((uint64_t)1<<0)
-#define REDO_FLAG_MASK		(~REDO_FINISH_FLAG)
+#ifndef LIBPMEMOBJ_REDO_H
+#define LIBPMEMOBJ_REDO_H 1
 
-#define REDO_NUM_ENTRIES \
-((LANE_SECTION_LEN - 2 * sizeof(uint64_t)) / sizeof(struct redo_log))
+#include <stddef.h>
+#include <stdint.h>
+
+#include "pmemops.h"
+
+struct redo_ctx;
 
 /*
  * redo_log -- redo log entry
@@ -51,13 +52,33 @@ struct redo_log {
 	uint64_t value;
 };
 
-void redo_log_store(PMEMobjpool *pop, struct redo_log *redo, size_t index,
-		uint64_t offset, uint64_t value);
-void redo_log_store_last(PMEMobjpool *pop, struct redo_log *redo, size_t index,
-		uint64_t offset, uint64_t value);
-void redo_log_set_last(PMEMobjpool *pop, struct redo_log *redo, size_t index);
-void redo_log_process(PMEMobjpool *pop, struct redo_log *redo,
+typedef int (*redo_check_offset_fn)(void *ctx, uint64_t offset);
+
+struct redo_ctx *redo_log_config_new(void *base,
+		const struct pmem_ops *p_ops,
+		redo_check_offset_fn check_offset,
+		void *check_offset_ctx,
+		unsigned redo_num_entries);
+
+void redo_log_config_delete(struct redo_ctx *ctx);
+
+void redo_log_store(const struct redo_ctx *ctx, struct redo_log *redo,
+		size_t index, uint64_t offset, uint64_t value);
+void redo_log_store_last(const struct redo_ctx *ctx, struct redo_log *redo,
+		size_t index, uint64_t offset, uint64_t value);
+void redo_log_set_last(const struct redo_ctx *ctx, struct redo_log *redo,
+		size_t index);
+void redo_log_process(const struct redo_ctx *ctx, struct redo_log *redo,
 		size_t nentries);
-void redo_log_recover(PMEMobjpool *pop, struct redo_log *redo,
+void redo_log_recover(const struct redo_ctx *ctx, struct redo_log *redo,
 		size_t nentries);
-int redo_log_check(PMEMobjpool *pop, struct redo_log *redo, size_t nentries);
+int redo_log_check(const struct redo_ctx *ctx, struct redo_log *redo,
+		size_t nentries);
+
+size_t redo_log_nflags(const struct redo_log *redo, size_t nentries);
+uint64_t redo_log_offset(const struct redo_log *redo);
+int redo_log_is_last(const struct redo_log *redo);
+
+const struct pmem_ops *redo_get_pmem_ops(const struct redo_ctx *ctx);
+
+#endif

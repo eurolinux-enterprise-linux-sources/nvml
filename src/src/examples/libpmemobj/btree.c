@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,11 +33,13 @@
 /*
  * btree.c -- implementation of persistent binary search tree
  */
+
+#include <ex_common.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include <inttypes.h>
 #include <libpmemobj.h>
 
 POBJ_LAYOUT_BEGIN(btree);
@@ -64,11 +66,11 @@ struct btree_node_arg {
 /*
  * btree_node_construct -- constructor of btree node
  */
-int
+static int
 btree_node_construct(PMEMobjpool *pop, void *ptr, void *arg)
 {
-	struct btree_node *node = ptr;
-	struct btree_node_arg *a = arg;
+	struct btree_node *node = (struct btree_node *)ptr;
+	struct btree_node_arg *a = (struct btree_node_arg *)arg;
 
 	node->key = a->key;
 	strcpy(node->value, a->value);
@@ -83,7 +85,7 @@ btree_node_construct(PMEMobjpool *pop, void *ptr, void *arg)
 /*
  * btree_insert -- inserts new element into the tree
  */
-void
+static void
 btree_insert(PMEMobjpool *pop, int64_t key, const char *value)
 {
 	TOID(struct btree) btree = POBJ_ROOT(pop, struct btree);
@@ -93,11 +95,10 @@ btree_insert(PMEMobjpool *pop, int64_t key, const char *value)
 		dst = &D_RW(*dst)->slots[key > D_RO(*dst)->key];
 	}
 
-	struct btree_node_arg args = {
-		.size = sizeof(struct btree_node) + strlen(value) + 1,
-		.key = key,
-		.value = value
-	};
+	struct btree_node_arg args;
+	args.size = sizeof(struct btree_node) + strlen(value) + 1;
+	args.key = key;
+	args.value = value;
 
 	POBJ_ALLOC(pop, dst, struct btree_node, args.size,
 		btree_node_construct, &args);
@@ -106,7 +107,7 @@ btree_insert(PMEMobjpool *pop, int64_t key, const char *value)
 /*
  * btree_find -- searches for key in the tree
  */
-const char *
+static const char *
 btree_find(PMEMobjpool *pop, int64_t key)
 {
 	TOID(struct btree) btree = POBJ_ROOT(pop, struct btree);
@@ -125,16 +126,16 @@ btree_find(PMEMobjpool *pop, int64_t key)
 /*
  * btree_node_print -- prints content of the btree node
  */
-void
+static void
 btree_node_print(const TOID(struct btree_node) node)
 {
-	printf("%ld %s\n", D_RO(node)->key, D_RO(node)->value);
+	printf("%" PRIu64 " %s\n", D_RO(node)->key, D_RO(node)->value);
 }
 
 /*
  * btree_foreach -- invoke callback for every node
  */
-void
+static void
 btree_foreach(PMEMobjpool *pop, const TOID(struct btree_node) node,
 	void(*cb)(const TOID(struct btree_node) node))
 {
@@ -151,7 +152,7 @@ btree_foreach(PMEMobjpool *pop, const TOID(struct btree_node) node,
 /*
  * btree_print -- initiates foreach node print
  */
-void
+static void
 btree_print(PMEMobjpool *pop)
 {
 	TOID(struct btree) btree = POBJ_ROOT(pop, struct btree);
@@ -171,7 +172,7 @@ main(int argc, char *argv[])
 
 	PMEMobjpool *pop;
 
-	if (access(path, F_OK) != 0) {
+	if (file_exists(path) != 0) {
 		if ((pop = pmemobj_create(path, POBJ_LAYOUT_NAME(btree),
 			PMEMOBJ_MIN_POOL, 0666)) == NULL) {
 			perror("failed to create pool\n");

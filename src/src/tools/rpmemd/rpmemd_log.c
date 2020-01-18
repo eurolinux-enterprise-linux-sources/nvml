@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,10 +43,11 @@
 #include <stdlib.h>
 
 #include "rpmemd_log.h"
+#include "os.h"
 
 #define RPMEMD_SYSLOG_OPTS	(LOG_NDELAY | LOG_PID)
 #define RPMEMD_SYSLOG_FACILITY	(LOG_USER)
-#define RPMEMD_DEFAULT_FH	stdout
+#define RPMEMD_DEFAULT_FH	stderr
 #define RPMEMD_MAX_MSG		((size_t)8192)
 #define RPMEMD_MAX_PREFIX	((size_t)256)
 
@@ -109,11 +110,6 @@ rpmemd_log_level_to_str(enum rpmemd_log_level level)
 int
 rpmemd_log_init(const char *ident, const char *fname, int use_syslog)
 {
-	if (fname && use_syslog) {
-		errno = EINVAL;
-		return -1;
-	}
-
 	rpmemd_use_syslog = use_syslog;
 
 	if (rpmemd_use_syslog) {
@@ -127,7 +123,7 @@ rpmemd_log_init(const char *ident, const char *fname, int use_syslog)
 		}
 
 		if (fname) {
-			rpmemd_log_file = fopen(fname, "a");
+			rpmemd_log_file = os_fopen(fname, "a");
 			if (!rpmemd_log_file) {
 				perror(fname);
 				return -1;
@@ -218,24 +214,22 @@ rpmemd_log(enum rpmemd_log_level level, const char *fname, int lineno,
 			errorstr = strerror(errno);
 			prefix = ": ";
 		}
+
+		va_list ap;
+		va_start(ap, fmt);
+		ret = vsnprintf(&buff[cnt], RPMEMD_MAX_MSG - cnt, fmt, ap);
+		va_end(ap);
+
+		if (ret < 0)
+			RPMEMD_FATAL("vsnprintf failed");
+
+		cnt += (size_t)ret;
+
+		ret = snprintf(&buff[cnt], RPMEMD_MAX_MSG - cnt,
+				"%s%s%s", prefix, errorstr, suffix);
+		if (ret < 0)
+			RPMEMD_FATAL("snprintf failed");
 	}
-
-	va_list ap;
-	va_start(ap, fmt);
-	ret = vsnprintf(&buff[cnt], RPMEMD_MAX_MSG - cnt, fmt, ap);
-	va_end(ap);
-
-	if (ret < 0)
-		RPMEMD_FATAL("vsnprintf failed");
-
-	cnt += (size_t)ret;
-
-	ret = snprintf(&buff[cnt], RPMEMD_MAX_MSG - cnt,
-			"%s%s%s", prefix, errorstr, suffix);
-	if (ret < 0)
-		RPMEMD_FATAL("snprintf failed");
-
-	cnt += (size_t)ret;
 
 	if (rpmemd_use_syslog) {
 		int prio = rpmemd_level2prio[level];

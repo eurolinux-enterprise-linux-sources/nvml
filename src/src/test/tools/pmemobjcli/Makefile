@@ -1,4 +1,4 @@
-# Copyright 2014-2016, Intel Corporation
+# Copyright 2014-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -32,6 +32,8 @@
 #
 
 TOP=../../../..
+
+SCP_TO_REMOTE_NODES = y
 
 TARGET = pmemobjcli
 

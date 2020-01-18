@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -102,10 +102,12 @@ main(int argc, char *argv[])
 	const unsigned mem_pools_size = (npools / 2 + npools % 2) * nthreads;
 	mem_pools = MALLOC(mem_pools_size * sizeof(char *));
 	pools = CALLOC(npools * nthreads, sizeof(VMEM *));
-	pthread_t threads[nthreads];
-	int pool_idx[nthreads];
+	os_thread_t *threads = CALLOC(nthreads, sizeof(os_thread_t));
+	UT_ASSERTne(threads, NULL);
+	int *pool_idx = CALLOC(nthreads, sizeof(int));
+	UT_ASSERTne(pool_idx, NULL);
 
-	for (int pool_id = 0; pool_id < mem_pools_size; ++pool_id) {
+	for (unsigned pool_id = 0; pool_id < mem_pools_size; ++pool_id) {
 		/* allocate memory for function vmem_create_in_region() */
 		mem_pools[pool_id] = MMAP_ANON_ALIGNED(VMEM_MIN_POOL, 4 << 20);
 	}
@@ -119,7 +121,7 @@ main(int argc, char *argv[])
 	for (int t = 0; t < nthreads; t++)
 		PTHREAD_JOIN(threads[t], NULL);
 
-	for (int pool_id = 0; pool_id < npools; ++pool_id) {
+	for (int pool_id = 0; pool_id < npools * nthreads; ++pool_id) {
 		if (pools[pool_id] != NULL) {
 			vmem_delete(pools[pool_id]);
 			pools[pool_id] = NULL;
@@ -128,6 +130,8 @@ main(int argc, char *argv[])
 
 	FREE(mem_pools);
 	FREE(pools);
+	FREE(threads);
+	FREE(pool_idx);
 
 	DONE(NULL);
 }

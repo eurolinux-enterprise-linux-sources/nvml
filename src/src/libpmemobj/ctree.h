@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,10 +34,20 @@
  * ctree.h -- internal definitions for crit-bit tree
  */
 
+#ifndef LIBPMEMOBJ_CTREE_H
+#define LIBPMEMOBJ_CTREE_H 1
+
+#include <stdint.h>
+
 struct ctree;
 
 struct ctree *ctree_new(void);
 void ctree_delete(struct ctree *t);
+typedef void (*ctree_destroy_cb)(uint64_t key, uint64_t value, void *ctx);
+void ctree_delete_cb(struct ctree *t, ctree_destroy_cb cb, void *ctx);
+
+void ctree_clear(struct ctree *t);
+void ctree_clear_unlocked(struct ctree *t);
 
 int ctree_insert(struct ctree *t, uint64_t key, uint64_t value);
 int ctree_insert_unlocked(struct ctree *t, uint64_t key, uint64_t value);
@@ -51,5 +61,10 @@ uint64_t ctree_find_le_unlocked(struct ctree *t, uint64_t *key);
 uint64_t ctree_remove(struct ctree *t, uint64_t key, int eq);
 uint64_t ctree_remove_unlocked(struct ctree *t, uint64_t key, int eq);
 
+int ctree_remove_max(struct ctree *t, uint64_t *key, uint64_t *value);
+int ctree_remove_max_unlocked(struct ctree *t, uint64_t *key, uint64_t *value);
+
 int ctree_is_empty(struct ctree *t);
 int ctree_is_empty_unlocked(struct ctree *t);
+
+#endif

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,18 +35,18 @@
  */
 #include <stdint.h>
 
-#include "libpmemobj.h"
-#include "redo.h"
-#include "memops.h"
+#include "obj.h"
 #include "pmalloc.h"
 #include "unittest.h"
 
 #define THREADS 32
 #define OPS_PER_THREAD 1000
-#define ALLOC_SIZE 100
+#define ALLOC_SIZE 104
 #define REALLOC_SIZE (ALLOC_SIZE * 3)
-#define FRAGMENTATION 3
 #define MIX_RERUNS 2
+
+#define CHUNKSIZE (1 << 18)
+#define CHUNKS_PER_THREAD 3
 
 struct root {
 	uint64_t offs[THREADS][OPS_PER_THREAD];
@@ -64,7 +64,7 @@ alloc_worker(void *arg)
 	struct worker_args *a = arg;
 
 	for (int i = 0; i < OPS_PER_THREAD; ++i) {
-		pmalloc(a->pop, &a->r->offs[a->idx][i], ALLOC_SIZE);
+		pmalloc(a->pop, &a->r->offs[a->idx][i], ALLOC_SIZE, 0, 0);
 		UT_ASSERTne(a->r->offs[a->idx][i], 0);
 	}
 
@@ -77,7 +77,7 @@ realloc_worker(void *arg)
 	struct worker_args *a = arg;
 
 	for (int i = 0; i < OPS_PER_THREAD; ++i) {
-		prealloc(a->pop, &a->r->offs[a->idx][i], REALLOC_SIZE);
+		prealloc(a->pop, &a->r->offs[a->idx][i], REALLOC_SIZE, 0, 0);
 		UT_ASSERTne(a->r->offs[a->idx][i], 0);
 	}
 
@@ -106,9 +106,10 @@ mix_worker(void *arg)
 	 * The mix scenario is ran twice to increase the chances of run
 	 * contention.
 	 */
-	for (int i = 0; i < MIX_RERUNS; ++i) {
+	for (int j = 0; j < MIX_RERUNS; ++j) {
 		for (int i = 0; i < OPS_PER_THREAD; ++i) {
-			pmalloc(a->pop, &a->r->offs[a->idx][i], ALLOC_SIZE);
+			pmalloc(a->pop, &a->r->offs[a->idx][i],
+				ALLOC_SIZE, 0, 0);
 			UT_ASSERTne(a->r->offs[a->idx][i], 0);
 		}
 
@@ -154,16 +155,48 @@ alloc_free_worker(void *arg)
 	return NULL;
 }
 
+#define OPS_PER_TX 10
+#define TX_PER_TH 100
+#define STEP 8
+#define TEST_LANES 4
+
+static void *
+tx2_worker(void *arg)
+{
+	struct worker_args *a = arg;
+
+	for (int n = 0; n < TX_PER_TH; ++n) {
+		PMEMoid oids[OPS_PER_TX];
+		TX_BEGIN(a->pop) {
+			for (int i = 0; i < OPS_PER_TX; ++i) {
+				oids[i] = pmemobj_tx_alloc(ALLOC_SIZE, a->idx);
+				for (int j = 0; j < ALLOC_SIZE; j += STEP) {
+					pmemobj_tx_add_range(oids[i], j, STEP);
+				}
+			}
+		} TX_END
+
+		TX_BEGIN(a->pop) {
+			for (int i = 0; i < OPS_PER_TX; ++i)
+				pmemobj_tx_free(oids[i]);
+		} TX_ONABORT {
+			UT_ASSERT(0);
+		} TX_END
+	}
+
+	return NULL;
+}
+
 static void
 run_worker(void *(worker_func)(void *arg), struct worker_args args[])
 {
-	pthread_t t[THREADS];
+	os_thread_t t[THREADS];
 
 	for (int i = 0; i < THREADS; ++i)
-		pthread_create(&t[i], NULL, worker_func, &args[i]);
+		os_thread_create(&t[i], NULL, worker_func, &args[i]);
 
 	for (int i = 0; i < THREADS; ++i)
-		pthread_join(t[i], NULL);
+		os_thread_join(t[i], NULL);
 }
 
 int
@@ -176,9 +209,10 @@ main(int argc, char *argv[])
 
 	PMEMobjpool *pop;
 
-	if (access(argv[1], F_OK) != 0) {
+	if (os_access(argv[1], F_OK) != 0) {
 		pop = pmemobj_create(argv[1], "TEST",
-		THREADS * OPS_PER_THREAD * ALLOC_SIZE * FRAGMENTATION, 0666);
+		(PMEMOBJ_MIN_POOL) + (THREADS * CHUNKSIZE * CHUNKS_PER_THREAD),
+		0666);
 	} else {
 		if ((pop = pmemobj_open(argv[1], "TEST")) == NULL) {
 			printf("failed to open pool\n");
@@ -205,8 +239,26 @@ main(int argc, char *argv[])
 	run_worker(realloc_worker, args);
 	run_worker(free_worker, args);
 	run_worker(mix_worker, args);
-	run_worker(tx_worker, args);
 	run_worker(alloc_free_worker, args);
+
+	/*
+	 * Reduce the number of lanes to a value smaller than the number of
+	 * threads. This will ensure that at least some of the state of the lane
+	 * will be shared between threads. Doing this might reveal bugs related
+	 * to runtime race detection instrumentation.
+	 */
+	unsigned old_nlanes = pop->lanes_desc.runtime_nlanes;
+	pop->lanes_desc.runtime_nlanes = TEST_LANES;
+	run_worker(tx2_worker, args);
+	pop->lanes_desc.runtime_nlanes = old_nlanes;
+
+	/*
+	 * This workload might create many allocation classes due to pvector,
+	 * keep it last.
+	 */
+	run_worker(tx_worker, args);
+
+	pmemobj_close(pop);
 
 	DONE(NULL);
 }

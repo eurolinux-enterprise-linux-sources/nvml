@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,6 +36,7 @@
 
 #include <stdint.h>
 #include <sys/param.h>
+#include <endian.h>
 
 #include "out.h"
 #include "btt.h"
@@ -43,25 +44,6 @@
 #include "pmempool.h"
 #include "pool.h"
 #include "check_util.h"
-
-/* assure size match between global and internal check step data */
-union location {
-	/* internal check step data */
-	struct {
-		struct arena *arenap;
-		uint32_t narena;
-		uint8_t *bitmap;
-		uint8_t *dup_bitmap;
-		uint8_t *fbitmap;
-		struct list *list_inval;
-		struct list *list_flog_inval;
-		struct list *list_unmap;
-
-		unsigned step;
-	};
-	/* global check step data */
-	struct check_step_data step_data;
-};
 
 enum questions {
 	Q_REPAIR_MAP,
@@ -115,6 +97,7 @@ map_read(PMEMpoolcheck *ppc, struct arena *arenap)
 	uint64_t mapoff = arenap->offset + arenap->btt_info.mapoff;
 	arenap->mapsize = btt_map_size(arenap->btt_info.external_nlba);
 
+	ASSERT(arenap->mapsize != 0);
 	arenap->map = malloc(arenap->mapsize);
 	if (!arenap->map) {
 		ERR("!malloc");
@@ -222,7 +205,7 @@ list_free(struct list *list)
  * cleanup -- (internal) prepare resources for map and flog check
  */
 static int
-cleanup(PMEMpoolcheck *ppc, union location *loc)
+cleanup(PMEMpoolcheck *ppc, location *loc)
 {
 	LOG(3, NULL);
 
@@ -246,7 +229,7 @@ cleanup(PMEMpoolcheck *ppc, union location *loc)
  * init -- (internal) initialize map and flog check
  */
 static int
-init(PMEMpoolcheck *ppc, union location *loc)
+init(PMEMpoolcheck *ppc, location *loc)
 {
 	LOG(3, NULL);
 
@@ -269,7 +252,7 @@ init(PMEMpoolcheck *ppc, union location *loc)
 	if (!loc->bitmap) {
 		ERR("!calloc");
 		CHECK_ERR(ppc, "arena %u: cannot allocate memory for blocks "
-			"bitmap");
+			"bitmap", arenap->id);
 		goto error;
 	}
 
@@ -277,7 +260,7 @@ init(PMEMpoolcheck *ppc, union location *loc)
 	if (!loc->dup_bitmap) {
 		ERR("!calloc");
 		CHECK_ERR(ppc, "arena %u: cannot allocate memory for "
-			"duplicated blocks bitmap");
+			"duplicated blocks bitmap", arenap->id);
 		goto error;
 	}
 
@@ -285,7 +268,7 @@ init(PMEMpoolcheck *ppc, union location *loc)
 	if (!loc->fbitmap) {
 		ERR("!calloc");
 		CHECK_ERR(ppc, "arena %u: cannot allocate memory for BTT Flog "
-			"bitmap");
+			"bitmap", arenap->id);
 		goto error;
 	}
 
@@ -294,7 +277,7 @@ init(PMEMpoolcheck *ppc, union location *loc)
 	if (!loc->list_inval) {
 		CHECK_ERR(ppc,
 			"arena %u: cannot allocate memory for invalid BTT map "
-			"entries list");
+			"entries list", arenap->id);
 		goto error;
 	}
 
@@ -303,7 +286,7 @@ init(PMEMpoolcheck *ppc, union location *loc)
 	if (!loc->list_flog_inval) {
 		CHECK_ERR(ppc,
 			"arena %u: cannot allocate memory for invalid BTT Flog "
-			"entries list");
+			"entries list", arenap->id);
 		goto error;
 	}
 
@@ -312,7 +295,7 @@ init(PMEMpoolcheck *ppc, union location *loc)
 	if (!loc->list_unmap) {
 		CHECK_ERR(ppc,
 			"arena %u: cannot allocate memory for unmaped blocks "
-			"list");
+			"list", arenap->id);
 		goto error;
 	}
 
@@ -344,7 +327,7 @@ map_get_postmap_lba(struct arena *arenap, uint32_t i)
  * map_entry_check -- (internal) check single map entry
  */
 static int
-map_entry_check(PMEMpoolcheck *ppc, union location *loc, uint32_t i)
+map_entry_check(PMEMpoolcheck *ppc, location *loc, uint32_t i)
 {
 	struct arena *arenap = loc->arenap;
 	uint32_t lba = map_get_postmap_lba(arenap, i);
@@ -373,7 +356,7 @@ map_entry_check(PMEMpoolcheck *ppc, union location *loc, uint32_t i)
  * flog_entry_check -- (internal) check single flog entry
  */
 static int
-flog_entry_check(PMEMpoolcheck *ppc, union location *loc, uint32_t i,
+flog_entry_check(PMEMpoolcheck *ppc, location *loc, uint32_t i,
 	uint8_t **ptr)
 {
 	struct arena *arenap = loc->arenap;
@@ -446,15 +429,12 @@ flog_entry_check(PMEMpoolcheck *ppc, union location *loc, uint32_t i,
 		 * - current_btt_flog.seq == 0b01 and
 		 * - second flog entry in pair is zeroed
 		 * or
-		 * btt_map[current_btt_flog.lba] == current_btt_flog.new_map
+		 * current_btt_flog.old_map != current_btt_flog.new_map
 		 */
 		if (entry == new_entry)
 			flog_valid = (next == 1) && (flog_cur->seq == 1) &&
 				util_is_zeroed((const void *)&flog[1],
 				sizeof(flog[1]));
-		else
-			flog_valid = (loc->arenap->map[flog_cur->lba] &
-				BTT_MAP_ENTRY_LBA_MASK) == new_entry;
 
 		if (flog_valid) {
 			/* totally fine case */
@@ -477,7 +457,7 @@ next:
  * arena_map_flog_check -- (internal) check map and flog
  */
 static int
-arena_map_flog_check(PMEMpoolcheck *ppc, union location *loc)
+arena_map_flog_check(PMEMpoolcheck *ppc, location *loc)
 {
 	LOG(3, NULL);
 
@@ -537,7 +517,10 @@ arena_map_flog_check(PMEMpoolcheck *ppc, union location *loc)
 
 	if (CHECK_IS_NOT(ppc, ADVANCED) && loc->list_inval->count +
 			loc->list_flog_inval->count > 0) {
-		ppc->result = CHECK_RESULT_NOT_CONSISTENT;
+		ppc->result = CHECK_RESULT_CANNOT_REPAIR;
+		CHECK_INFO(ppc, REQUIRE_ADVANCED);
+		CHECK_ERR(ppc, "BTT Map and / or BTT Flog contain invalid "
+			"entries");
 		check_end(ppc->data);
 		goto cleanup;
 	}
@@ -555,7 +538,8 @@ arena_map_flog_check(PMEMpoolcheck *ppc, union location *loc)
 	return check_questions_sequence_validate(ppc);
 
 error_push:
-	CHECK_ERR(ppc, "arena %u: cannot allocate momory for list item");
+	CHECK_ERR(ppc, "arena %u: cannot allocate momory for list item",
+			arenap->id);
 	ppc->result = CHECK_RESULT_ERROR;
 cleanup:
 	cleanup(ppc, loc);
@@ -566,14 +550,13 @@ cleanup:
  * arena_map_flog_fix -- (internal) fix map and flog
  */
 static int
-arena_map_flog_fix(PMEMpoolcheck *ppc, struct check_step_data *location,
-	uint32_t question, void *ctx)
+arena_map_flog_fix(PMEMpoolcheck *ppc, location *loc, uint32_t question,
+	void *ctx)
 {
 	LOG(3, NULL);
 
 	ASSERTeq(ctx, NULL);
-	ASSERTne(location, NULL);
-	union location *loc = (union location *)location;
+	ASSERTne(loc, NULL);
 
 	struct arena *arenap = loc->arenap;
 	uint32_t inval;
@@ -645,8 +628,8 @@ arena_map_flog_fix(PMEMpoolcheck *ppc, struct check_step_data *location,
 }
 
 struct step {
-	int (*check)(PMEMpoolcheck *, union location *);
-	int (*fix)(PMEMpoolcheck *, struct check_step_data *, uint32_t, void *);
+	int (*check)(PMEMpoolcheck *, location *);
+	int (*fix)(PMEMpoolcheck *, location *, uint32_t, void *);
 };
 
 static const struct step steps[] = {
@@ -664,6 +647,7 @@ static const struct step steps[] = {
 	},
 	{
 		.check	= NULL,
+		.fix	= NULL,
 	},
 };
 
@@ -671,14 +655,16 @@ static const struct step steps[] = {
  * step_exe -- (internal) perform single step according to its parameters
  */
 static inline int
-step_exe(PMEMpoolcheck *ppc, union location *loc)
+step_exe(PMEMpoolcheck *ppc, location *loc)
 {
+	ASSERT(loc->step < ARRAY_SIZE(steps));
+
 	const struct step *step = &steps[loc->step++];
 
 	if (!step->fix)
 		return step->check(ppc, loc);
 
-	if (!check_answer_loop(ppc, &loc->step_data, NULL, step->fix))
+	if (!check_answer_loop(ppc, loc, NULL, step->fix))
 		return 0;
 
 	cleanup(ppc, loc);
@@ -693,10 +679,7 @@ check_btt_map_flog(PMEMpoolcheck *ppc)
 {
 	LOG(3, NULL);
 
-	COMPILE_ERROR_ON(sizeof(union location) !=
-		sizeof(struct check_step_data));
-
-	union location *loc = (union location *)check_get_step_data(ppc->data);
+	location *loc = check_get_step_data(ppc->data);
 
 	if (ppc->pool->blk_no_layout)
 		return;

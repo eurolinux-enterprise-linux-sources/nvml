@@ -31,6 +31,10 @@
 # Makefile -- top Makefile for tools
 #
 
+TOP = ../..
+
+TESTCONFIG=$(TOP)/src/test/testconfig.sh
+
 TARGETS = pmempool rpmemd
 SCOPEDIRS=$(TARGETS)
 SCOPEFILES=$(foreach dir, $(SCOPEDIRS), $(shell find $(dir) -name *.[ch] ))
@@ -44,8 +48,14 @@ cstyle : TARGET = cstyle
 format : TARGET = format
 install: TARGET = install
 uninstall: TARGET = uninstall
+sync-remotes: TARGET = sync-remotes
+sparse: TARGET = sparse
 
-all clean clobber cstyle install uninstall check format test: $(TARGETS)
+all clean clobber cstyle install uninstall check format test sparse: $(TARGETS)
+
+$(TESTCONFIG):
+
+sync-remotes: $(TARGETS) $(TESTCONFIG)
 
 $(TARGETS):
 	$(MAKE) -C $@ $(TARGET)
@@ -59,4 +69,4 @@ cscope:
 	cscope -q -b $(SCOPEFILES)
 	ctags -e $(SCOPEFILES)
 
-.PHONY: all clean clobber cstyle format install uninstall common cscope $(TARGETS)
+.PHONY: all clean clobber cstyle format install uninstall common cscope sync-remotes $(TARGETS)

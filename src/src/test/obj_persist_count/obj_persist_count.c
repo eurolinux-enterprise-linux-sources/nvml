@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,10 +33,11 @@
 /*
  * obj_persist_count.c -- counting number of persists
  */
-#include "unittest.h"
-#include "redo.h"
-#include "memops.h"
+#define _GNU_SOURCE
+
+#include "obj.h"
 #include "pmalloc.h"
+#include "unittest.h"
 
 static struct {
 	int n_persist;
@@ -45,21 +46,21 @@ static struct {
 	int n_drain;
 } ops_counter;
 
-FUNC_MOCK(pmem_persist, void, void *addr, size_t len)
+FUNC_MOCK(pmem_persist, void, const void *addr, size_t len)
 	FUNC_MOCK_RUN_DEFAULT {
 		ops_counter.n_persist++;
 		_FUNC_REAL(pmem_persist)(addr, len);
 	}
 FUNC_MOCK_END
 
-FUNC_MOCK(pmem_msync, int, void *addr, size_t len)
+FUNC_MOCK(pmem_msync, int, const void *addr, size_t len)
 	FUNC_MOCK_RUN_DEFAULT {
 		ops_counter.n_msync++;
 		return _FUNC_REAL(pmem_msync)(addr, len);
 	}
 FUNC_MOCK_END
 
-FUNC_MOCK(pmem_flush, void, void *addr, size_t len)
+FUNC_MOCK(pmem_flush, void, const void *addr, size_t len)
 	FUNC_MOCK_RUN_DEFAULT {
 		ops_counter.n_flush++;
 		_FUNC_REAL(pmem_flush)(addr, len);
@@ -72,6 +73,7 @@ FUNC_MOCK(pmem_drain, void, void)
 		_FUNC_REAL(pmem_drain)();
 	}
 FUNC_MOCK_END
+
 
 /*
  * reset_counters -- zero all counters
@@ -100,6 +102,7 @@ struct foo {
 	uint64_t dest;
 
 	PMEMoid bar;
+	PMEMoid bar2;
 };
 
 int
@@ -146,8 +149,8 @@ main(int argc, char *argv[])
 	print_reset_counters("tx_alloc");
 
 	TX_BEGIN(pop) {
-		f->bar = pmemobj_tx_alloc(sizeof(struct foo), 0);
-		UT_ASSERT(!OID_IS_NULL(f->bar));
+		f->bar2 = pmemobj_tx_alloc(sizeof(struct foo), 0);
+		UT_ASSERT(!OID_IS_NULL(f->bar2));
 	} TX_END
 	print_reset_counters("tx_alloc_next");
 
@@ -157,7 +160,7 @@ main(int argc, char *argv[])
 	print_reset_counters("tx_free");
 
 	TX_BEGIN(pop) {
-		pmemobj_tx_free(f->bar);
+		pmemobj_tx_free(f->bar2);
 	} TX_END
 	print_reset_counters("tx_free_next");
 
@@ -171,14 +174,14 @@ main(int argc, char *argv[])
 	} TX_END
 	print_reset_counters("tx_add_next");
 
-	pmalloc(pop, &f->dest, sizeof(f->val));
+	pmalloc(pop, &f->dest, sizeof(f->val), 0, 0);
 	print_reset_counters("pmalloc");
 
 	pfree(pop, &f->dest);
 	print_reset_counters("pfree");
 
 	uint64_t stack_var;
-	pmalloc(pop, &stack_var, sizeof(f->val));
+	pmalloc(pop, &stack_var, sizeof(f->val), 0, 0);
 	print_reset_counters("pmalloc_stack");
 
 	pfree(pop, &stack_var);

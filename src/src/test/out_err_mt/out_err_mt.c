@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -52,6 +52,7 @@ print_errors(const char *msg)
 	UT_OUT("PMEMLOG: %s", pmemlog_errormsg());
 	UT_OUT("PMEMBLK: %s", pmemblk_errormsg());
 	UT_OUT("VMEM: %s", vmem_errormsg());
+	UT_OUT("PMEMPOOL: %s", pmempool_errormsg());
 }
 
 static void
@@ -95,6 +96,13 @@ check_errors(int ver)
 	UT_ASSERTeq(ret, 2);
 	UT_ASSERTeq(err_need, ver);
 	UT_ASSERTeq(err_found, VMEM_MAJOR_VERSION);
+
+	ret = sscanf(pmempool_errormsg(),
+		"libpmempool major version mismatch (need %d, found %d)",
+		&err_need, &err_found);
+	UT_ASSERTeq(ret, 2);
+	UT_ASSERTeq(err_need, ver);
+	UT_ASSERTeq(err_found, PMEMPOOL_MAJOR_VERSION);
 }
 
 static void *
@@ -107,6 +115,7 @@ do_test(void *arg)
 	pmemlog_check_version(ver, 0);
 	pmemblk_check_version(ver, 0);
 	vmem_check_version(ver, 0);
+	pmempool_check_version(ver, 0);
 	check_errors(ver);
 
 	return NULL;
@@ -115,7 +124,7 @@ do_test(void *arg)
 static void
 run_mt_test(void *(*worker)(void *))
 {
-	pthread_t thread[NUM_THREADS];
+	os_thread_t thread[NUM_THREADS];
 	int ver[NUM_THREADS];
 
 	for (int i = 0; i < NUM_THREADS; ++i) {
@@ -136,6 +145,8 @@ main(int argc, char *argv[])
 		UT_FATAL("usage: %s filename1 filename2 filename3 dir",
 				argv[0]);
 
+	print_errors("start");
+
 	PMEMobjpool *pop = pmemobj_create(argv[1], "test",
 		PMEMOBJ_MIN_POOL, 0666);
 	PMEMlogpool *plp = pmemlog_create(argv[2],
@@ -151,6 +162,7 @@ main(int argc, char *argv[])
 	pmemlog_check_version(10002, 0);
 	pmemblk_check_version(10003, 0);
 	vmem_check_version(10004, 0);
+	pmempool_check_version(10005, 0);
 	print_errors("version check");
 
 	void *ptr = NULL;
@@ -180,6 +192,12 @@ main(int argc, char *argv[])
 	pmemlog_close(plp);
 	pmemblk_close(pbp);
 	vmem_delete(vmp);
+
+	PMEMpoolcheck *ppc;
+	struct pmempool_check_args args = {NULL, };
+	ppc = pmempool_check_init(&args, sizeof(args) / 2);
+	UT_ASSERTeq(ppc, NULL);
+	print_errors("pmempool_check_init");
 
 	DONE(NULL);
 }

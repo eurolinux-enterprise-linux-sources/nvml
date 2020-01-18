@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,6 +40,9 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <assert.h>
+#include <inttypes.h>
+
+#include "alloc_class.h"
 
 #include "common.h"
 #include "output.h"
@@ -51,10 +54,8 @@
 
 #define PTR_TO_OFF(pop, ptr) ((uintptr_t)ptr - (uintptr_t)pop)
 
-#define DEFAULT_BUCKET MAX_BUCKETS
-
 typedef void (*pvector_callback_fn)(struct pmem_info *pip, int v, int vnum,
-		void *ptr, size_t i);
+		const struct memory_block *m, uint64_t i);
 
 /*
  * lane_need_recovery_redo -- return 1 if redo log needs recovery
@@ -63,12 +64,7 @@ static int
 lane_need_recovery_redo(struct redo_log *redo, size_t nentries)
 {
 	/* Needs recovery if any of redo log entries has finish flag set */
-	for (size_t i = 0; i < nentries; i++) {
-		if (redo[i].offset & REDO_FINISH_FLAG)
-			return 1;
-	}
-
-	return 0;
+	return redo_log_nflags(redo, nentries) > 0;
 }
 
 /*
@@ -119,7 +115,7 @@ lane_need_recovery_tx(struct pmem_info *pip,
 
 	if (off != 0) {
 		struct tx_range_cache *cache = OFF_TO_PTR(pip->obj.pop, off);
-		struct tx_range *range = (struct tx_range *)&cache->range[0];
+		struct tx_range *range = (struct tx_range *)cache;
 
 		set_cache = (range->offset && range->size);
 	}
@@ -153,44 +149,6 @@ lane_need_recovery(struct pmem_info *pip, struct lane_layout *lane)
 }
 
 /*
- * heap_size_to_class -- get index of class of given allocation size
- */
-static int
-heap_size_to_class(size_t size)
-{
-	if (!size)
-		return -1;
-
-	if (size == CHUNKSIZE)
-		return DEFAULT_BUCKET;
-
-	return (int)SIZE_TO_ALLOC_BLOCKS(size);
-}
-
-/*
- * heal_class_to_size -- get size of allocation class
- */
-static uint64_t
-heap_class_to_size(int class)
-{
-	if (class == DEFAULT_BUCKET)
-		return CHUNKSIZE;
-
-	return (uint64_t)(class * ALLOC_BLOCK_SIZE);
-}
-
-/*
- * get_bitmap_size -- get number of used bits in chunk run's bitmap
- */
-static uint32_t
-get_bitmap_size(struct chunk_run *run)
-{
-	uint64_t size = RUNSIZE / run->block_size;
-	assert(size <= UINT32_MAX);
-	return (uint32_t)size;
-}
-
-/*
  * get_bitmap_reserved -- get number of reserved blocks in chunk run
  */
 static int
@@ -212,6 +170,8 @@ get_bitmap_reserved(struct chunk_run *run, uint32_t *reserved)
 	return 0;
 }
 
+#define RUN_BITMAP_SEPARATOR_DISTANCE 8
+
 /*
  * get_bitmap_str -- get bitmap single value string
  */
@@ -223,7 +183,7 @@ get_bitmap_str(uint64_t val, unsigned values)
 	unsigned j = 0;
 	for (unsigned i = 0; i < values && j < BITMAP_BUFF_SIZE - 3; i++) {
 		buff[j++] = ((val & ((uint64_t)1 << i)) ? 'x' : '.');
-		if ((i + 1) % RUN_UNIT_MAX == 0)
+		if ((i + 1) % RUN_BITMAP_SEPARATOR_DISTANCE == 0)
 			buff[j++] = ' ';
 	}
 
@@ -271,14 +231,14 @@ info_obj_redo(int v, struct redo_log *redo, size_t nentries)
 {
 	outv_field(v, "Redo log entries", "%lu", nentries);
 	for (size_t i = 0; i < nentries; i++) {
-		outv(v, "%010u: "
+		outv(v, "%010zu: "
 			"Offset: 0x%016jx "
 			"Value: 0x%016jx "
 			"Finish flag: %d\n",
 			i,
-			redo[i].offset & REDO_FLAG_MASK,
+			redo_log_offset(&redo[i]),
 			redo[i].value,
-			redo[i].offset & REDO_FINISH_FLAG);
+			redo_log_is_last(&redo[i]));
 	}
 }
 
@@ -310,7 +270,7 @@ static void
 info_obj_pvector(struct pmem_info *pip, int vnum, int vobj,
 	struct pvector *vec, const char *name, pvector_callback_fn cb)
 {
-	struct pvector_context *ctx = pvector_init(pip->obj.pop, vec);
+	struct pvector_context *ctx = pvector_new(pip->obj.pop, vec);
 	if (ctx == NULL) {
 		outv_err("Cannot initialize pvector context\n");
 		exit(EXIT_FAILURE);
@@ -322,10 +282,12 @@ info_obj_pvector(struct pmem_info *pip, int vnum, int vobj,
 
 	outv_indent(vobj, 1);
 
-	size_t i = 0;
+	uint64_t i = 0;
 	uint64_t off;
+	struct memory_block m;
 	for (off = pvector_first(ctx); off != 0; off = pvector_next(ctx)) {
-		cb(pip, vobj, vobj, OFF_TO_PTR(pip->obj.pop, off), i);
+		m = memblock_from_offset(pip->obj.heap, off);
+		cb(pip, vobj, vobj, &m, i);
 		i++;
 	}
 
@@ -334,34 +296,18 @@ info_obj_pvector(struct pmem_info *pip, int vnum, int vobj,
 }
 
 /*
- * info_obj_oob_hdr -- print OOB header
- */
-static void
-info_obj_oob_hdr(struct pmem_info *pip, int v, struct oob_header *oob)
-{
-
-	outv_title(v, "OOB Header");
-	outv_hexdump(v && pip->args.vhdrdump, oob, sizeof(*oob),
-		PTR_TO_OFF(pip->obj.pop, oob), 1);
-	outv_field(v, "Undo offset", "%llx", oob->undo_entry_offset);
-	outv_field(v, "Type Number", "0x%016lx", oob->type_num);
-
-}
-
-/*
  * info_obj_alloc_hdr -- print allocation header
  */
 static void
 info_obj_alloc_hdr(struct pmem_info *pip, int v,
-	struct allocation_header *alloc)
+	const struct memory_block *m)
 {
 	outv_title(v, "Allocation Header");
-	outv_hexdump(v && pip->args.vhdrdump, alloc,
-			sizeof(*alloc), PTR_TO_OFF(pip->obj.pop, alloc), 1);
-	outv_field(v, "Zone id", "%u", alloc->zone_id);
-	outv_field(v, "Chunk id", "%u", alloc->chunk_id);
-	outv_field(v, "Size", "%s", out_get_size_str(alloc->size,
+
+	outv_field(v, "Size", "%s", out_get_size_str(m->m_ops->get_user_size(m),
 				pip->args.human));
+	outv_field(v, "Extra", "%lu", m->m_ops->get_extra(m));
+	outv_field(v, "Flags", "0x%x", m->m_ops->get_flags(m));
 }
 
 /*
@@ -369,12 +315,11 @@ info_obj_alloc_hdr(struct pmem_info *pip, int v,
  */
 static void
 info_obj_object_hdr(struct pmem_info *pip, int v, int vid,
-	void *ptr, uint64_t id)
+	const struct memory_block *m, uint64_t id)
 {
 	struct pmemobjpool *pop = pip->obj.pop;
-	struct oob_header *oob = OOB_HEADER_FROM_PTR(ptr);
-	struct allocation_header *alloc = PTR_TO_ALLOC_HDR(ptr);
-	void *data = ptr;
+
+	void *data = m->m_ops->get_user_data(m);
 
 	outv_nl(vid);
 	outv_field(vid, "Object", "%lu", id);
@@ -385,24 +330,25 @@ info_obj_object_hdr(struct pmem_info *pip, int v, int vid,
 
 	outv_indent(vahdr || voobh, 1);
 
-	info_obj_alloc_hdr(pip, vahdr, alloc);
-	info_obj_oob_hdr(pip, voobh, oob);
+	info_obj_alloc_hdr(pip, vahdr, m);
 
 	outv_hexdump(v && pip->args.vdata, data,
-			alloc->size, PTR_TO_OFF(pip->obj.pop, data), 1);
+			m->m_ops->get_real_size(m),
+			PTR_TO_OFF(pip->obj.pop, data), 1);
 
 	outv_indent(vahdr || voobh, -1);
+
 }
 
 /*
  * set_entry_cb -- callback for set objects from undo log
  */
 static void
-set_entry_cb(struct pmem_info *pip, int v, int vid, void *ptr,
-	size_t i)
+set_entry_cb(struct pmem_info *pip, int v, int vid,
+	const struct memory_block *m, uint64_t i)
 {
-	struct tx_range *range = ptr;
-	info_obj_object_hdr(pip, v, vid, ptr, i);
+	struct tx_range *range = m->m_ops->get_user_data(m);
+	info_obj_object_hdr(pip, v, vid, m, i);
 
 	outv_title(v, "Tx range");
 	outv_indent(v, 1);
@@ -418,14 +364,17 @@ set_entry_cb(struct pmem_info *pip, int v, int vid, void *ptr,
  */
 static void
 set_entry_cache_cb(struct pmem_info *pip, int v, int vid,
-	void *ptr, size_t i)
+	const struct memory_block *m, uint64_t i)
 {
-	struct tx_range_cache *cache = ptr;
-	info_obj_object_hdr(pip, v, vid, ptr, i);
+	struct tx_range_cache *cache = m->m_ops->get_user_data(m);
+	info_obj_object_hdr(pip, v, vid, m, i);
 
 	int title = 0;
-	for (int i = 0; i < MAX_CACHED_RANGES; ++i) {
-		struct tx_range *range = (struct tx_range *)&cache->range[i];
+	uint64_t cache_size = m->m_ops->get_user_size(m);
+	struct tx_range *range;
+
+	for (uint64_t cache_offset = 0; cache_offset < cache_size; ) {
+		range = (struct tx_range *)((char *)cache + cache_offset);
 		if (range->offset == 0 || range->size == 0)
 			break;
 
@@ -434,9 +383,14 @@ set_entry_cache_cb(struct pmem_info *pip, int v, int vid,
 			outv_indent(v, 1);
 			title = 1;
 		}
-		outv(v, "%010u: Offset: 0x%016lx Size: %s\n", i, range->offset,
-			out_get_size_str(range->size, pip->args.human));
+		outv(v, "%010" PRIu64 ": Offset: 0x%016lx Size: %s\n", i,
+			range->offset, out_get_size_str(range->size,
+					pip->args.human));
+
+		cache_offset += TX_ALIGN_SIZE(range->size, TX_RANGE_MASK) +
+			sizeof(struct tx_range);
 	}
+
 	if (title)
 		outv_indent(v, -1);
 }
@@ -471,7 +425,7 @@ static void
 info_obj_lane_section(struct pmem_info *pip, int v, struct lane_layout *lane,
 	enum lane_section_type type)
 {
-	if (!(pip->args.obj.lane_sections & (1U << type)))
+	if (!(pip->args.obj.lane_sections & (1ULL << type)))
 		return;
 
 	outv_nl(v);
@@ -526,7 +480,7 @@ info_obj_lanes(struct pmem_info *pip)
 				!lane_need_recovery(pip, &lanes[i]))
 				continue;
 
-			outv_title(v, "Lane", "%d", i);
+			outv_title(v, "Lane %" PRIu64, i);
 
 			outv_indent(v, 1);
 
@@ -585,83 +539,41 @@ info_obj_zone_hdr(struct pmem_info *pip, int v, struct zone_header *zone)
  * info_obj_object -- print information about object
  */
 static void
-info_obj_object(struct pmem_info *pip, struct obj_header *objh,
+info_obj_object(struct pmem_info *pip, const struct memory_block *m,
 	uint64_t objid)
 {
-	uint64_t real_size = objh->ahdr.size - sizeof(struct obj_header);
-
 	if (!util_ranges_contain(&pip->args.ranges, objid))
 		return;
 
-	if (!util_ranges_contain(&pip->args.obj.type_ranges,
-			objh->oobh.type_num))
+	uint64_t type_num = m->m_ops->get_extra(m);
+
+	if (!util_ranges_contain(&pip->args.obj.type_ranges, type_num))
 		return;
 
-	if (!util_ranges_contain(&pip->args.obj.zone_ranges,
-			objh->ahdr.zone_id))
-		return;
-
-	if (!util_ranges_contain(&pip->args.obj.chunk_ranges,
-			objh->ahdr.chunk_id))
-		return;
-
+	uint64_t real_size = m->m_ops->get_real_size(m);
 	pip->obj.stats.n_total_objects++;
 	pip->obj.stats.n_total_bytes += real_size;
 
 	struct pmem_obj_type_stats *type_stats =
-		pmem_obj_stats_get_type(&pip->obj.stats, objh->oobh.type_num);
+		pmem_obj_stats_get_type(&pip->obj.stats, type_num);
 
 	type_stats->n_objects++;
 	type_stats->n_bytes += real_size;
-
 
 	int vid = pip->args.obj.vobjects;
 	int v = pip->args.obj.vobjects;
 
 	outv_indent(v, 1);
-	info_obj_object_hdr(pip, v, vid, OBJH_TO_PTR(objh), objid);
+	info_obj_object_hdr(pip, v, vid, m, objid);
 	outv_indent(v, -1);
-}
-
-/*
- * info_obj_run_objects -- print information about objects from chunk run
- */
-static void
-info_obj_run_objects(struct pmem_info *pip, int v, struct chunk_run *run)
-{
-	uint32_t bsize = get_bitmap_size(run);
-	uint32_t i = 0;
-	while (i < bsize) {
-		uint32_t nval = i / BITS_PER_VALUE;
-		uint64_t bval = run->bitmap[nval];
-		uint32_t nbit = i % BITS_PER_VALUE;
-
-		if (!(bval & (1ULL << nbit))) {
-			i++;
-			continue;
-		}
-
-		struct obj_header *objh =
-			(struct obj_header *)&run->data[run->block_size * i];
-
-		/* skip root object */
-		if (!objh->oobh.size) {
-			info_obj_object(pip, objh, pip->obj.objid);
-			pip->obj.objid++;
-		}
-
-		i += (uint32_t)(objh->ahdr.size / run->block_size);
-	}
 }
 
 /*
  * info_obj_run_bitmap -- print chunk run's bitmap
  */
 static void
-info_obj_run_bitmap(int v, struct chunk_run *run)
+info_obj_run_bitmap(int v, struct chunk_run *run, uint32_t bsize)
 {
-	uint32_t bsize = get_bitmap_size(run);
-
 	if (outv_check(v) && outv_check(VERBOSE_MAX)) {
 		/* print all values from bitmap for higher verbosity */
 		for (int i = 0; i < MAX_BITMAP_VALUES; i++) {
@@ -684,10 +596,41 @@ info_obj_run_bitmap(int v, struct chunk_run *run)
 }
 
 /*
+ * info_obj_memblock_is_root -- (internal) checks whether the object is root
+ */
+static int
+info_obj_memblock_is_root(struct pmem_info *pip, const struct memory_block *m)
+{
+	uint64_t roff = pip->obj.pop->root_offset;
+	if (roff == 0)
+		return 0;
+
+	struct memory_block rm = memblock_from_offset(pip->obj.heap, roff);
+
+	return MEMORY_BLOCK_EQUALS(*m, rm);
+}
+
+/*
+ * info_obj_run_cb -- (internal) run object callback
+ */
+static int
+info_obj_run_cb(const struct memory_block *m, void *arg)
+{
+	struct pmem_info *pip = arg;
+
+	if (info_obj_memblock_is_root(pip, m))
+		return 0;
+
+	info_obj_object(pip, m, pip->obj.objid++);
+
+	return 0;
+}
+
+/*
  * info_obj_chunk -- print chunk info
  */
 static void
-info_obj_chunk(struct pmem_info *pip, uint64_t c,
+info_obj_chunk(struct pmem_info *pip, uint64_t c, uint64_t z,
 	struct chunk_header *chunk_hdr, struct chunk *chunk,
 	struct pmem_obj_zone_stats *stats)
 {
@@ -703,27 +646,28 @@ info_obj_chunk(struct pmem_info *pip, uint64_t c,
 	outv_field(v, "Type", "%s", out_get_chunk_type_str(chunk_hdr->type));
 	outv_field(v, "Flags", "0x%x %s", chunk_hdr->flags,
 			out_get_chunk_flags(chunk_hdr->flags));
-	outv_field(v, "Size idx", "%lu", chunk_hdr->size_idx);
+	outv_field(v, "Size idx", "%u", chunk_hdr->size_idx);
+
+	struct memory_block m = MEMORY_BLOCK_NONE;
+	m.zone_id = (uint32_t)z;
+	m.chunk_id = (uint32_t)c;
+	m.size_idx = (uint32_t)chunk_hdr->size_idx;
+	memblock_rebuild_state(pip->obj.heap, &m);
 
 	if (chunk_hdr->type == CHUNK_TYPE_USED ||
 		chunk_hdr->type == CHUNK_TYPE_FREE) {
-		stats->class_stats[DEFAULT_BUCKET].n_units +=
+		stats->class_stats[DEFAULT_ALLOC_CLASS_ID].n_units +=
 			chunk_hdr->size_idx;
 
 		if (chunk_hdr->type == CHUNK_TYPE_USED) {
-			stats->class_stats[DEFAULT_BUCKET].n_used +=
+			stats->class_stats[DEFAULT_ALLOC_CLASS_ID].n_used +=
 				chunk_hdr->size_idx;
 
-			struct obj_header *objh =
-				(struct obj_header *)chunk->data;
-
 			/* skip root object */
-			if (!objh->oobh.size) {
-				info_obj_object(pip, objh, pip->obj.objid);
-				pip->obj.objid++;
+			if (!info_obj_memblock_is_root(pip, &m)) {
+				info_obj_object(pip, &m, pip->obj.objid++);
 			}
 		}
-
 	} else if (chunk_hdr->type == CHUNK_TYPE_RUN) {
 		struct chunk_run *run = (struct chunk_run *)chunk;
 
@@ -731,26 +675,29 @@ info_obj_chunk(struct pmem_info *pip, uint64_t c,
 				sizeof(run->block_size) + sizeof(run->bitmap),
 				PTR_TO_OFF(pop, run), 1);
 
-		int class = heap_size_to_class(run->block_size);
-		if (class >= 0 && class < MAX_CLASS_STATS) {
+		struct alloc_class *aclass = alloc_class_by_unit_size(
+			pip->obj.alloc_classes, run->block_size);
+		if (aclass) {
 			outv_field(v, "Block size", "%s",
 					out_get_size_str(run->block_size,
 						pip->args.human));
 
-			uint32_t units = get_bitmap_size(run);
+			uint32_t units = aclass->run.bitmap_nallocs;
 			uint32_t used = 0;
 			if (get_bitmap_reserved(run,  &used)) {
 				outv_field(v, "Bitmap", "[error]");
 			} else {
-				stats->class_stats[class].n_units += units;
-				stats->class_stats[class].n_used += used;
+				stats->class_stats[aclass->id].n_units += units;
+				stats->class_stats[aclass->id].n_used += used;
 
 				outv_field(v, "Bitmap", "%u / %u", used, units);
 			}
 
-			info_obj_run_bitmap(v && pip->args.obj.vbitmap, run);
-			info_obj_run_objects(pip, v && pip->args.obj.vobjects,
-					run);
+			info_obj_run_bitmap(v && pip->args.obj.vbitmap,
+				run, units);
+
+			heap_run_foreach_object(pip->obj.heap, info_obj_run_cb,
+				pip, &m);
 		} else {
 			outv_field(v, "Block size", "%s [invalid!]",
 					out_get_size_str(run->block_size,
@@ -763,7 +710,7 @@ info_obj_chunk(struct pmem_info *pip, uint64_t c,
  * info_obj_zone_chunks -- print chunk headers from specified zone
  */
 static void
-info_obj_zone_chunks(struct pmem_info *pip, struct zone *zone,
+info_obj_zone_chunks(struct pmem_info *pip, struct zone *zone, uint64_t z,
 	struct pmem_obj_zone_stats *stats)
 {
 	uint64_t c = 0;
@@ -771,15 +718,16 @@ info_obj_zone_chunks(struct pmem_info *pip, struct zone *zone,
 		enum chunk_type type = zone->chunk_headers[c].type;
 		uint64_t size_idx = zone->chunk_headers[c].size_idx;
 		if (util_ranges_contain(&pip->args.obj.chunk_ranges, c)) {
-			if (pip->args.obj.chunk_types & (1U << type)) {
+			if (pip->args.obj.chunk_types & (1ULL << type)) {
 				stats->n_chunks++;
 				stats->n_chunks_type[type]++;
 
 				stats->size_chunks += size_idx;
 				stats->size_chunks_type[type] += size_idx;
 
-				info_obj_chunk(pip, c, &zone->chunk_headers[c],
-						&zone->chunks[c], stats);
+				info_obj_chunk(pip, c, z,
+					&zone->chunk_headers[c],
+					&zone->chunks[c], stats);
 
 			}
 
@@ -787,7 +735,8 @@ info_obj_zone_chunks(struct pmem_info *pip, struct zone *zone,
 				pip->args.obj.chunk_types &
 				(1 << CHUNK_TYPE_FOOTER)) {
 				size_t f = c + size_idx - 1;
-				info_obj_chunk(pip, f, &zone->chunk_headers[f],
+				info_obj_chunk(pip, f, z,
+					&zone->chunk_headers[f],
 					&zone->chunks[f], stats);
 			}
 		}
@@ -810,17 +759,17 @@ info_obj_root_obj(struct pmem_info *pip)
 		return;
 	}
 
-	void *data = OFF_TO_PTR(pop, pop->root_offset);
-	struct obj_header *objh = OBJH_FROM_PTR(data);
-
 	outv_title(v, "Root object");
-	outv_field(v, "Offset", "0x%016x", PTR_TO_OFF(pop, data));
-	uint64_t root_size = objh->oobh.size & ~OBJ_INTERNAL_OBJECT_MASK;
-	outv_field(v, "Size",
+	outv_field(v, "Offset", "0x%016zx", pop->root_offset);
+	uint64_t root_size = pop->root_size;
+	outv_field(v, "Size", "%s",
 			out_get_size_str(root_size, pip->args.human));
 
+	struct memory_block m = memblock_from_offset(
+			pip->obj.heap, pop->root_offset);
+
 	/* do not print object id and offset for root object */
-	info_obj_object_hdr(pip, v, VERBOSE_SILENT, OBJH_TO_PTR(objh), 0);
+	info_obj_object_hdr(pip, v, VERBOSE_SILENT, &m, 0);
 }
 
 /*
@@ -851,7 +800,7 @@ info_obj_zones_chunks(struct pmem_info *pip)
 				(pip->args.obj.vzonehdr ||
 				pip->args.obj.vchunkhdr);
 
-			outv_title(vvv, "Zone", "%lu", i);
+			outv_title(vvv, "Zone %zu", i);
 
 			if (zone->header.magic == ZONE_HEADER_MAGIC)
 				pip->obj.stats.n_zones_used++;
@@ -861,7 +810,7 @@ info_obj_zones_chunks(struct pmem_info *pip)
 					&zone->header);
 
 			outv_indent(vvv, 1);
-			info_obj_zone_chunks(pip, zone,
+			info_obj_zone_chunks(pip, zone, i,
 					&pip->obj.stats.zone_stats[i]);
 			outv_indent(vvv, -1);
 		}
@@ -893,10 +842,9 @@ info_obj_descriptor(struct pmem_info *pip)
 			pop->layout : "(null)";
 
 	/* address for checksum */
-	void *dscp = (void *)((uintptr_t)(&pop->hdr) +
-			sizeof(struct pool_hdr));
+	void *dscp = (void *)((uintptr_t)(pop) + sizeof(struct pool_hdr));
 
-	outv_field(v, "Layout", layout);
+	outv_field(v, "Layout", "%s", layout);
 	outv_field(v, "Lanes offset", "0x%lx", pop->lanes_offset);
 	outv_field(v, "Number of lanes", "%lu", pop->nlanes);
 	outv_field(v, "Heap offset", "0x%lx", pop->heap_offset);
@@ -961,26 +909,31 @@ info_obj_stats_alloc_classes(struct pmem_info *pip, int v,
 	uint64_t total_used = 0;
 
 	outv_indent(v, 1);
-	for (int class = 0; class < MAX_CLASS_STATS; class++) {
-		uint64_t class_size = heap_class_to_size(class);
+	for (unsigned class = 0; class < MAX_ALLOCATION_CLASSES; class++) {
+		struct alloc_class *c = alloc_class_by_id(
+				pip->obj.alloc_classes, (uint8_t)class);
+		if (c == NULL)
+			continue;
+
 		double used_perc = 100.0 *
 			(double)stats->class_stats[class].n_used /
 			(double)stats->class_stats[class].n_units;
 
 		if (!stats->class_stats[class].n_units)
 			continue;
+
 		outv_nl(v);
 		outv_field(v, "Unit size", "%s", out_get_size_str(
-					class_size, pip->args.human));
+					c->unit_size, pip->args.human));
 		outv_field(v, "Units", "%lu",
 				stats->class_stats[class].n_units);
 		outv_field(v, "Used units", "%lu [%s]",
 				stats->class_stats[class].n_used,
 				out_get_percentage(used_perc));
 
-		uint64_t bytes = class_size *
+		uint64_t bytes = c->unit_size *
 			stats->class_stats[class].n_units;
-		uint64_t used = class_size *
+		uint64_t used = c->unit_size *
 			stats->class_stats[class].n_used;
 
 		total_bytes += bytes;
@@ -1005,6 +958,7 @@ info_obj_stats_alloc_classes(struct pmem_info *pip, int v,
 	outv_field(v, "Total used bytes", "%s [%s]",
 			out_get_size_str(total_used, pip->args.human),
 			out_get_percentage(used_bytes_perc));
+
 }
 
 /*
@@ -1067,7 +1021,7 @@ info_obj_add_zone_stats(struct pmem_obj_zone_stats *total,
 			stats->size_chunks_type[type];
 	}
 
-	for (int class = 0; class < MAX_BUCKETS; class++) {
+	for (int class = 0; class < MAX_ALLOCATION_CLASSES; class++) {
 		total->class_stats[class].n_units +=
 			stats->class_stats[class].n_units;
 		total->class_stats[class].n_used +=
@@ -1091,7 +1045,7 @@ info_obj_stats_zones(struct pmem_info *pip, int v, struct pmem_obj_stats *stats,
 
 	outv_indent(v, 1);
 	for (uint64_t i = 0; i < stats->n_zones_used; i++) {
-		outv_title(v, "Zone", "%lu", i);
+		outv_title(v, "Zone %" PRIu64, i);
 
 		struct pmem_obj_zone_stats *zstats = &stats->zone_stats[i];
 
@@ -1140,7 +1094,7 @@ info_obj_stats(struct pmem_info *pip)
 }
 
 static struct pmem_info *Pip;
-
+#ifndef _WIN32
 static void
 info_obj_sa_sigaction(int signum, siginfo_t *info, void *context)
 {
@@ -1153,6 +1107,22 @@ static struct sigaction info_obj_sigaction = {
 	.sa_sigaction = info_obj_sa_sigaction,
 	.sa_flags = SA_SIGINFO
 };
+#else
+#define CALL_FIRST 1
+
+static LONG CALLBACK
+exception_handler(_In_ PEXCEPTION_POINTERS ExceptionInfo)
+{
+	PEXCEPTION_RECORD record = ExceptionInfo->ExceptionRecord;
+	if (record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) {
+		return EXCEPTION_CONTINUE_SEARCH;
+	}
+	uintptr_t offset = (uintptr_t)record->ExceptionInformation[1] -
+		(uintptr_t)Pip->obj.pop;
+	outv_err("Invalid offset 0x%lx\n", offset);
+	exit(EXIT_FAILURE);
+}
+#endif
 
 /*
  * info_obj -- print information about obj pool type
@@ -1166,8 +1136,22 @@ pmempool_info_obj(struct pmem_info *pip)
 
 	pip->obj.size = pip->pfile->size;
 
+	struct palloc_heap *heap = calloc(1, sizeof(*heap));
+	if (heap == NULL)
+		err(1, "Cannot allocate memory for heap data");
+
+	heap->layout = OFF_TO_PTR(pip->obj.pop, pip->obj.pop->heap_offset);
+	heap->base = pip->obj.pop;
+	pip->obj.alloc_classes = alloc_class_collection_new();
+	pip->obj.heap = heap;
+
 	Pip = pip;
+#ifndef _WIN32
 	if (sigaction(SIGSEGV, &info_obj_sigaction, NULL)) {
+#else
+	if (AddVectoredExceptionHandler(CALL_FIRST, exception_handler) ==
+		NULL) {
+#endif
 		perror("sigaction");
 		return -1;
 	}
@@ -1180,6 +1164,9 @@ pmempool_info_obj(struct pmem_info *pip)
 	info_obj_heap(pip);
 	info_obj_zones_chunks(pip);
 	info_obj_stats(pip);
+
+	free(heap);
+	alloc_class_collection_delete(pip->obj.alloc_classes);
 
 	return 0;
 }

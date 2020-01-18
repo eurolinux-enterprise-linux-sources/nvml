@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,21 +40,23 @@
 #include <sys/param.h>
 #include <errno.h>
 #include <stdint.h>
-#include <pthread.h>
+#include <fcntl.h>
+#include <inttypes.h>
+#include <wchar.h>
 
 #include "libvmem.h"
 
 #include "jemalloc.h"
-#include "util.h"
-#include "out.h"
+#include "pmemcommon.h"
 #include "sys_util.h"
+#include "file.h"
 #include "vmem.h"
 
 /*
  * private to this file...
  */
 static size_t Header_size;
-
+static os_mutex_t Vmem_init_lock;
 /*
  * print_jemalloc_messages -- custom print function, for jemalloc
  *
@@ -87,20 +89,21 @@ void
 vmem_init(void)
 {
 	static bool initialized = false;
-	static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+
+	int (*je_vmem_navsnprintf)
+		(char *, size_t, const char *, va_list) = NULL;
 
 	if (initialized)
 		return;
 
-	util_mutex_lock(&lock);
+	util_mutex_lock(&Vmem_init_lock);
 
 	if (!initialized) {
-		out_init(VMEM_LOG_PREFIX, VMEM_LOG_LEVEL_VAR,
+		common_init(VMEM_LOG_PREFIX, VMEM_LOG_LEVEL_VAR,
 				VMEM_LOG_FILE_VAR, VMEM_MAJOR_VERSION,
 				VMEM_MINOR_VERSION);
 		out_set_vsnprintf_func(je_vmem_navsnprintf);
 		LOG(3, NULL);
-		util_init();
 		Header_size = roundup(sizeof(VMEM), Pagesize);
 
 		/* Set up jemalloc messages to a custom print function */
@@ -109,7 +112,7 @@ vmem_init(void)
 		initialized = true;
 	}
 
-	util_mutex_unlock(&lock);
+	util_mutex_unlock(&Vmem_init_lock);
 }
 
 /*
@@ -121,6 +124,7 @@ ATTR_CONSTRUCTOR
 void
 vmem_construct(void)
 {
+	os_mutex_init(&Vmem_init_lock);
 	vmem_init();
 }
 
@@ -134,30 +138,40 @@ void
 vmem_fini(void)
 {
 	LOG(3, NULL);
-	out_fini();
+	os_mutex_destroy(&Vmem_init_lock);
+	common_fini();
 }
 
 /*
- * vmem_create -- create a memory pool in a temp file
+ * vmem_createU -- create a memory pool in a temp file
  */
+#ifndef _WIN32
+static inline
+#endif
 VMEM *
-vmem_create(const char *dir, size_t size)
+vmem_createU(const char *dir, size_t size)
 {
 	vmem_init();
-	LOG(3, "dir \"%s\" size %zu", dir, size);
 
+	LOG(3, "dir \"%s\" size %zu", dir, size);
 	if (size < VMEM_MIN_POOL) {
 		ERR("size %zu smaller than %zu", size, VMEM_MIN_POOL);
 		errno = EINVAL;
 		return NULL;
 	}
 
-	/* silently enforce multiple of page size */
-	size = roundup(size, Pagesize);
+	int is_dev_dax = util_file_is_device_dax(dir);
 
+	/* silently enforce multiple of mapping alignment */
+	size = roundup(size, Mmap_align);
 	void *addr;
-	if ((addr = util_map_tmpfile(dir, size, 4 << 20)) == NULL)
-		return NULL;
+	if (is_dev_dax) {
+		if ((addr = util_file_map_whole(dir)) == NULL)
+			return NULL;
+	} else {
+		if ((addr = util_map_tmpfile(dir, size, 4 * MEGABYTE)) == NULL)
+			return NULL;
+	}
 
 	/* store opaque info at beginning of mapped area */
 	struct vmem *vmp = addr;
@@ -169,7 +183,8 @@ vmem_create(const char *dir, size_t size)
 
 	/* Prepare pool for jemalloc */
 	if (je_vmem_pool_create((void *)((uintptr_t)addr + Header_size),
-			size - Header_size, 1) == NULL) {
+			size - Header_size,
+			/* zeroed if */ !is_dev_dax) == NULL) {
 		ERR("pool creation failed");
 		util_unmap(vmp->addr, vmp->size);
 		return NULL;
@@ -181,11 +196,40 @@ vmem_create(const char *dir, size_t size)
 	 * The prototype PMFS doesn't allow this when large pages are in
 	 * use. It is not considered an error if this fails.
 	 */
-	util_range_none(addr, sizeof(struct pool_hdr));
+	if (!is_dev_dax)
+		util_range_none(addr, sizeof(struct pool_hdr));
 
 	LOG(3, "vmp %p", vmp);
 	return vmp;
+
 }
+
+#ifndef _WIN32
+/*
+ * vmem_create -- create a memory pool in a temp file
+ */
+VMEM *
+vmem_create(const char *dir, size_t size)
+{
+	return vmem_createU(dir, size);
+}
+#else
+/*
+ * vmem_createW -- create a memory pool in a temp file
+ */
+VMEM *
+vmem_createW(const wchar_t *dir, size_t size)
+{
+	char *udir = util_toUTF8(dir);
+	if (udir == NULL)
+		return NULL;
+
+	VMEM *ret = vmem_createU(udir, size);
+
+	util_free_UTF8(udir);
+	return ret;
+}
+#endif
 
 /*
  * vmem_create_in_region -- create a memory pool in a given range
@@ -223,6 +267,7 @@ vmem_create_in_region(void *addr, size_t size)
 		return NULL;
 	}
 
+#ifndef _WIN32
 	/*
 	 * If possible, turn off all permissions on the pool header page.
 	 *
@@ -230,6 +275,7 @@ vmem_create_in_region(void *addr, size_t size)
 	 * use. It is not considered an error if this fails.
 	 */
 	util_range_none(addr, sizeof(struct pool_hdr));
+#endif
 
 	LOG(3, "vmp %p", vmp);
 	return vmp;
@@ -245,12 +291,13 @@ vmem_delete(VMEM *vmp)
 
 	int ret = je_vmem_pool_delete((pool_t *)((uintptr_t)vmp + Header_size));
 	if (ret != 0) {
-		ERR("invalid pool handle: %p", vmp);
+		ERR("invalid pool handle: 0x%" PRIxPTR, (uintptr_t)vmp);
 		errno = EINVAL;
 		return;
 	}
-
+#ifndef _WIN32
 	util_range_rw(vmp->addr, sizeof(struct pool_hdr));
+#endif
 
 	if (vmp->caller_mapped == 0)
 		util_unmap(vmp->addr, vmp->size);
@@ -359,6 +406,23 @@ vmem_strdup(VMEM *vmp, const char *s)
 }
 
 /*
+ * vmem_wcsdup -- allocate memory for copy of wide character string
+ */
+wchar_t *
+vmem_wcsdup(VMEM *vmp, const wchar_t *s)
+{
+	LOG(3, "vmp %p s %p", vmp, s);
+
+	size_t size = (wcslen(s) + 1) * sizeof(wchar_t);
+	void *retaddr = je_vmem_pool_malloc(
+			(pool_t *)((uintptr_t)vmp + Header_size), size);
+	if (retaddr == NULL)
+		return NULL;
+
+	return (wchar_t *)memcpy(retaddr, s, size);
+}
+
+/*
  * vmem_malloc_usable_size -- get usable size of allocation
  */
 size_t
@@ -369,3 +433,11 @@ vmem_malloc_usable_size(VMEM *vmp, void *ptr)
 	return je_vmem_pool_malloc_usable_size(
 			(pool_t *)((uintptr_t)vmp + Header_size), ptr);
 }
+
+#ifdef _MSC_VER
+/*
+ * libvmem constructor/destructor functions
+ */
+MSVC_CONSTR(vmem_construct)
+MSVC_DESTR(vmem_fini)
+#endif

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,100 +31,209 @@
  */
 
 /*
- * util_windows.c -- general utilities with OS-specific implementation
+ * util_windows.c -- misc utilities with OS-specific implementation
  */
 
-#include <stdio.h>
 #include <string.h>
-#include <sys/mman.h>
+#include <tchar.h>
 #include <errno.h>
-
-#include <Shlwapi.h>
-
 #include "util.h"
 #include "out.h"
+#include "file.h"
+
+/* Windows CRT doesn't support all errors, add unmapped here */
+#define ENOTSUP_STR "Operation not supported"
+#define ECANCELED_STR "Operation canceled"
+#define ENOERROR 0
+#define ENOERROR_STR "Success"
+#define UNMAPPED_STR "Unmapped error"
 
 /*
- * util_map_hint -- determine hint address for mmap()
+ * util_strerror -- return string describing error number
  *
- * XXX - no Windows implementation yet
+ * XXX: There are many other POSIX error codes that are not recognized by
+ * strerror_s(), so eventually we may want to implement this in a similar
+ * fashion as strsignal().
+ */
+void
+util_strerror(int errnum, char *buff, size_t bufflen)
+{
+	switch (errnum) {
+	case ENOERROR:
+		strcpy_s(buff, bufflen, ENOERROR_STR);
+		break;
+	case ENOTSUP:
+		strcpy_s(buff, bufflen, ENOTSUP_STR);
+		break;
+	case ECANCELED:
+		strcpy_s(buff, bufflen, ECANCELED_STR);
+		break;
+	default:
+		if (strerror_s(buff, bufflen, errnum))
+			strcpy_s(buff, bufflen, UNMAPPED_STR);
+	}
+}
+
+/*
+ * util_part_realpath -- get canonicalized absolute pathname for a part file
+ *
+ * On Windows, paths cannot be symlinks and paths used in a poolset have to
+ * be absolute (checked when parsing a poolset file), so we just return
+ * the path.
  */
 char *
-util_map_hint(size_t len, size_t req_align)
+util_part_realpath(const char *path)
 {
-	LOG(4, "hint not supported on windows");
+	return strdup(path);
+}
+
+/*
+ * util_compare_file_inodes -- compare device and inodes of two files
+ */
+int
+util_compare_file_inodes(const char *path1, const char *path2)
+{
+	return strcmp(path1, path2) != 0;
+}
+
+/*
+ * util_aligned_malloc -- allocate aligned memory
+ */
+void *
+util_aligned_malloc(size_t alignment, size_t size)
+{
+	return _aligned_malloc(size, alignment);
+}
+
+/*
+ * util_aligned_free -- free allocated memory in util_aligned_malloc
+ */
+void
+util_aligned_free(void *ptr)
+{
+	_aligned_free(ptr);
+}
+
+/*
+ * util_toUTF8 -- allocating conversion from wide char string to UTF8
+ */
+char *
+util_toUTF8(const wchar_t *wstr)
+{
+	int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wstr, -1,
+		NULL, 0, NULL, NULL);
+	if (size == 0)
+		goto err;
+
+	char *str = Malloc(size * sizeof(char));
+	if (str == NULL)
+		goto out;
+
+	if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wstr, -1, str,
+		size, NULL, NULL) == 0) {
+		Free(str);
+		goto err;
+	}
+
+out:
+	return str;
+
+err:
+	errno = EINVAL;
 	return NULL;
 }
 
 /*
- * util_tmpfile --  (internal) create the temporary file
+ * util_free_UTF8 -- free UTF8 string
  */
-int
-util_tmpfile(const char *dir, const char *templ)
+void util_free_UTF8(char *str) {
+	Free(str);
+}
+
+/*
+ * util_toUTF16 -- allocating conversion from UTF8 to wide char string
+ */
+wchar_t *
+util_toUTF16(const char *str)
 {
-	LOG(3, "dir \"%s\" template \"%s\"", dir, templ);
+	int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, str, -1,
+		NULL, 0);
+	if (size == 0)
+		goto err;
 
-	int oerrno;
-	int fd = -1;
+	wchar_t *wstr = Malloc(size * sizeof(wchar_t));
+	if (wstr == NULL)
+		goto out;
 
-	char *fullname = alloca(strlen(dir) + sizeof(templ));
-
-	(void) strcpy(fullname, dir);
-	(void) strcat(fullname, templ);
-
-	/*
-	 * XXX - block signals and modify file creation mask for the time
-	 * of mkstmep() execution.  Restore previous settings once the file
-	 * is created.
-	 */
-
-	fd = mkstemp(fullname);
-
-	if (fd < 0) {
-		ERR("!mkstemp");
+	if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, str, -1, wstr,
+		size) == 0) {
+		Free(wstr);
 		goto err;
 	}
 
-	(void) unlink(fullname);
-	LOG(3, "unlinked file is \"%s\"", fullname);
-
-	return fd;
+out:
+	return wstr;
 
 err:
-	oerrno = errno;
-	if (fd != -1)
-		(void) close(fd);
-	errno = oerrno;
+	errno = EINVAL;
+	return NULL;
+}
+
+/*
+ * util_free_UTF16 -- free wide char string
+ */
+void
+util_free_UTF16(wchar_t *wstr)
+{
+	Free(wstr);
+}
+
+/*
+ * util_toUTF16_buff -- non-allocating conversion from UTF8 to wide char string
+ *
+ * The user responsible for supplying a large enough out buffer.
+ */
+int
+util_toUTF16_buff(const char *in, wchar_t *out, size_t out_size)
+{
+	ASSERT(out != NULL);
+
+	int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, in,
+		-1, NULL, 0);
+	if (size == 0 || out_size < size)
+		goto err;
+
+	if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, in, -1,
+		out, size) == 0)
+		goto err;
+
+	return 0;
+err:
+	errno = EINVAL;
 	return -1;
 }
 
 /*
- * util_get_arch_flags -- get architecture identification flags
+ * util_toUTF8_buff -- non-allocating conversion from wide char string to UTF8
+ *
+ * The user responsible for supplying a large enough out buffer.
  */
 int
-util_get_arch_flags(struct arch_flags *arch_flags)
+util_toUTF8_buff(const wchar_t *in, char *out, size_t out_size)
 {
-	SYSTEM_INFO si;
-	GetSystemInfo(&si);
+	ASSERT(out != NULL);
 
-	arch_flags->e_machine = si.wProcessorArchitecture;
-	arch_flags->ei_class = 0; /* XXX - si.dwProcessorType */
-	arch_flags->ei_data = 0;
-	arch_flags->alignment_desc = alignment_desc();
+	int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, in, -1,
+		NULL, 0, NULL, NULL);
+	if (size == 0 || out_size < size)
+		goto err;
+
+	if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, in, -1,
+		out, size, NULL, NULL) == 0)
+		goto err;
 
 	return 0;
-}
-
-/*
- * util_is_absolute_path -- check if the path is an absolute one
- */
-int
-util_is_absolute_path(const char *path)
-{
-	LOG(3, "path: %s", path);
-
-	if (PathIsRelativeA(path))
-		return 0;
-	else
-		return 1;
+err:
+	errno = EINVAL;
+	return -1;
 }

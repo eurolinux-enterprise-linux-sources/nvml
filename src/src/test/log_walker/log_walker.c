@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -93,7 +93,7 @@ do_walk(PMEMlogpool *plp)
 	UT_OUT("walk all at once");
 }
 
-sigjmp_buf Jmp;
+static ut_jmp_buf_t Jmp;
 
 /*
  * signal_handler -- called on SIGSEGV
@@ -101,9 +101,9 @@ sigjmp_buf Jmp;
 static void
 signal_handler(int sig)
 {
-	UT_OUT("signal: %s", strsignal(sig));
+	UT_OUT("signal: %s", os_strsignal(sig));
 
-	siglongjmp(Jmp, 1);
+	ut_siglongjmp(Jmp);
 }
 
 int
@@ -121,9 +121,7 @@ main(int argc, char *argv[])
 	int fd = OPEN(path, O_RDWR);
 
 	/* pre-allocate 2MB of persistent memory */
-	errno = posix_fallocate(fd, (off_t)0, (size_t)(2 * 1024 * 1024));
-	if (errno != 0)
-		UT_FATAL("!posix_fallocate");
+	POSIX_FALLOCATE(fd, (off_t)0, (size_t)(2 * 1024 * 1024));
 
 	CLOSE(fd);
 
@@ -140,7 +138,7 @@ main(int argc, char *argv[])
 	v.sa_handler = signal_handler;
 	SIGACTION(SIGSEGV, &v, NULL);
 
-	if (!sigsetjmp(Jmp, 1)) {
+	if (!ut_sigsetjmp(Jmp)) {
 		do_walk(plp);
 	}
 

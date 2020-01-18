@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -42,11 +42,14 @@
 #include <assert.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
+#include "set.h"
+#include "pool_hdr.h"
 #include "btt.h"
 #include "btt_layout.h"
-#include "out.h"
-#include "util.h"
+#include "pmemcommon.h"
+#include "os.h"
 
 #define BTT_CREATE_DEF_SIZE	(20 * 1UL << 20) /* 20 MB */
 #define BTT_CREATE_DEF_BLK_SIZE	512UL
@@ -155,7 +158,7 @@ nszero(void *ns, unsigned lane, size_t len, uint64_t off)
 static void
 print_usage(char *name)
 {
-	printf("Usage: %s [-s <pool_size>] [-b <block_size>] "
+	printf("Usage: %s [-s <pool_file_size>] [-b <block_size>] "
 		"[-l <max_lanes>] [-u <uuid>] [-t] [-v] "
 		"<pool_name>\n", name);
 }
@@ -167,8 +170,8 @@ static int
 file_error(const int fd, const char *fpath)
 {
 	if (fd != -1)
-		(void) close(fd);
-	unlink(fpath);
+		(void) os_close(fd);
+	os_unlink(fpath);
 	return -1;
 }
 
@@ -192,7 +195,7 @@ print_result(struct bbtcreate_options *opts)
 {
 	if (opts->verbose) {
 		printf("BTT successfully created: %s\n", opts->fpath);
-		printf("poolsize\t%luB\n", opts->poolsize);
+		printf("poolsize\t%zuB\n", opts->poolsize);
 		printf("blocksize\t%uB\n", opts->blocksize);
 		printf("maxlanes\t%u\n", opts->maxlanes);
 		print_uuid(opts->uuid);
@@ -203,7 +206,20 @@ print_result(struct bbtcreate_options *opts)
 int
 main(int argc, char *argv[])
 {
-	out_init(0, 0, 0, 0, 0);
+#ifdef _WIN32
+	wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), &argc);
+	for (int i = 0; i < argc; i++) {
+		argv[i] = util_toUTF8(wargv[i]);
+		if (argv[i] == NULL) {
+			for (i--; i >= 0; i--)
+				free(argv[i]);
+			fprintf(stderr, "Error during arguments conversion\n");
+			return 1;
+		}
+	}
+#endif
+
+	common_init("", "", "", 0, 0);
 
 	int opt;
 	size_t size;
@@ -227,7 +243,8 @@ main(int argc, char *argv[])
 			} else {
 				fprintf(stderr, "Wrong size format in pool"
 					" size option\n");
-				return -1;
+				res = 1;
+				goto out;
 			}
 			break;
 		case 'b':
@@ -236,7 +253,8 @@ main(int argc, char *argv[])
 			} else {
 				fprintf(stderr, "Wrong size format in block"
 					" size option\n");
-				return -1;
+				res = 1;
+				goto out;
 			}
 			break;
 		case 'l':
@@ -248,7 +266,8 @@ main(int argc, char *argv[])
 				opts.user_uuid = true;
 			} else {
 				fprintf(stderr, "Wrong uuid format.");
-				return -1;
+				res = 1;
+				goto out;
 			}
 			break;
 		case 't':
@@ -259,45 +278,50 @@ main(int argc, char *argv[])
 			break;
 		default:
 			print_usage(argv[0]);
-			return -1;
+			res = 1;
+			goto out;
 		}
 	}
 	if (optind < argc) {
 		opts.fpath = argv[optind];
 	} else {
 		print_usage(argv[0]);
-		return -1;
+		res = 1;
+		goto out;
 	}
 
 	/* check sizes */
-	if (opts.poolsize < BTT_MIN_SIZE) {
+	if (opts.poolsize - BTT_CREATE_DEF_OFFSET_SIZE < BTT_MIN_SIZE) {
 		fprintf(stderr, "Pool size is less then %d MB\n",
 				BTT_MIN_SIZE >> 20);
-		return -1;
+		res = 1;
+		goto out;
 	}
 	if (opts.blocksize < BTT_MIN_LBA_SIZE) {
-		fprintf(stderr, "Block size is less then %ld B\n",
+		fprintf(stderr, "Block size is less then %zu B\n",
 				BTT_MIN_LBA_SIZE);
-		return -1;
+		res = 1;
+		goto out;
 	}
 
 	/* open file */
-	if ((fd = open(opts.fpath, O_RDWR|O_CREAT,
+	if ((fd = os_open(opts.fpath, O_RDWR|O_CREAT,
 			S_IRUSR|S_IWUSR)) < 0) {
 		perror(opts.fpath);
-		return -1;
+		res = 1;
+		goto out;
 	}
 
 	/* allocate file */
 	if (!opts.trunc) {
-		if (posix_fallocate(fd, 0,
+		if (os_posix_fallocate(fd, 0,
 				(off_t)opts.poolsize) != 0) {
 			perror("posix_fallocate");
 			res = file_error(fd, opts.fpath);
 			goto error;
 		}
 	} else {
-		if (ftruncate(fd, (off_t)opts.poolsize) != 0) {
+		if (os_ftruncate(fd, (off_t)opts.poolsize) != 0) {
 			perror("ftruncate");
 			res = file_error(fd, opts.fpath);
 			goto error;
@@ -305,7 +329,7 @@ main(int argc, char *argv[])
 	}
 
 	/* map created file */
-	void *base = util_map(fd, opts.poolsize, 0, 0);
+	void *base = util_map(fd, opts.poolsize, MAP_SHARED, 0, 0);
 	if (!base) {
 		perror("util_map");
 		res = file_error(fd, opts.fpath);
@@ -366,9 +390,13 @@ main(int argc, char *argv[])
 error_btt:
 	btt_fini(bttp);
 error_map:
-	out_fini();
+	common_fini();
 error:
-	close(fd);
-
+	os_close(fd);
+out:
+#ifdef _WIN32
+	for (int i = argc; i > 0; i--)
+		free(argv[i - 1]);
+#endif
 	return res;
 }

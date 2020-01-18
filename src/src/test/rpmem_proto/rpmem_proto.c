@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -42,32 +42,6 @@
 #include "librpmem.h"
 #include "rpmem_proto.h"
 
-#define STR(x)	#x
-
-#define ASSERT_ALIGNED_BEGIN(type) do {\
-size_t off = 0;\
-const char *last = "(none)";\
-type t;\
-
-#define ASSERT_ALIGNED_FIELD(type, field) do {\
-if (0)\
-	UT_OUT("%s.%s\t\t: offset %lu real offset %lu",\
-		STR(type), STR(field), off, offsetof(type, field));\
-if (offsetof(type, field) != off)\
-	UT_FATAL("%s: padding, missing field or fields not in order between "\
-		"'%s' and '%s' -- offset %lu, real offset %lu",\
-		STR(type), last, STR(field), off, offsetof(type, field));\
-off += sizeof(t.field);\
-last = STR(field);\
-} while (0)
-
-#define ASSERT_ALIGNED_CHECK(type)\
-if (off != sizeof(type))\
-	UT_FATAL("%s: missing field or padding after '%s': "\
-		"sizeof(%s) = %lu, fields size = %lu",\
-		STR(type), last, STR(type), sizeof(type), off);\
-} while (0)
-
 int
 main(int argc, char *argv[])
 {
@@ -96,6 +70,19 @@ main(int argc, char *argv[])
 	ASSERT_ALIGNED_FIELD(struct rpmem_pool_attr, prev_uuid);
 	ASSERT_ALIGNED_FIELD(struct rpmem_pool_attr, user_flags);
 	ASSERT_ALIGNED_CHECK(struct rpmem_pool_attr);
+
+	ASSERT_ALIGNED_BEGIN(struct rpmem_pool_attr_packed);
+	ASSERT_ALIGNED_FIELD(struct rpmem_pool_attr_packed, signature);
+	ASSERT_ALIGNED_FIELD(struct rpmem_pool_attr_packed, major);
+	ASSERT_ALIGNED_FIELD(struct rpmem_pool_attr_packed, compat_features);
+	ASSERT_ALIGNED_FIELD(struct rpmem_pool_attr_packed, incompat_features);
+	ASSERT_ALIGNED_FIELD(struct rpmem_pool_attr_packed, ro_compat_features);
+	ASSERT_ALIGNED_FIELD(struct rpmem_pool_attr_packed, poolset_uuid);
+	ASSERT_ALIGNED_FIELD(struct rpmem_pool_attr_packed, uuid);
+	ASSERT_ALIGNED_FIELD(struct rpmem_pool_attr_packed, next_uuid);
+	ASSERT_ALIGNED_FIELD(struct rpmem_pool_attr_packed, prev_uuid);
+	ASSERT_ALIGNED_FIELD(struct rpmem_pool_attr_packed, user_flags);
+	ASSERT_ALIGNED_CHECK(struct rpmem_pool_attr_packed);
 
 	ASSERT_ALIGNED_BEGIN(struct rpmem_msg_ibc_attr);
 	ASSERT_ALIGNED_FIELD(struct rpmem_msg_ibc_attr, port);
@@ -141,17 +128,6 @@ main(int argc, char *argv[])
 	ASSERT_ALIGNED_FIELD(struct rpmem_msg_open_resp, pool_attr);
 	ASSERT_ALIGNED_CHECK(struct rpmem_msg_open_resp);
 
-	ASSERT_ALIGNED_BEGIN(struct rpmem_msg_remove);
-	ASSERT_ALIGNED_FIELD(struct rpmem_msg_remove, hdr);
-	ASSERT_ALIGNED_FIELD(struct rpmem_msg_remove, major);
-	ASSERT_ALIGNED_FIELD(struct rpmem_msg_remove, minor);
-	ASSERT_ALIGNED_FIELD(struct rpmem_msg_remove, pool_desc);
-	ASSERT_ALIGNED_CHECK(struct rpmem_msg_remove);
-
-	ASSERT_ALIGNED_BEGIN(struct rpmem_msg_remove_resp);
-	ASSERT_ALIGNED_FIELD(struct rpmem_msg_remove_resp, hdr);
-	ASSERT_ALIGNED_CHECK(struct rpmem_msg_remove_resp);
-
 	ASSERT_ALIGNED_BEGIN(struct rpmem_msg_close);
 	ASSERT_ALIGNED_FIELD(struct rpmem_msg_close, hdr);
 	ASSERT_ALIGNED_CHECK(struct rpmem_msg_close);
@@ -169,6 +145,15 @@ main(int argc, char *argv[])
 	ASSERT_ALIGNED_BEGIN(struct rpmem_msg_persist_resp);
 	ASSERT_ALIGNED_FIELD(struct rpmem_msg_persist_resp, lane);
 	ASSERT_ALIGNED_CHECK(struct rpmem_msg_persist_resp);
+
+	ASSERT_ALIGNED_BEGIN(struct rpmem_msg_set_attr);
+	ASSERT_ALIGNED_FIELD(struct rpmem_msg_set_attr, hdr);
+	ASSERT_ALIGNED_FIELD(struct rpmem_msg_set_attr, pool_attr);
+	ASSERT_ALIGNED_CHECK(struct rpmem_msg_set_attr);
+
+	ASSERT_ALIGNED_BEGIN(struct rpmem_msg_set_attr_resp);
+	ASSERT_ALIGNED_FIELD(struct rpmem_msg_set_attr_resp, hdr);
+	ASSERT_ALIGNED_CHECK(struct rpmem_msg_set_attr_resp);
 
 	DONE(NULL);
 }

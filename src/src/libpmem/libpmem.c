@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,8 +40,7 @@
 #include "libpmem.h"
 
 #include "pmem.h"
-#include "util.h"
-#include "out.h"
+#include "pmemcommon.h"
 
 /*
  * libpmem_init -- load-time initialization for libpmem
@@ -52,10 +51,9 @@ ATTR_CONSTRUCTOR
 void
 libpmem_init(void)
 {
-	out_init(PMEM_LOG_PREFIX, PMEM_LOG_LEVEL_VAR, PMEM_LOG_FILE_VAR,
+	common_init(PMEM_LOG_PREFIX, PMEM_LOG_LEVEL_VAR, PMEM_LOG_FILE_VAR,
 			PMEM_MAJOR_VERSION, PMEM_MINOR_VERSION);
 	LOG(3, NULL);
-	util_init();
 	pmem_init();
 }
 
@@ -70,14 +68,17 @@ libpmem_fini(void)
 {
 	LOG(3, NULL);
 
-	out_fini();
+	common_fini();
 }
 
 /*
- * pmem_check_version -- see if library meets application version requirements
+ * pmem_check_versionU -- see if library meets application version requirements
  */
+#ifndef _WIN32
+static inline
+#endif
 const char *
-pmem_check_version(unsigned major_required, unsigned minor_required)
+pmem_check_versionU(unsigned major_required, unsigned minor_required)
 {
 	LOG(3, "major_required %u minor_required %u",
 			major_required, minor_required);
@@ -97,11 +98,57 @@ pmem_check_version(unsigned major_required, unsigned minor_required)
 	return NULL;
 }
 
+#ifndef _WIN32
+/*
+ * pmem_check_version -- see if library meets application version requirements
+ */
+const char *
+pmem_check_version(unsigned major_required, unsigned minor_required)
+{
+	return pmem_check_versionU(major_required, minor_required);
+}
+#else
+/*
+ * pmem_check_versionW -- see if library meets application version requirements
+ */
+const wchar_t *
+pmem_check_versionW(unsigned major_required, unsigned minor_required)
+{
+	if (pmem_check_versionU(major_required, minor_required) != NULL)
+		return out_get_errormsgW();
+	else
+		return NULL;
+}
+#endif
+
+/*
+ * pmem_errormsgU -- return last error message
+ */
+#ifndef _WIN32
+static inline
+#endif
+const char *
+pmem_errormsgU(void)
+{
+	return out_get_errormsg();
+}
+
+#ifndef _WIN32
 /*
  * pmem_errormsg -- return last error message
  */
 const char *
 pmem_errormsg(void)
 {
-	return out_get_errormsg();
+	return pmem_errormsgU();
 }
+#else
+/*
+ * pmem_errormsgW -- return last error message as wchar_t
+ */
+const wchar_t *
+pmem_errormsgW(void)
+{
+	return out_get_errormsgW();
+}
+#endif

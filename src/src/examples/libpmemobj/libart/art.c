@@ -1,6 +1,7 @@
 /*
  * Copyright 2016, FUJITSU TECHNOLOGY SOLUTIONS GMBH
  * Copyright 2012, Armon Dadgar. All rights reserved.
+ * Copyright 2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -138,7 +139,9 @@ static int leaf_matches(TOID(art_leaf) n, const unsigned char *key,
 TOID(art_leaf) art_minimum(TOID(struct art_tree_root) t);
 TOID(art_leaf) art_maximum(TOID(struct art_tree_root) t);
 
+#if 0
 static void destroy_node(TOID(art_node_u) n_u);
+#endif
 int art_iter(PMEMobjpool *pop, art_callback cb, void *data);
 
 static void PMEMOIDcopy(PMEMoid *dest, const PMEMoid *src, const int n);
@@ -241,6 +244,7 @@ art_tree_init(PMEMobjpool *pop, int *newpool)
 	return errors;
 }
 
+#if 0
 // Recursively destroys the tree
 static void
 destroy_node(TOID(art_node_u) n_u)
@@ -305,12 +309,13 @@ destroy_node(TOID(art_node_u) n_u)
  * Destroys an ART tree
  * @return 0 on success.
  */
-int
+static int
 art_tree_destroy(TOID(struct art_tree_root) t)
 {
 	destroy_node(D_RO(t)->root);
 	return 0;
 }
+#endif
 
 static TOID(art_node_u)*
 find_child(TOID(art_node_u) n, unsigned char c)
@@ -743,7 +748,7 @@ add_child4(PMEMobjpool *pop, TOID(art_node4) n, TOID(art_node_u) *ref,
 		assert((idx + 1) < 4);
 		PMEMOIDmove(&(D_RW(n)->children[idx + 1].oid),
 		    &(D_RW(n)->children[idx].oid),
-		n_an->num_children - idx);
+		    n_an->num_children - idx);
 
 		// Insert element
 		D_RW(n)->keys[idx] = c;
@@ -1087,8 +1092,7 @@ static void
 remove_child16(PMEMobjpool *pop,
 	TOID(art_node16) n, TOID(art_node_u) *ref, TOID(art_node_u) *l)
 {
-	/* XXX: check distance calculation */
-	int pos = (l - &(D_RO(n)->children[0])) / sizeof(TOID(art_node_u));
+	int pos = l - &(D_RO(n)->children[0]);
 	uint8_t num_children = ((D_RW(n)->n).num_children);
 
 	TX_ADD(n);
@@ -1119,8 +1123,7 @@ static void
 remove_child4(PMEMobjpool *pop,
 	TOID(art_node4) n, TOID(art_node_u) *ref, TOID(art_node_u) *l)
 {
-	/* XXX: check distance calculation */
-	int pos = (l - &(D_RO(n)->children[0])) / sizeof(TOID(art_node_u));
+	int pos = l - &(D_RO(n)->children[0]);
 	uint8_t *num_children = &((D_RW(n)->n).num_children);
 
 	TX_ADD(n);

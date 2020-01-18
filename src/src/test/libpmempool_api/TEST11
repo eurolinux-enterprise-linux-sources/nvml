@@ -1,6 +1,6 @@
 #!/bin/bash -e
 #
-# Copyright 2016, Intel Corporation
+# Copyright 2016-2017, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -31,14 +31,20 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 #
-# libpmempool_api/TEST11 -- test for checking api
+# libpmempool_api/TEST11 -- test for checking API
 #
 export UNITTEST_NAME=libpmempool_api/TEST11
 export UNITTEST_NUM=11
 
 . ../unittest/unittest.sh
 
+require_test_type medium
+
 require_fs_type any
+
+# this test creates huge file
+configure_valgrind memcheck force-disable
+configure_valgrind pmemcheck force-disable
 
 setup
 
@@ -55,9 +61,9 @@ $PMEMSPOIL $POOL "bttdevice.arena(0).btt_info.checksum=777"\
 	"bttdevice.arena(0).btt_info_backup.checksum=777" >> $LOG_TEMP
 check_file $POOL
 
-expect_normal_exit ./libpmempool_test$EXESUFFIX $POOL -r 1 -t btt >> $LOG
+expect_normal_exit ./libpmempool_test$EXESUFFIX -r 1 -t btt $POOL >> $LOG
 cat $LOG >> $LOG_TEMP
-expect_normal_exit ./libpmempool_test$EXESUFFIX $POOL -r 1 -t btt -a 1 >> $LOG
+expect_normal_exit ./libpmempool_test$EXESUFFIX -r 1 -t btt -a 1 $POOL >> $LOG
 cat $LOG >> $LOG_TEMP
 
 mv $LOG_TEMP $LOG

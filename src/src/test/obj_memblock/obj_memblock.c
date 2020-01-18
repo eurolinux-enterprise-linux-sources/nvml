@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,19 +33,13 @@
 /*
  * obj_memblock.c -- unit test for memblock interface
  */
-#include "unittest.h"
-#include "util.h"
-#include "lane.h"
-#include "redo.h"
-#include "memops.h"
-#include "pmalloc.h"
-#include "list.h"
-#include "obj.h"
-#include "heap_layout.h"
 #include "memblock.h"
+#include "memops.h"
+#include "obj.h"
+#include "unittest.h"
 #include "heap.h"
 
-#define NCHUNKS 3
+#define NCHUNKS 10
 
 static PMEMobjpool *pop;
 
@@ -80,109 +74,116 @@ FUNC_MOCK(operation_add_entry, void, struct operation_context *ctx, void *ptr,
 FUNC_MOCK_END
 
 static void
-test_detect()
+test_detect(void)
 {
 	struct memory_block mhuge_used = { .chunk_id = 0, 0, 0, 0 };
 	struct memory_block mhuge_free = { .chunk_id = 1, 0, 0, 0 };
 	struct memory_block mrun = { .chunk_id = 2, 0, 0, 0 };
 
-	pop->hlayout->zone0.chunk_headers[0].size_idx = 1;
-	pop->hlayout->zone0.chunk_headers[0].type = CHUNK_TYPE_USED;
+	struct heap_layout *layout = pop->heap.layout;
+	layout->zone0.chunk_headers[0].size_idx = 1;
+	layout->zone0.chunk_headers[0].type = CHUNK_TYPE_USED;
 
-	pop->hlayout->zone0.chunk_headers[1].size_idx = 1;
-	pop->hlayout->zone0.chunk_headers[1].type = CHUNK_TYPE_FREE;
+	layout->zone0.chunk_headers[1].size_idx = 1;
+	layout->zone0.chunk_headers[1].type = CHUNK_TYPE_FREE;
 
-	pop->hlayout->zone0.chunk_headers[2].size_idx = 1;
-	pop->hlayout->zone0.chunk_headers[2].type = CHUNK_TYPE_RUN;
+	layout->zone0.chunk_headers[2].size_idx = 1;
+	layout->zone0.chunk_headers[2].type = CHUNK_TYPE_RUN;
 
-	UT_ASSERTeq(memblock_autodetect_type(&mhuge_used, pop->hlayout),
-		MEMORY_BLOCK_HUGE);
-	UT_ASSERTeq(memblock_autodetect_type(&mhuge_free, pop->hlayout),
-		MEMORY_BLOCK_HUGE);
-	UT_ASSERTeq(memblock_autodetect_type(&mrun, pop->hlayout),
-		MEMORY_BLOCK_RUN);
+	memblock_rebuild_state(&pop->heap, &mhuge_used);
+	memblock_rebuild_state(&pop->heap, &mhuge_free);
+	memblock_rebuild_state(&pop->heap, &mrun);
+
+	UT_ASSERTeq(mhuge_used.type, MEMORY_BLOCK_HUGE);
+	UT_ASSERTeq(mhuge_free.type, MEMORY_BLOCK_HUGE);
+	UT_ASSERTeq(mrun.type, MEMORY_BLOCK_RUN);
 }
 
 static void
-test_block_size()
+test_block_size(void)
 {
 	struct memory_block mhuge = { .chunk_id = 0, 0, 0, 0 };
 	struct memory_block mrun = { .chunk_id = 1, 0, 0, 0 };
-	pop->hlayout->zone0.chunk_headers[0].size_idx = 1;
-	pop->hlayout->zone0.chunk_headers[0].type = CHUNK_TYPE_USED;
 
-	pop->hlayout->zone0.chunk_headers[1].size_idx = 1;
-	pop->hlayout->zone0.chunk_headers[1].type = CHUNK_TYPE_RUN;
+	struct palloc_heap *heap = &pop->heap;
+	struct heap_layout *layout = heap->layout;
+
+	layout->zone0.chunk_headers[0].size_idx = 1;
+	layout->zone0.chunk_headers[0].type = CHUNK_TYPE_USED;
+
+	layout->zone0.chunk_headers[1].size_idx = 1;
+	layout->zone0.chunk_headers[1].type = CHUNK_TYPE_RUN;
 	struct chunk_run *run = (struct chunk_run *)
-		&pop->hlayout->zone0.chunks[1];
+		&layout->zone0.chunks[1];
 	run->block_size = 1234;
 
-	UT_ASSERTeq(MEMBLOCK_OPS(, &mhuge)->block_size(&mhuge, pop->hlayout),
-		CHUNKSIZE);
-	UT_ASSERTeq(MEMBLOCK_OPS(, &mrun)->block_size(&mrun, pop->hlayout),
-		1234);
+	memblock_rebuild_state(&pop->heap, &mhuge);
+	memblock_rebuild_state(&pop->heap, &mrun);
+
+	UT_ASSERTne(mhuge.m_ops, NULL);
+	UT_ASSERTne(mrun.m_ops, NULL);
+	UT_ASSERTeq(mhuge.m_ops->block_size(&mhuge), CHUNKSIZE);
+	UT_ASSERTeq(mrun.m_ops->block_size(&mrun), 1234);
 }
 
 static void
-test_block_offset()
+test_prep_hdr(void)
 {
-	struct memory_block mhuge = { .chunk_id = 0, 0, 0, 0 };
-	struct memory_block mrun = { .chunk_id = 1, 0, 0, 0 };
-	pop->hlayout->zone0.chunk_headers[0].size_idx = 1;
-	pop->hlayout->zone0.chunk_headers[0].type = CHUNK_TYPE_USED;
-
-	pop->hlayout->zone0.chunk_headers[1].size_idx = 1;
-	pop->hlayout->zone0.chunk_headers[1].type = CHUNK_TYPE_RUN;
-	struct chunk_run *run = (struct chunk_run *)
-		&pop->hlayout->zone0.chunks[1];
-	run->block_size = 100;
-
-	UT_ASSERTeq(MEMBLOCK_OPS(, &mhuge)->block_offset(&mhuge, pop, NULL), 0);
-
-	void *ptr = (char *)run->data + 300;
-
-	UT_ASSERTeq(MEMBLOCK_OPS(, &mrun)->block_offset(&mrun, pop, ptr), 3);
-}
-
-static void
-test_prep_hdr()
-{
-	struct memory_block mhuge_used = { .chunk_id = 0, 0, 0, 0 };
-	struct memory_block mhuge_free = { .chunk_id = 1, 0, 0, 0 };
+	struct memory_block mhuge_used = { .chunk_id = 0, 0, .size_idx = 1, 0 };
+	struct memory_block mhuge_free = { .chunk_id = 1, 0, .size_idx = 1, 0 };
 	struct memory_block mrun_used = { .chunk_id = 2, 0,
 		.size_idx = 4, .block_off = 0 };
 	struct memory_block mrun_free = { .chunk_id = 2, 0,
 		.size_idx = 4, .block_off = 4 };
+	struct memory_block mrun_large_used = { .chunk_id = 2, 0,
+		.size_idx = 64, .block_off = 64 };
+	struct memory_block mrun_large_free = { .chunk_id = 2, 0,
+		.size_idx = 64, .block_off = 128 };
 
-	pop->hlayout->zone0.chunk_headers[0].size_idx = 1;
-	pop->hlayout->zone0.chunk_headers[0].type = CHUNK_TYPE_USED;
+	struct palloc_heap *heap = &pop->heap;
+	struct heap_layout *layout = heap->layout;
 
-	pop->hlayout->zone0.chunk_headers[1].size_idx = 1;
-	pop->hlayout->zone0.chunk_headers[1].type = CHUNK_TYPE_FREE;
+	layout->zone0.chunk_headers[0].size_idx = 1;
+	layout->zone0.chunk_headers[0].type = CHUNK_TYPE_USED;
 
-	pop->hlayout->zone0.chunk_headers[2].size_idx = 1;
-	pop->hlayout->zone0.chunk_headers[2].type = CHUNK_TYPE_RUN;
+	layout->zone0.chunk_headers[1].size_idx = 1;
+	layout->zone0.chunk_headers[1].type = CHUNK_TYPE_FREE;
 
-	struct chunk_run *run = (struct chunk_run *)
-		&pop->hlayout->zone0.chunks[2];
+	layout->zone0.chunk_headers[2].size_idx = 1;
+	layout->zone0.chunk_headers[2].type = CHUNK_TYPE_RUN;
+
+	struct chunk_run *run = (struct chunk_run *)&layout->zone0.chunks[2];
 
 	run->bitmap[0] = 0b1111;
+	run->bitmap[1] = ~0ULL;
+	run->bitmap[2] = 0ULL;
 
-	MEMBLOCK_OPS(, &mhuge_used)->prep_hdr(&mhuge_used,
-			pop, HDR_OP_FREE, NULL);
-	UT_ASSERTeq(pop->hlayout->zone0.chunk_headers[0].type, CHUNK_TYPE_FREE);
+	memblock_rebuild_state(heap, &mhuge_used);
+	memblock_rebuild_state(heap, &mhuge_free);
+	memblock_rebuild_state(heap, &mrun_used);
+	memblock_rebuild_state(heap, &mrun_free);
+	memblock_rebuild_state(heap, &mrun_large_used);
+	memblock_rebuild_state(heap, &mrun_large_free);
 
-	MEMBLOCK_OPS(, &mhuge_free)->prep_hdr(&mhuge_free,
-			pop, HDR_OP_ALLOC, NULL);
-	UT_ASSERTeq(pop->hlayout->zone0.chunk_headers[1].type, CHUNK_TYPE_USED);
+	UT_ASSERTne(mhuge_used.m_ops, NULL);
+	mhuge_used.m_ops->prep_hdr(&mhuge_used, MEMBLOCK_FREE, NULL);
+	UT_ASSERTeq(layout->zone0.chunk_headers[0].type, CHUNK_TYPE_FREE);
 
-	MEMBLOCK_OPS(, &mrun_used)->prep_hdr(&mrun_used,
-			pop, HDR_OP_FREE, NULL);
+	mhuge_free.m_ops->prep_hdr(&mhuge_free, MEMBLOCK_ALLOCATED, NULL);
+	UT_ASSERTeq(layout->zone0.chunk_headers[1].type, CHUNK_TYPE_USED);
+
+	mrun_used.m_ops->prep_hdr(&mrun_used, MEMBLOCK_FREE, NULL);
 	UT_ASSERTeq(run->bitmap[0], 0ULL);
 
-	MEMBLOCK_OPS(, &mrun_free)->prep_hdr(&mrun_free,
-			pop, HDR_OP_ALLOC, NULL);
+	mrun_free.m_ops->prep_hdr(&mrun_free, MEMBLOCK_ALLOCATED, NULL);
 	UT_ASSERTeq(run->bitmap[0], 0b11110000);
+
+	mrun_large_used.m_ops->prep_hdr(&mrun_large_used, MEMBLOCK_FREE, NULL);
+	UT_ASSERTeq(run->bitmap[1], 0ULL);
+
+	mrun_large_free.m_ops->prep_hdr(&mrun_large_free,
+		MEMBLOCK_ALLOCATED, NULL);
+	UT_ASSERTeq(run->bitmap[2], ~0ULL);
 }
 
 int
@@ -192,13 +193,14 @@ main(int argc, char *argv[])
 	PMEMobjpool pool;
 	pop = &pool;
 
-	pop->hlayout = ZALLOC(sizeof(struct heap_layout) +
+	pop->heap.layout = ZALLOC(sizeof(struct heap_layout) +
 		NCHUNKS * sizeof(struct chunk));
 
 	test_detect();
 	test_block_size();
-	test_block_offset();
 	test_prep_hdr();
+
+	FREE(pop->heap.layout);
 
 	DONE(NULL);
 }

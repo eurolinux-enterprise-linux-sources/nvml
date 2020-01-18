@@ -1,5 +1,6 @@
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2015-2017, Intel Corporation
+# Copyright (c) 2016, Microsoft Corporation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -40,33 +41,28 @@ Param(
     $DIR = ""
     )
 
-$Env:UNITTEST_NAME = "blk_pool\TEST15w"
+$Env:UNITTEST_NAME = "blk_pool/TEST15w"
 $Env:UNITTEST_NUM = "15w"
-# XXX:  bash has a few calls to tools that we don't have on
-# windows (yet) that set PMEM_IS_PMEM and NON_PMEM_IS_PMEM based
-# on their output
-$Env:PMEM_IS_PMEM = $true
-$Env:NON_PMEM_IS_PMEM = $true
+
 
 # standard unit test setup
 . ..\unittest\unittest.ps1
+
+require_test_type medium
 
 setup
 
 #
 # TEST15 non-existing file, poolsize >= min required size, bsize > min bsize
 #        (pool set)
-#
-# XXX need to figure out issues with mapping poolsets with windows
 
-echo "XXX" > out15w.log
+create_poolset $DIR\testset 20M:$DIR\testfile1:x 20M:$DIR\testfile2:x
 
-#create_poolset $DIR\testset 20M:$DIR\testfile1:x 20M:$DIR\testfile2:x
+expect_normal_exit $Env:EXE_DIR\blk_pool$Env:EXESUFFIX `
+    c $DIR\testset 100 0 0640
 
-#expect_normal_exit ..\..\x64\debug\blk_pool$Env:EXESUFFIX `
-#    c $DIR\testset 100 0 0640
+check_files $DIR\testset $DIR\testfile1 $DIR\testfile2
 
-#check_files $DIR\testset $DIR\testfile1 $DIR\testfile2
-
-# check will print the appropriate pass/fail message
 check
+
+pass

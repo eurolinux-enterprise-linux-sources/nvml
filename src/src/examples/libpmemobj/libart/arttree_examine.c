@@ -1,6 +1,6 @@
 /*
  * Copyright 2016, FUJITSU TECHNOLOGY SOLUTIONS GMBH
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -51,6 +51,7 @@
 #include <libgen.h>
 #include <string.h>
 #include <unistd.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <getopt.h>
 #include <stdint.h>
@@ -116,7 +117,7 @@ void arttree_examine_help(char *appname);
 int arttree_examine_func(char *appname,
 		struct pmem_context *ctx, int ac, char *av[]);
 
-const char *arttree_examine_help_str =
+static const char *arttree_examine_help_str =
 "Examine data structures (objects) of ART tree\n"
 "Arguments: <offset> <type>\n"
 "   <offset> offset of object in pmem file\n"
@@ -125,11 +126,11 @@ const char *arttree_examine_help_str =
 ;
 
 static const struct option long_options[] = {
-	{"hexdump",	no_argument,	0,	'x'},
-	{0,		0,		0,	 0 },
+	{"hexdump",	no_argument,	NULL,	'x'},
+	{NULL,		0,		NULL,	 0 },
 };
 
-struct examine ex_funcs[] = {
+static struct examine ex_funcs[] = {
 	{
 		.name = "PMEMobj",
 		.brief = "examine PMEMoid structure",
@@ -289,7 +290,8 @@ get_examine(char *type_name)
 static void
 dump_PMEMoid(char *prefix, PMEMoid *oid)
 {
-	printf("%s { PMEMoid pool_uuid_lo %lx off 0x%lx = %ld }\n",
+	printf("%s { PMEMoid pool_uuid_lo %" PRIx64
+	    " off 0x%" PRIx64 " = %" PRId64 " }\n",
 	    prefix, oid->pool_uuid_lo, oid->off, oid->off);
 }
 
@@ -306,6 +308,7 @@ examine_PMEMoid(char *appname, struct examine_ctx *ctx, off_t off)
 	p = mmap(NULL, off + obj_len, PROT_READ, MAP_SHARED, fd, 0);
 	if (p != MAP_FAILED) {
 		dump_PMEMoid("PMEMoid", p);
+		munmap(p, off + obj_len);
 	} else {
 		perror("examine_PMEMoid mmap failed");
 		errors++;
@@ -328,10 +331,11 @@ examine_art_tree_root(char *appname, struct examine_ctx *ctx, off_t off)
 	p = mmap(NULL, off + obj_len, PROT_READ, MAP_SHARED, fd, 0);
 	if (p != MAP_FAILED) {
 		tree_root = (art_tree_root *)(((unsigned char *)p) + off);
-		printf("at offset 0x%lx, art_tree_root {\n", off);
+		printf("at offset 0x%llx, art_tree_root {\n", (long long)off);
 		printf("    size %d\n", tree_root->size);
 		dump_PMEMoid("    art_node_u", (PMEMoid *)&(tree_root->root));
 		printf("\n};\n");
+		munmap(p, off + obj_len);
 	} else {
 		perror("examine_art_tree_root mmap failed");
 		errors++;
@@ -354,7 +358,7 @@ examine_art_node_u(char *appname, struct examine_ctx *ctx, off_t off)
 	p = mmap(NULL, off + obj_len, PROT_READ, MAP_SHARED, fd, 0);
 	if (p != MAP_FAILED) {
 		node_u = (art_node_u *)(((unsigned char *)p) + off);
-		printf("at offset 0x%lx, art_node_u {\n", off);
+		printf("at offset 0x%llx, art_node_u {\n", (long long)off);
 		printf("    type %d [%s]\n", node_u->art_node_type,
 		    art_node_names[node_u->art_node_type]);
 		printf("    tag %d\n", node_u->art_node_tag);
@@ -379,10 +383,11 @@ examine_art_node_u(char *appname, struct examine_ctx *ctx, off_t off)
 			dump_PMEMoid("    art_leaf oid",
 			    &(node_u->u.al.oid));
 			break;
-		default: printf("ERROR: unkown node type\n");
+		default: printf("ERROR: unknown node type\n");
 			break;
 		}
 		printf("\n};\n");
+		munmap(p, off + obj_len);
 	} else {
 		perror("examine_art_node_u mmap failed");
 		errors++;
@@ -406,7 +411,7 @@ examine_art_node4(char *appname, struct examine_ctx *ctx, off_t off)
 	p = mmap(NULL, off + obj_len, PROT_READ, MAP_SHARED, fd, 0);
 	if (p != MAP_FAILED) {
 		an4 = (art_node4 *)(((unsigned char *)p) + off);
-		printf("at offset 0x%lx, art_node4 {\n", off);
+		printf("at offset 0x%llx, art_node4 {\n", (long long)off);
 		examine_art_node(&(an4->n));
 		printf("keys [");
 		for (i = 0; i < 4; i++) {
@@ -419,6 +424,7 @@ examine_art_node4(char *appname, struct examine_ctx *ctx, off_t off)
 		}
 		printf("\n]");
 		printf("\n};\n");
+		munmap(p, off + obj_len);
 	} else {
 		perror("examine_art_node4 mmap failed");
 		errors++;
@@ -442,7 +448,7 @@ examine_art_node16(char *appname, struct examine_ctx *ctx, off_t off)
 	p = mmap(NULL, off + obj_len, PROT_READ, MAP_SHARED, fd, 0);
 	if (p != MAP_FAILED) {
 		an16 = (art_node16 *)(((unsigned char *)p) + off);
-		printf("at offset 0x%lx, art_node16 {\n", off);
+		printf("at offset 0x%llx, art_node16 {\n", (long long)off);
 		examine_art_node(&(an16->n));
 		printf("keys [");
 		for (i = 0; i < 16; i++) {
@@ -455,6 +461,7 @@ examine_art_node16(char *appname, struct examine_ctx *ctx, off_t off)
 		}
 		printf("\n]");
 		printf("\n};\n");
+		munmap(p, off + obj_len);
 	} else {
 		perror("examine_art_node16 mmap failed");
 		errors++;
@@ -478,7 +485,7 @@ examine_art_node48(char *appname, struct examine_ctx *ctx, off_t off)
 	p = mmap(NULL, off + obj_len, PROT_READ, MAP_SHARED, fd, 0);
 	if (p != MAP_FAILED) {
 		an48 = (art_node48 *)(((unsigned char *)p) + off);
-		printf("at offset 0x%lx, art_node48 {\n", off);
+		printf("at offset 0x%llx, art_node48 {\n", (long long)off);
 		examine_art_node(&(an48->n));
 		printf("keys [");
 		for (i = 0; i < 256; i++) {
@@ -491,6 +498,7 @@ examine_art_node48(char *appname, struct examine_ctx *ctx, off_t off)
 		}
 		printf("\n]");
 		printf("\n};\n");
+		munmap(p, off + obj_len);
 	} else {
 		perror("examine_art_node48 mmap failed");
 		errors++;
@@ -514,7 +522,7 @@ examine_art_node256(char *appname, struct examine_ctx *ctx, off_t off)
 	p = mmap(NULL, off + obj_len, PROT_READ, MAP_SHARED, fd, 0);
 	if (p != MAP_FAILED) {
 		an256 = (art_node256 *)(((unsigned char *)p) + off);
-		printf("at offset 0x%lx, art_node256 {\n", off);
+		printf("at offset 0x%llx, art_node256 {\n", (long long)off);
 		examine_art_node(&(an256->n));
 		printf("nodes [\n");
 		for (i = 0; i < 256; i++) {
@@ -523,6 +531,7 @@ examine_art_node256(char *appname, struct examine_ctx *ctx, off_t off)
 		}
 		printf("\n]");
 		printf("\n};\n");
+		munmap(p, off + obj_len);
 	} else {
 		perror("examine_art_node256 mmap failed");
 		errors++;
@@ -547,7 +556,7 @@ examine_art_node(char *appname, struct examine_ctx *ctx, off_t off)
 	p = mmap(NULL, off + obj_len, PROT_READ, MAP_SHARED, fd, 0);
 	if (p != MAP_FAILED) {
 		an = (art_node *)(((unsigned char *)p) + off);
-		printf("at offset 0x%lx, art_node {\n", off);
+		printf("at offset 0x%llx, art_node {\n", (long long)off);
 		printf("     num_children  %d\n", an->num_children);
 		printf("     partial_len   %d\n", an->partial_len);
 		printf("     partial [");
@@ -556,6 +565,7 @@ examine_art_node(char *appname, struct examine_ctx *ctx, off_t off)
 		}
 		printf("\n]");
 		printf("\n};\n");
+		munmap(p, off + obj_len);
 	} else {
 		perror("examine_art_node mmap failed");
 		errors++;
@@ -597,10 +607,11 @@ examine_art_leaf(char *appname, struct examine_ctx *ctx, off_t off)
 	p = mmap(NULL, off + obj_len, PROT_READ, MAP_SHARED, fd, 0);
 	if (p != MAP_FAILED) {
 		al = (art_leaf *)(((unsigned char *)p) + off);
-		printf("at offset 0x%lx, art_leaf {\n", off);
+		printf("at offset 0x%llx, art_leaf {\n", (long long)off);
 		dump_PMEMoid("       var_string key oid  ", &(al->key.oid));
 		dump_PMEMoid("       var_string value oid", &(al->value.oid));
 		printf("\n};\n");
+		munmap(p, off + obj_len);
 	} else {
 		perror("examine_art_leaf mmap failed");
 		errors++;
@@ -623,9 +634,10 @@ examine_var_string(char *appname, struct examine_ctx *ctx, off_t off)
 	p = mmap(NULL, off + obj_len, PROT_READ, MAP_SHARED, fd, 0);
 	if (p != MAP_FAILED) {
 		vs = (var_string *)(((unsigned char *)p) + off);
-		printf("at offset 0x%lx, var_string {\n", off);
+		printf("at offset 0x%llx, var_string {\n", (long long)off);
 		printf("    len %ld s [%s]", vs->len, vs->s);
 		printf("\n};\n");
+		munmap(p, off + obj_len);
 	} else {
 		perror("examine_var_string mmap failed");
 		errors++;

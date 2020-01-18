@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -41,9 +41,17 @@
 #include <stdio.h>
 #include <fcntl.h>
 
+#include "os.h"
+#include "out.h"
 #include "common.h"
 #include "output.h"
+#include "file.h"
 #include "rm.h"
+#include "set.h"
+
+#ifdef USE_RPMEM
+#include "librpmem.h"
+#endif
 
 enum ask_type {
 	ASK_SOMETIMES,	/* ask before removing write-protected files */
@@ -55,34 +63,46 @@ enum ask_type {
 static int vlevel;
 /* force remove and ignore errors */
 static int force;
-/* remove only pool files */
-static int only_pools;
+/* poolset files options */
+#define RM_POOLSET_NONE		(0)
+#define RM_POOLSET_LOCAL	(1 << 0)
+#define RM_POOLSET_REMOTE	(1 << 1)
+#define RM_POOLSET_ALL		(RM_POOLSET_LOCAL | RM_POOLSET_REMOTE)
+static int rm_poolset_mode;
 /* mode of interaction */
 static enum ask_type ask_mode;
+/* indicates whether librpmem is available */
+static int rpmem_avail;
 
 /* help message */
 static const char *help_str =
 "Remove pool file or all files from poolset\n"
 "\n"
 "Available options:\n"
-"  -h, --help         Print this help message.\n"
-"  -v, --verbose      Be verbose.\n"
-"  -s, --only-pools   Remove only pool files.\n"
-"  -f, --force        Ignore nonexisting files.\n"
-"  -i, --interactive  Prompt before every single removal.\n"
+"  -h, --help           Print this help message.\n"
+"  -v, --verbose        Be verbose.\n"
+"  -s, --only-pools     Remove only pool files (default).\n"
+"  -a, --all            Remove all poolset files - local and remote.\n"
+"  -l, --local-set      Remove local poolset files\n"
+"  -r, --remote-set     Remove remote poolset files\n"
+"  -f, --force          Ignore nonexisting files.\n"
+"  -i, --interactive    Prompt before every single removal.\n"
 "\n"
 "For complete documentation see %s-rm(1) manual page.\n";
 
 /* short options string */
-static const char *optstr = "hvsfi";
+static const char *optstr = "hvsfialr";
 /* long options */
 static const struct option long_options[] = {
-	{"help",	no_argument,		0, 'h'},
-	{"verbose",	no_argument,		0, 'v'},
-	{"only-pools",	no_argument,		0, 's'},
-	{"force",	no_argument,		0, 'f'},
-	{"interactive",	no_argument,		0, 'i'},
-	{NULL,		0,			0,  0 },
+	{"help",	no_argument,		NULL, 'h'},
+	{"verbose",	no_argument,		NULL, 'v'},
+	{"only-pools",	no_argument,		NULL, 's'},
+	{"all",		no_argument,		NULL, 'a'},
+	{"local",	no_argument,		NULL, 'l'},
+	{"remote",	no_argument,		NULL, 'r'},
+	{"force",	no_argument,		NULL, 'f'},
+	{"interactive",	no_argument,		NULL, 'i'},
+	{NULL,		0,			NULL,  0 },
 };
 
 /*
@@ -107,10 +127,10 @@ pmempool_rm_help(char *appname)
 /*
  * rm_file -- remove single file
  */
-static void
+static int
 rm_file(const char *file)
 {
-	int write_protected = access(file, W_OK) != 0;
+	int write_protected = os_access(file, W_OK) != 0;
 	char cask = 'y';
 	switch (ask_mode) {
 	case ASK_ALWAYS:
@@ -125,31 +145,126 @@ rm_file(const char *file)
 	}
 
 	const char *pre_msg = write_protected ? "write-protected " : "";
-	if (ask_Yn(cask, "remove %sfile '%s' ?", pre_msg, file) == 'y') {
-		if (unlink(file))
-			err(1, "cannot remove file '%s'", file);
+	char ans = ask_Yn(cask, "remove %sfile '%s' ?", pre_msg, file);
+	if (ans == INV_ANS)
+		outv(1, "invalid answer");
+
+	if (ans == 'y') {
+		if (util_unlink(file)) {
+			outv_err("cannot remove file '%s'", file);
+			return 1;
+		}
+
 		outv(1, "removed '%s'\n", file);
 	}
+
+	return 0;
 }
 
+/*
+ * remove_remote -- (internal) remove remote pool
+ */
 static int
-rm_poolset_cb(const char *part_file, void *arg)
+remove_remote(const char *target, const char *pool_set)
 {
-	outv(2, "part file   : %s\n", part_file);
-
-	int exists = access(part_file, F_OK) == 0;
-	if (!exists) {
-		/*
-		 * Ignore not accessible file if force
-		 * flag is set
-		 */
-		if (force)
-			return 0;
-
-		err(1, "cannot remove file '%s'", part_file);
+#ifdef USE_RPMEM
+	char cask = 'y';
+	switch (ask_mode) {
+	case ASK_ALWAYS:
+		cask = '?';
+		break;
+	case ASK_NEVER:
+	case ASK_SOMETIMES:
+		cask = 'y';
+		break;
 	}
 
-	rm_file(part_file);
+	char ans = ask_Yn(cask, "remove remote pool '%s' on '%s'?",
+		pool_set, target);
+	if (ans == INV_ANS)
+		outv(1, "invalid answer");
+
+	if (ans != 'y')
+		return 0;
+
+	if (!rpmem_avail) {
+		if (force) {
+			outv(1, "cannot remove '%s' on '%s' -- "
+				"librpmem not available", pool_set, target);
+			return 0;
+		}
+
+		outv_err("!cannot remove '%s' on '%s' -- "
+			"librpmem not available", pool_set, target);
+		return 1;
+	}
+
+	int flags = 0;
+	if (rm_poolset_mode & RM_POOLSET_REMOTE)
+		flags |= RPMEM_REMOVE_POOL_SET;
+	if (force)
+		flags |= RPMEM_REMOVE_FORCE;
+
+	int ret = Rpmem_remove(target, pool_set, flags);
+	if (ret) {
+		if (force) {
+			ret = 0;
+			outv(1, "cannot remove '%s' on '%s'",
+					pool_set, target);
+		} else {
+			/*
+			 * Callback cannot return < 0 value because it
+			 * is interpretted as error in parsing poolset file.
+			 */
+			ret = 1;
+			outv_err("!cannot remove '%s' on '%s'",
+					pool_set, target);
+		}
+	} else {
+		outv(1, "removed '%s' on '%s'\n",
+				pool_set, target);
+	}
+
+	return ret;
+#else
+	outv_err("remote replication not supported");
+	return 1;
+#endif
+}
+
+/*
+ * rm_poolset_cb -- (internal) callback for removing replicas
+ */
+static int
+rm_poolset_cb(struct part_file *pf, void *arg)
+{
+	int *error = (int *)arg;
+	int ret;
+	if (pf->is_remote) {
+		ret = remove_remote(pf->node_addr, pf->pool_desc);
+	} else {
+		const char *part_file = pf->path;
+
+		outv(2, "part file   : %s\n", part_file);
+
+		int exists = os_access(part_file, F_OK) == 0;
+		if (!exists) {
+			/*
+			 * Ignore not accessible file if force
+			 * flag is set.
+			 */
+			if (force)
+				return 0;
+
+			ret = 1;
+			outv_err("!cannot remove file '%s'", part_file);
+		} else {
+			ret = rm_file(part_file);
+		}
+	}
+
+	if (ret)
+		*error = ret;
 
 	return 0;
 }
@@ -157,17 +272,23 @@ rm_poolset_cb(const char *part_file, void *arg)
 /*
  * rm_poolset -- remove files parsed from poolset file
  */
-static void
+static int
 rm_poolset(const char *file)
 {
-	int ret = util_poolset_foreach_part(file, rm_poolset_cb, NULL);
-	if (ret) {
-		if (!force) {
-			outv_err("cannot parse poolset file '%s'\n", file);
-			exit(1);
-		}
-		return;
+	int error = 0;
+	int ret = util_poolset_foreach_part(file, rm_poolset_cb, &error);
+	if (ret == -1) {
+		outv_err("parsing poolset failed: %s\n",
+				out_get_errormsg());
+		return ret;
 	}
+
+	if (error && !force) {
+		outv_err("!removing '%s' failed\n", file);
+		return error;
+	}
+
+	return 0;
 }
 
 /*
@@ -176,6 +297,17 @@ rm_poolset(const char *file)
 int
 pmempool_rm_func(char *appname, int argc, char *argv[])
 {
+#ifdef USE_RPMEM
+	/*
+	 * Try to load librpmem, if loading failed -
+	 * assume it is not available.
+	 */
+	rpmem_avail = !util_remote_load();
+#endif
+
+	/* by default do not remove any poolset files */
+	rm_poolset_mode = RM_POOLSET_NONE;
+
 	int opt;
 	while ((opt = getopt_long(argc, argv, optstr,
 			long_options, NULL)) != -1) {
@@ -187,7 +319,16 @@ pmempool_rm_func(char *appname, int argc, char *argv[])
 			vlevel++;
 			break;
 		case 's':
-			only_pools = 1;
+			rm_poolset_mode = RM_POOLSET_NONE;
+			break;
+		case 'a':
+			rm_poolset_mode |= RM_POOLSET_ALL;
+			break;
+		case 'l':
+			rm_poolset_mode |= RM_POOLSET_LOCAL;
+			break;
+		case 'r':
+			rm_poolset_mode |= RM_POOLSET_REMOTE;
 			break;
 		case 'f':
 			force = 1;
@@ -198,7 +339,7 @@ pmempool_rm_func(char *appname, int argc, char *argv[])
 			break;
 		default:
 			print_usage(appname);
-			return -1;
+			return 1;
 		}
 	}
 
@@ -206,35 +347,48 @@ pmempool_rm_func(char *appname, int argc, char *argv[])
 
 	if (optind == argc) {
 		print_usage(appname);
-		return -1;
+		return 1;
 	}
 
+	int lret = 0;
 	for (int i = optind; i < argc; i++) {
 		char *file = argv[i];
 		/* check if file exists and we can read it */
-		int exists = access(file, F_OK | R_OK) == 0;
+		int exists = os_access(file, F_OK | R_OK) == 0;
 		if (!exists) {
 			/* ignore not accessible file if force flag is set */
 			if (force)
 				continue;
-			err(1, "cannot remove '%s'", file);
+
+			outv_err("!cannot remove '%s'", file);
+			lret = 1;
+			continue;
 		}
 
-		int is_poolset = util_is_poolset(file);
+		int is_poolset = util_is_poolset_file(file);
+		if (is_poolset < 0) {
+			outv(1, "%s: cannot determine type of file", file);
+			if (force)
+				continue;
+		}
 
 		if (is_poolset)
 			outv(2, "poolset file: %s\n", file);
 		else
 			outv(2, "pool file   : %s\n", file);
 
+		int ret;
 		if (is_poolset) {
-			rm_poolset(file);
-			if (!only_pools)
-				rm_file(file);
+			ret = rm_poolset(file);
+			if (!ret && (rm_poolset_mode & RM_POOLSET_LOCAL))
+				ret = rm_file(file);
 		} else {
-			rm_file(file);
+			ret = rm_file(file);
 		}
+
+		if (ret)
+			lret = ret;
 	}
 
-	return 0;
+	return lret;
 }

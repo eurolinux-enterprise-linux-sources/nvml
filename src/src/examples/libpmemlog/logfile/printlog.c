@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,12 +39,13 @@
  * -t option means truncate the file after printing it.
  */
 
+#include <ex_common.h>
 #include <stdio.h>
 #include <fcntl.h>
+#include <getopt.h>
 #include <time.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <libpmemlog.h>
 
 #include "logentry.h"
@@ -52,24 +53,25 @@
 /*
  * printlog -- callback function called when walking the log
  */
-int
+static int
 printlog(const void *buf, size_t len, void *arg)
 {
-	const void *endp = buf + len;	/* first byte after log contents */
+	/* first byte after log contents */
+	const void *endp = (char *)buf + len;
 
 	/* for each entry in the log... */
 	while (buf < endp) {
 		struct logentry *headerp = (struct logentry *)buf;
-		buf += sizeof(struct logentry);
+		buf = (char *)buf + sizeof(struct logentry);
 
 		/* print the header */
-		printf("Entry from pid: %ld\n", (long)headerp->pid);
+		printf("Entry from pid: %d\n", headerp->pid);
 		printf("       Created: %s", ctime(&headerp->timestamp));
 		printf("      Contents:\n");
 
-		/* print the log data itself */
-		fwrite(buf, headerp->len, 1, stdout);
-		buf += headerp->len;
+		/* print the log data itself, it is NUL-terminated */
+		printf("%s", (char *)buf);
+		buf = (char *)buf + headerp->len;
 	}
 
 	return 0;

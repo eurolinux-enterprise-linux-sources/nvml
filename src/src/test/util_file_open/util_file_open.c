@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016, Intel Corporation
+ * Copyright 2014-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,7 +38,7 @@
 
 #include "unittest.h"
 
-#include "util.h"
+#include "file.h"
 
 int
 main(int argc, char *argv[])
@@ -58,7 +58,7 @@ main(int argc, char *argv[])
 			UT_OUT("!%s: util_file_open", argv[arg]);
 		else {
 			UT_OUT("%s: open, len %zu", argv[arg], size);
-			close(fd);
+			os_close(fd);
 		}
 	}
 

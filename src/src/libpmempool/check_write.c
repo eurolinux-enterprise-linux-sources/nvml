@@ -1,5 +1,5 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,6 +35,7 @@
  */
 
 #include <stdint.h>
+#include <endian.h>
 
 #include "out.h"
 #include "btt.h"
@@ -42,16 +43,6 @@
 #include "pmempool.h"
 #include "pool.h"
 #include "check_util.h"
-
-/* assure size match between global and internal check step data */
-union location {
-	/* internal check step data */
-	struct {
-		unsigned step;
-	};
-	/* global check step data */
-	struct check_step_data step_data;
-};
 
 enum questions {
 	Q_REPAIR_MAP,
@@ -62,7 +53,7 @@ enum questions {
  * log_write -- (internal) write all structures for log pool
  */
 static int
-log_write(PMEMpoolcheck *ppc, union location *loc)
+log_write(PMEMpoolcheck *ppc, location *loc)
 {
 	LOG(3, NULL);
 
@@ -71,7 +62,7 @@ log_write(PMEMpoolcheck *ppc, union location *loc)
 
 	/* endianness conversion */
 	struct pmemlog *log = &ppc->pool->hdr.log;
-	pmemlog_convert2le(log);
+	log_convert2le(log);
 
 	if (pool_write(ppc->pool, log, sizeof(*log), 0)) {
 		ppc->result = CHECK_RESULT_CANNOT_REPAIR;
@@ -144,7 +135,7 @@ blk_write_map(PMEMpoolcheck *ppc, struct arena *arenap)
  * blk_write -- (internal) write all structures for blk pool
  */
 static int
-blk_write(PMEMpoolcheck *ppc, union location *loc)
+blk_write(PMEMpoolcheck *ppc, location *loc)
 {
 	LOG(3, NULL);
 
@@ -168,7 +159,7 @@ blk_write(PMEMpoolcheck *ppc, union location *loc)
  * btt_data_write -- (internal) write BTT data
  */
 static int
-btt_data_write(PMEMpoolcheck *ppc, union location *loc)
+btt_data_write(PMEMpoolcheck *ppc, location *loc)
 {
 	LOG(3, NULL);
 
@@ -176,7 +167,7 @@ btt_data_write(PMEMpoolcheck *ppc, union location *loc)
 
 	TAILQ_FOREACH(arenap, &ppc->pool->arenas, next) {
 
-		if (ppc->pool->uuid_op == UUID_REGENERATED) {
+		if (ppc->pool->uuid_op == UUID_NOT_FROM_BTT) {
 			memcpy(arenap->btt_info.parent_uuid,
 				ppc->pool->hdr.pool.poolset_uuid,
 					sizeof(arenap->btt_info.parent_uuid));
@@ -219,7 +210,7 @@ error:
 }
 
 struct step {
-	int (*func)(PMEMpoolcheck *, union location *loc);
+	int (*func)(PMEMpoolcheck *, location *loc);
 	enum pool_type type;
 };
 
@@ -245,8 +236,10 @@ static const struct step steps[] = {
  * step_exe -- (internal) perform single step according to its parameters
  */
 static inline int
-step_exe(PMEMpoolcheck *ppc, union location *loc)
+step_exe(PMEMpoolcheck *ppc, location *loc)
 {
+	ASSERT(loc->step < ARRAY_SIZE(steps));
+
 	const struct step *step = &steps[loc->step++];
 
 	/* check step conditions */
@@ -262,10 +255,15 @@ step_exe(PMEMpoolcheck *ppc, union location *loc)
 void
 check_write(PMEMpoolcheck *ppc)
 {
-	COMPILE_ERROR_ON(sizeof(union location) !=
-		sizeof(struct check_step_data));
+	/*
+	 * XXX: Disabling individual checks based on type should be done in the
+	 *	step structure. This however requires refactor of the step
+	 *	processing code.
+	 */
+	if (CHECK_IS_NOT(ppc, REPAIR))
+		return;
 
-	union location *loc = (union location *)check_get_step_data(ppc->data);
+	location *loc = (location *)check_get_step_data(ppc->data);
 
 	/* do all steps */
 	while (loc->step != CHECK_STEP_COMPLETE &&

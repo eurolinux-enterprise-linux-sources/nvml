@@ -1,5 +1,6 @@
 /*
- * Copyright 2016, Intel Corporation
+ * Copyright 2016-2017, Intel Corporation
+ * Copyright (c) 2016, Microsoft Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,23 +35,142 @@
  * pmem_windows.c -- pmem utilities with OS-specific implementation
  */
 
+#include <memoryapi.h>
 #include "pmem.h"
 #include "out.h"
+#include "win_mmap.h"
+
+#if (NTDDI_VERSION >= NTDDI_WIN10_RS1)
+PQVM Func_qvmi = NULL;
+#endif
 
 /*
- * is_pmem_proc -- implement pmem_is_pmem()
+ * is_direct_mapped -- (internal) for each page in the given region
+ * checks with MM, if it's direct mapped.
+ */
+static int
+is_direct_mapped(const void *begin, const void *end)
+{
+	LOG(3, "begin %p end %p", begin, end);
+
+#if (NTDDI_VERSION >= NTDDI_WIN10_RS1)
+	int retval = 1;
+	WIN32_MEMORY_REGION_INFORMATION region_info;
+	SIZE_T bytes_returned;
+
+	if (Func_qvmi == NULL) {
+		LOG(4, "QueryVirtualMemoryInformation not supported, "
+			"assuming non-DAX.");
+		return 0;
+	}
+
+	const void *begin_aligned = (const void *)rounddown((intptr_t)begin,
+					Pagesize);
+	const void *end_aligned = (const void *)roundup((intptr_t)end,
+					Pagesize);
+
+	for (const void *page = begin;
+			page < end;
+			page = (const void *)((char *)page + Pagesize)) {
+		if (Func_qvmi(GetCurrentProcess(), page,
+				MemoryRegionInfo, &region_info,
+				sizeof(region_info), &bytes_returned)) {
+			retval = region_info.DirectMapped;
+		} else {
+			LOG(4, "QueryVirtualMemoryInformation failed, assuming "
+				"non-DAX.  Last error: %08x", GetLastError());
+			retval = 0;
+		}
+
+		if (retval == 0) {
+			LOG(4, "page %p is not direct mapped", page);
+			break;
+		}
+	}
+
+	return retval;
+#else
+	/* if the MM API is not available the safest answer is NO */
+	return 0;
+#endif /* NTDDI_VERSION >= NTDDI_WIN10_RS1 */
+
+}
+
+/*
+ * is_pmem_detect -- implement pmem_is_pmem()
  *
  * This function returns true only if the entire range can be confirmed
  * as being direct access persistent memory.  Finding any part of the
  * range is not direct access, or failing to look up the information
  * because it is unmapped or because any sort of error happens, just
  * results in returning false.
- *
- * XXX - no Windows implementation yet
  */
 int
-is_pmem_proc(const void *addr, size_t len)
+is_pmem_detect(const void *addr, size_t len)
 {
-	LOG(3, "returning %d", 0);
-	return 0;
+	LOG(3, "addr %p len %zu", addr, len);
+
+	if (len > UINTPTR_MAX - (uintptr_t)addr) {
+		len = UINTPTR_MAX - (uintptr_t)addr;
+		LOG(4, "limit len to %zu to not get beyond address space", len);
+	}
+
+	int retval = 1;
+	const void *begin = addr;
+	const void *end = (const void *)((char *)addr + len);
+
+	LOG(4, "begin %p end %p", begin, end);
+
+	AcquireSRWLockShared(&FileMappingQLock);
+
+	PFILE_MAPPING_TRACKER mt;
+	SORTEDQ_FOREACH(mt, &FileMappingQHead, ListEntry) {
+		if (mt->BaseAddress >= end) {
+			LOG(4, "ignoring all mapped ranges beyond given range");
+			break;
+		}
+		if (mt->EndAddress <= begin) {
+			LOG(4, "skipping all mapped ranges before given range");
+			continue;
+		}
+
+		if (!(mt->Flags & FILE_MAPPING_TRACKER_FLAG_DIRECT_MAPPED)) {
+			LOG(4, "tracked range [%p, %p) is not direct mapped",
+				mt->BaseAddress, mt->EndAddress);
+			retval = 0;
+			break;
+		}
+
+		/*
+		 * If there is a gap between the given region that we process
+		 * currently and the mapped region in our tracking list, we
+		 * need to process the gap by taking the long route of asking
+		 * MM for each page in that range.
+		 */
+		if (begin < mt->BaseAddress &&
+		    !is_direct_mapped(begin, mt->BaseAddress)) {
+			LOG(4, "untracked range [%p, %p) is not direct mapped",
+				begin, mt->BaseAddress);
+			retval = 0;
+			break;
+		}
+
+		/* push our begin to reflect what we have already processed */
+		begin = mt->EndAddress;
+	}
+
+	/*
+	 * If we still have a range to verify, check with MM if the entire
+	 * region is direct mapped.
+	 */
+	if (begin < end && !is_direct_mapped(begin, end)) {
+		LOG(4, "untracked end range [%p, %p) is not direct mapped",
+			begin, end);
+		retval = 0;
+	}
+
+	ReleaseSRWLockShared(&FileMappingQLock);
+
+	LOG(4, "returning %d", retval);
+	return retval;
 }
